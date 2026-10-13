@@ -1,0 +1,28 @@
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.ap_
+*.aab
+*.apk
+captures/
+.externalNativeBuild/
+.cxx/
+*.hprof
+
+# Kotlin / IDE
+.kotlin/
+.idea/
+*.iml
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Projeto: fora do repo público
+_referencia/
+_releases/
+_historico/
+*.zip
+fusao-apk/*.apk

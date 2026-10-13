@@ -1,0 +1,6 @@
+thermal=moderate
+profile=balanced
+thermal_guard_high=78000
+thermal_guard_low=70000
+thermal_guard_interval=2
+thermal_guard_timeout=900
