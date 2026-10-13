@@ -5,8 +5,9 @@ ficam fora (ver `.gitignore`).
 
 ## Layout
 
-- `app/` — app FUSAO (Kotlin/Compose, `com.orkgabb.fusao`). Build: `cd app && ./gradlew assembleDebug`
-  (SDK via `local.properties`, não commitado). Requer device root p/ testar de verdade.
+- `app/` — app FUSAO (Kotlin/Compose, `com.orkgabb.fusao`). Build: `cd app && ./gradlew assembleDebug`.
+  O SDK se resolve via `local.properties` (`sdk.dir=...`, NÃO commitado — cada máquina cria o seu)
+  ou via env `ANDROID_HOME`/`ANDROID_SDK_ROOT`. Requer device root p/ testar de verdade.
 - `fusao-v2.0/` — stage ativo do módulo KernelSU (v2.9.4/1596, ver `module.prop`).
 - `tools/` — `fusao-build.py` (gera o zip flashável), `fusao-sweep.py` (kill-list),
   `test-fusao-offline.sh` (harness). Comandos em `INDICE.md`.
