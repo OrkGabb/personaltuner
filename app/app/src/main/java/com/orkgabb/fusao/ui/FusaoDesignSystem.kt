@@ -456,18 +456,23 @@ fun HudSectionHeader(
                     )
             )
             Spacer(modifier = Modifier.width(10.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = code.uppercase(),
                         style = MaterialTheme.typography.labelSmall,
                         color = accentColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleMedium,
                         color = FusaoPalette.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                 }
                 if (!subtitle.isNullOrEmpty()) {

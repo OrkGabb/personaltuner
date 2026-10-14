@@ -927,11 +927,17 @@ class MainActivity : ComponentActivity() {
                                     text = "ESCALA DE RENDERIZAÇÃO (DOWNSCALE REVERSÍVEL)",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.TextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "atual: ${st.display.ifEmpty { "—" }}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.CryoCyan,
+                                    maxLines = 1,
+                                    softWrap = false,
                                 )
                             }
                             Row(
