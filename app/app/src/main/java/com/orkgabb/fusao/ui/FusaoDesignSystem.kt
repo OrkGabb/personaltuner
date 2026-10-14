@@ -429,7 +429,7 @@ fun TacticalPanel(
  */
 @Composable
 fun HudSectionHeader(
-    code: String,
+    code: String = "",
     title: String,
     subtitle: String? = null,
     accentColor: Color = FusaoPalette.CryoCyan,
@@ -458,14 +458,16 @@ fun HudSectionHeader(
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = code.uppercase(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = accentColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    if (code.isNotEmpty()) {
+                        Text(
+                            text = code.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = accentColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleMedium,

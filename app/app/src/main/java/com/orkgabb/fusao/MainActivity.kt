@@ -975,7 +975,6 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         HudSectionHeader(
-                            code = "SYS // DAEMONS",
                             title = "Daemons",
                             subtitle = "Processos residentes monitorados via pgrep pelo módulo",
                             accentColor = FusaoPalette.PlasmaViolet,
@@ -1018,7 +1017,6 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         HudSectionHeader(
-                            code = "HOOKS // AUDIT",
                             title = "Ganchos (foi ou não)",
                             subtitle = "Últimas 8 transições verificadas em fusao.log (.1 + atual)",
                             accentColor = FusaoPalette.CryoCyan,
@@ -1155,7 +1153,6 @@ class MainActivity : ComponentActivity() {
                     contentPadding = PaddingValues(14.dp),
                 ) {
                     HudSectionHeader(
-                        code = "MATRIX // 07 FLAGS",
                         title = "Controles do Módulo",
                         subtitle = "Cada chave opera diretamente via CLI `fusao <flag> on|off` em /data/adb/fusao/",
                         accentColor = FusaoPalette.CryoCyan,
@@ -1316,7 +1313,6 @@ class MainActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         HudSectionHeader(
-                            code = "MEM // WILLNEED",
                             title = "Preload (WILLNEED)",
                             subtitle = "posix_fadvise inteligente com seleção record→replay por jogo (cap 2000 arqs / 512 MB)",
                             accentColor = FusaoPalette.ElectricOrchid,
@@ -1477,7 +1473,6 @@ class MainActivity : ComponentActivity() {
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     HudSectionHeader(
-                        code = "VM // RECLAIM",
                         title = "RAM clean (antes do preload)",
                         subtitle = "sync + drop_caches (3) + compact_memory (1) para abrir janela limpa antes do WILLNEED",
                         accentColor = FusaoPalette.BioEmerald,
@@ -1665,7 +1660,6 @@ class MainActivity : ComponentActivity() {
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     HudSectionHeader(
-                        code = "TARGET // GAMELIST.TXT",
                         title = "Jogos Monitorados",
                         subtitle = "Pacotes que acionam o observer/watch e os ganchos de game-enter",
                         accentColor = FusaoPalette.CryoCyan,
@@ -1923,7 +1917,6 @@ class MainActivity : ComponentActivity() {
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     HudSectionHeader(
-                        code = "PICKER // LAUNCHER APPS",
                         title = "Adicionar jogo",
                         subtitle = "Selecione um aplicativo instalado para incluir em gamelist.txt",
                         accentColor = FusaoPalette.PlasmaViolet,
@@ -2106,7 +2099,6 @@ class MainActivity : ComponentActivity() {
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     HudSectionHeader(
-                        code = "TELEMETRY // LOGS & DUMP",
                         title = if (state.logFusaod) "fusaod.log (writer)" else "fusao.log (ganchos)",
                         subtitle = "Leitura direta de /data/adb/fusao/ e geração de pacote tar.gz em /sdcard/Download/",
                         accentColor = FusaoPalette.CryoCyan,
