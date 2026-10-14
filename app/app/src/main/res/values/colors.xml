@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fusao_void">#FF04060A</color>
+    <color name="fusao_obsidian">#FF0A0E17</color>
+    <color name="fusao_cryo_cyan">#FF00F0FF</color>
+    <color name="fusao_plasma_violet">#FF8B5CF6</color>
+    <color name="fusao_ignis_amber">#FFFF9F1C</color>
+    <color name="fusao_bio_emerald">#FF10B981</color>
+    <color name="ic_launcher_background">#FF050811</color>
+</resources>

@@ -3,143 +3,527 @@ package com.orkgabb.fusao
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.orkgabb.fusao.ui.AppIconBadge
+import com.orkgabb.fusao.ui.CyberSwitch
+import com.orkgabb.fusao.ui.FusaoAmbientCanvas
+import com.orkgabb.fusao.ui.FusaoNavIcon
+import com.orkgabb.fusao.ui.FusaoPalette
+import com.orkgabb.fusao.ui.FusaoTheme
+import com.orkgabb.fusao.ui.FusaoVectorGlyph
+import com.orkgabb.fusao.ui.HudSectionHeader
+import com.orkgabb.fusao.ui.PreloadCountdownGauge
+import com.orkgabb.fusao.ui.ReactorCoreEmblem
+import com.orkgabb.fusao.ui.StatusPulseDot
+import com.orkgabb.fusao.ui.TacticalButton
+import com.orkgabb.fusao.ui.TacticalPanel
+import com.orkgabb.fusao.ui.TelemetryPill
+import com.orkgabb.fusao.ui.highlightTelemetryLine
+
+private data class FlagSpec(
+    val cmd: String,
+    val title: String,
+    val desc: String,
+    val category: String,
+    val accent: Color,
+)
+
+private val FLAG_SPECS = listOf(
+    FlagSpec(
+        cmd = "fusaod",
+        title = "fusaod",
+        desc = "Escritor CPU/GPU/MIF/INT/DISP (sobe no boot)",
+        category = "SINGLE-WRITER · BOOT",
+        accent = FusaoPalette.CryoCyan,
+    ),
+    FlagSpec(
+        cmd = "framework",
+        title = "framework",
+        desc = "Triads + overlay + tune no game-enter",
+        category = "FRAMEWORK · GAME-ENTER",
+        accent = FusaoPalette.PlasmaViolet,
+    ),
+    FlagSpec(
+        cmd = "perf",
+        title = "perf",
+        desc = "renice/IO do jogo no game-enter",
+        category = "SCHEDULER & IO · GAME-ENTER",
+        accent = FusaoPalette.IgnisAmber,
+    ),
+    FlagSpec(
+        cmd = "dnd",
+        title = "dnd",
+        desc = "Arma auto-DND no game-enter (off = desarmado)",
+        category = "ZEN GUARD · ARMED ON ENTER",
+        accent = FusaoPalette.CryoTurquoise,
+    ),
+    FlagSpec(
+        cmd = "preload",
+        title = "preload",
+        desc = "WILLNEED dos assets no game-enter",
+        category = "POSIX FADVISE · GAME-ENTER",
+        accent = FusaoPalette.ElectricOrchid,
+    ),
+    FlagSpec(
+        cmd = "ramclean",
+        title = "ramclean",
+        desc = "Limpa RAM ANTES do preload no game-enter",
+        category = "VM DROP+COMPACT · PRE-PRELOAD",
+        accent = FusaoPalette.BioEmerald,
+    ),
+    FlagSpec(
+        cmd = "gos",
+        title = "gos",
+        desc = "Mata o GOS da Samsung (off = pausado)",
+        category = "SAMSUNG MITIGATION · KILLER",
+        accent = FusaoPalette.CrimsonCore,
+    ),
+)
 
 class MainActivity : ComponentActivity() {
 
     private val vm: FusaoViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                val state by vm.state.collectAsState()
-                LaunchedEffect(Unit) { vm.bootstrap() }
+            FusaoTheme {
+                val state by vm.state.collectAsStateWithLifecycle()
+                val ctx = LocalContext.current
+                val lifecycleOwner = LocalLifecycleOwner.current
+
+                // Revalida root e módulo a cada abertura / retorno ao primeiro plano (ON_START)
+                DisposableEffect(lifecycleOwner, ctx) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_START) {
+                            vm.bootstrap(ctx)
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose {
+                        lifecycleOwner.lifecycle.removeObserver(observer)
+                    }
+                }
+
                 FusaoScreen(state)
             }
         }
     }
 
-    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun FusaoScreen(state: FusaoUiState) {
-        var tab by remember { mutableIntStateOf(0) }
-        val tabs = listOf("Status", "Flags", "Preload", "Jogos", "Log")
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("FUSAO" + if (state.moduleVersion.isNotEmpty() && state.moduleVersion != "—") " " + state.moduleVersion.substringBefore(" ") else "") },
-                    actions = {
-                        Text(
-                            "Atualizar",
-                            modifier = Modifier
-                                .padding(end = 16.dp)
-                                .clickable(enabled = !state.anyBusy()) { vm.refresh() },
-                            color = MaterialTheme.colorScheme.primary,
-                        )
+        var tab by rememberSaveable { mutableIntStateOf(0) }
+        val profileAccent = FusaoPalette.profileAccent(state.status.profile)
+        val profileSecondary = FusaoPalette.profileSecondary(state.status.profile)
+
+        FusaoAmbientCanvas(
+            accentColor = profileAccent,
+            secondaryColor = profileSecondary,
+        ) {
+            Scaffold(
+                containerColor = Color.Transparent,
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                topBar = {
+                    FusaoHeaderBar(
+                        state = state,
+                        onRefresh = { vm.refresh() },
+                    )
+                },
+                bottomBar = {
+                    FusaoBottomDock(
+                        selectedTab = tab,
+                        onSelectTab = { tab = it },
+                        activeFlags = state.status.activeFlagsCount,
+                        gamesCount = state.games.size,
+                        inGame = state.status.inGame,
+                        accentColor = profileAccent,
+                    )
+                },
+            ) { innerPadding ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) {
+                    if (!state.ready) {
+                        InitialLoadingView()
+                        return@Column
                     }
-                )
-            }
-        ) { pad ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(pad)
-            ) {
-                if (!state.ready) {
-                    Text("Aguarde...", modifier = Modifier.padding(16.dp))
-                    return@Column
-                }
-                if (!state.rooted) {
-                    Banner("Sem root — modo leitura. Refaça o temp-root e reabra o app.")
-                } else if (!state.moduleInstalled) {
-                    Banner("Módulo encore ausente.")
-                }
-                if (state.notice.isNotEmpty()) {
-                    Banner(state.notice, onClose = { vm.clearNotice() })
-                }
-                TabRow(selectedTabIndex = tab) {
-                    tabs.forEachIndexed { i, t ->
-                        Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) })
+
+                    // Banners de estado de sistema (Root, Módulo, Gravação 20s em andamento e Avisos)
+                    SystemBannersArea(state)
+
+                    // Conteúdo principal das 5 áreas com transição suave
+                    Crossfade(
+                        targetState = tab,
+                        animationSpec = tween(durationMillis = 220),
+                        modifier = Modifier.weight(1f),
+                        label = "fusaoTabCrossfade",
+                    ) { currentTab ->
+                        when (currentTab) {
+                            0 -> StatusTab(state)
+                            1 -> FlagsTab(state)
+                            2 -> PreloadTab(state)
+                            3 -> GamesTab(state)
+                            4 -> LogTab(state)
+                        }
                     }
-                }
-                when (tab) {
-                    0 -> StatusTab(state)
-                    1 -> FlagsTab(state)
-                    2 -> PreloadTab(state)
-                    3 -> GamesTab(state)
-                    4 -> LogTab(state)
                 }
             }
         }
     }
 
     @Composable
-    private fun Banner(text: String, onClose: (() -> Unit)? = null) {
-        Card(
+    private fun FusaoHeaderBar(
+        state: FusaoUiState,
+        onRefresh: () -> Unit,
+    ) {
+        val rawVersion = state.moduleVersion
+        val cleanVersion = remember(rawVersion) {
+            if (rawVersion.isEmpty() || rawVersion == "—") {
+                "M54 SINGLE"
+            } else {
+                rawVersion
+                    .replace("version=", "")
+                    .substringBefore(" ")
+                    .trim()
+                    .ifEmpty { "M54" }
+            }
+        }
+        val hasStagedUpdate = remember(rawVersion) { rawVersion.contains("|") }
+        val isRefreshing = state.isBusy(Busy.REFRESH)
+
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            FusaoPalette.VoidBlack.copy(alpha = 0.96f),
+                            FusaoPalette.ObsidianSurface.copy(alpha = 0.88f),
+                            Color.Transparent,
+                        )
+                    )
+                )
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(FusaoPalette.CryoSlate)
+                            .border(
+                                width = 1.dp,
+                                brush = Brush.linearGradient(
+                                    listOf(FusaoPalette.CryoCyan, FusaoPalette.PlasmaViolet)
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_fusao_crest),
+                            contentDescription = "Símbolo FUSAO",
+                            modifier = Modifier.size(30.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = "FUSAO",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = FusaoPalette.TextPrimary,
+                            )
+                            TelemetryPill(
+                                text = cleanVersion,
+                                color = FusaoPalette.CryoCyan,
+                                filled = true,
+                            )
+                            if (hasStagedUpdate) {
+                                TelemetryPill(
+                                    text = "UPD STAGE",
+                                    color = FusaoPalette.IgnisAmber,
+                                    filled = true,
+                                )
+                            }
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            StatusPulseDot(
+                                color = when {
+                                    !state.rooted -> FusaoPalette.CrimsonCore
+                                    !state.moduleInstalled -> FusaoPalette.IgnisAmber
+                                    state.status.inGame -> FusaoPalette.IgnisAmber
+                                    else -> FusaoPalette.BioEmerald
+                                },
+                                active = state.rooted && state.moduleInstalled,
+                                size = 6.dp,
+                            )
+                            Text(
+                                text = when {
+                                    !state.ready -> "SONDANDO PONTE ROOT..."
+                                    !state.rooted -> "SEM ROOT · MODO LEITURA"
+                                    !state.moduleInstalled -> "MÓDULO ENCORE AUSENTE"
+                                    state.status.inGame -> "JOGO ATIVO · ${state.labelFor(state.status.gameActive).uppercase()}"
+                                    else -> "EXYNOS 1380 · PONTE KSU ATIVA"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FusaoPalette.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                TacticalButton(
+                    text = "Atualizar",
+                    onClick = onRefresh,
+                    enabled = !state.anyBusy(),
+                    isLoading = isRefreshing,
+                    accentColor = FusaoPalette.CryoCyan,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = FusaoPalette.GridHairline.copy(alpha = 0.7f),
+            )
+        }
+    }
+
+    @Composable
+    private fun FusaoBottomDock(
+        selectedTab: Int,
+        onSelectTab: (Int) -> Unit,
+        activeFlags: Int,
+        gamesCount: Int,
+        inGame: Boolean,
+        accentColor: Color,
+    ) {
+        val tabs = remember(activeFlags, gamesCount, inGame) {
+            listOf(
+                Triple("Status", FusaoNavIcon.STATUS, if (inGame) "LIVE" else null),
+                Triple("Flags", FusaoNavIcon.FLAGS, "$activeFlags/7"),
+                Triple("Preload", FusaoNavIcon.PRELOAD, null),
+                Triple("Jogos", FusaoNavIcon.GAMES, if (gamesCount > 0) "$gamesCount" else null),
+                Triple("Log", FusaoNavIcon.LOG, null),
+            )
+        }
+
+        Surface(
+            color = FusaoPalette.VoidBlack.copy(alpha = 0.96f),
+            border = BorderStroke(1.dp, FusaoPalette.GridHairline.copy(alpha = 0.85f)),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .navigationBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                if (onClose != null) {
-                    Text(
-                        "OK",
+                tabs.forEachIndexed { idx, (label, icon, badge) ->
+                    val selected = selectedTab == idx
+                    val itemColor = if (selected) accentColor else FusaoPalette.TextSecondary
+                    Box(
                         modifier = Modifier
-                            .padding(start = 12.dp)
-                            .clickable { onClose() },
-                        color = MaterialTheme.colorScheme.primary
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (selected) accentColor.copy(alpha = 0.13f)
+                                else Color.Transparent
+                            )
+                            .border(
+                                width = if (selected) 1.dp else 0.dp,
+                                color = if (selected) accentColor.copy(alpha = 0.45f) else Color.Transparent,
+                                shape = RoundedCornerShape(10.dp),
+                            )
+                            .clickable { onSelectTab(idx) }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.TopEnd) {
+                                FusaoVectorGlyph(
+                                    icon = icon,
+                                    color = itemColor,
+                                    modifier = Modifier
+                                        .padding(horizontal = 8.dp)
+                                        .size(20.dp),
+                                )
+                                if (badge != null) {
+                                    Text(
+                                        text = badge,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                                        color = if (selected) FusaoPalette.VoidBlack else accentColor,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(
+                                                if (selected) accentColor
+                                                else FusaoPalette.ElevatedHud
+                                            )
+                                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                                    )
+                                }
+                            }
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                ),
+                                color = itemColor,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun InitialLoadingView() {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            TacticalPanel(
+                accentColor = FusaoPalette.CryoCyan,
+                highlighted = true,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.img_fusao_emblem),
+                        contentDescription = null,
+                        modifier = Modifier.size(72.dp),
+                    )
+                    CircularProgressIndicator(
+                        color = FusaoPalette.CryoCyan,
+                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(28.dp),
+                    )
+                    Text(
+                        text = "Aguarde...",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = FusaoPalette.TextPrimary,
+                    )
+                    Text(
+                        text = "Validando ponte root (libsu) e estado de /data/adb/fusao/",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FusaoPalette.TextSecondary,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -147,51 +531,539 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
+    private fun SystemBannersArea(state: FusaoUiState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (!state.rooted) {
+                Banner(
+                    text = "Sem root — modo leitura. Refaça o temp-root e reabra o app.",
+                    accentColor = FusaoPalette.CrimsonCore,
+                    tag = "ROOT OFF",
+                )
+            } else if (!state.moduleInstalled) {
+                Banner(
+                    text = "Módulo encore ausente.",
+                    accentColor = FusaoPalette.IgnisAmber,
+                    tag = "MOD AUSENTE",
+                )
+            }
+
+            AnimatedVisibility(
+                visible = state.isBusy(Busy.RECORD),
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+            ) {
+                Banner(
+                    text = "Gravação de Preload ativa (${state.recordRemainingSec}s restantes) — mantenha o jogo em execução.",
+                    accentColor = FusaoPalette.IgnisAmber,
+                    tag = "REC 20S",
+                )
+            }
+
+            AnimatedVisibility(
+                visible = state.notice.isNotEmpty() && !state.isBusy(Busy.RECORD),
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+            ) {
+                val isError = state.notice.contains("ausente", ignoreCase = true) ||
+                    state.notice.contains("Sem root", ignoreCase = true) ||
+                    state.notice.contains("inválido", ignoreCase = true) ||
+                    state.notice.contains("FALHOU", ignoreCase = true)
+                Banner(
+                    text = state.notice,
+                    accentColor = if (isError) FusaoPalette.CrimsonCore else FusaoPalette.CryoCyan,
+                    tag = if (isError) "ALERTA" else "CLI",
+                    onClose = { vm.clearNotice() },
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun Banner(
+        text: String,
+        accentColor: Color = FusaoPalette.CryoCyan,
+        tag: String = "INFO",
+        onClose: (() -> Unit)? = null,
+    ) {
+        TacticalPanel(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            accentColor = accentColor,
+            containerColor = FusaoPalette.CryoSlate,
+            highlighted = true,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TelemetryPill(
+                        text = tag,
+                        color = accentColor,
+                        filled = true,
+                    )
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = FusaoPalette.TextPrimary,
+                    )
+                }
+                if (onClose != null) {
+                    Text(
+                        text = "OK",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = accentColor,
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(accentColor.copy(alpha = 0.14f))
+                            .clickable { onClose() }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // 1. ÁREA DE STATUS — APRESENTAÇÃO PRINCIPAL DO PRODUTO
+    // =========================================================================
+    @Composable
     private fun StatusTab(state: FusaoUiState) {
         val st = state.status
         val busy = state.anyBusy()
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Perfil", style = MaterialTheme.typography.titleMedium)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("game", "balanced", "battery").forEach { p ->
-                                val sel = st.profile == p
-                                if (sel) {
-                                    Button(onClick = {}, enabled = false) { Text(p) }
-                                } else {
-                                    OutlinedButton(
-                                        onClick = { vm.setProfile(p) },
-                                        enabled = state.rooted && !busy
-                                    ) { Text(p) }
+        val accent = FusaoPalette.profileAccent(st.profile)
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            // HERO CARD COM ARTE ORIGINAL + NÚCLEO DO REATOR + SELETOR DE PERFIL
+            item(key = "status_hero") {
+                TacticalPanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    accentColor = accent,
+                    highlighted = true,
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        // Arte abstrata gerada para a área principal de Status
+                        Image(
+                            painter = painterResource(id = R.drawable.bg_status_reactor),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .matchParentSize(),
+                            contentScale = ContentScale.Crop,
+                            alpha = 0.36f,
+                        )
+                        // Vinheta para máxima legibilidade AMOLED
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            FusaoPalette.VoidBlack.copy(alpha = 0.55f),
+                                            FusaoPalette.ObsidianSurface.copy(alpha = 0.88f),
+                                            FusaoPalette.AbyssNavy.copy(alpha = 0.96f),
+                                        )
+                                    )
+                                )
+                        )
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    TelemetryPill(
+                                        text = if (st.inGame) "SESSÃO DE JOGO ATIVA" else "SISTEMA EM STANDBY",
+                                        color = if (st.inGame) FusaoPalette.IgnisAmber else accent,
+                                        filled = true,
+                                        pulsingDot = true,
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = when (st.profile) {
+                                            "game" -> "PERFIL // GAME"
+                                            "battery" -> "PERFIL // BATTERY"
+                                            "balanced" -> "PERFIL // BALANCED"
+                                            else -> "PERFIL // ${st.profile.ifEmpty { "—" }.uppercase()}"
+                                        },
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        color = FusaoPalette.TextPrimary,
+                                    )
+                                    Text(
+                                        text = when (st.profile) {
+                                            "game" -> "Teto GPU 949 MHz · P0/P4 degraus · Triads de jogo"
+                                            "battery" -> "Contenção energética · Piso conservador · Eco VM"
+                                            "balanced" -> "Equilíbrio dinâmico Exynos 1380 · Stock assistido"
+                                            else -> "Aguardando leitura do perfil em /data/adb/fusao/profile"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = FusaoPalette.TextSecondary,
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                ReactorCoreEmblem(
+                                    profile = st.profile,
+                                    inGame = st.inGame,
+                                    daemonsAlive = st.runningDaemonsCount,
+                                )
+                            }
+
+                            // Seletor de Perfil (game, balanced, battery)
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "SELECIONAR PERFIL DE OPERAÇÃO",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FusaoPalette.TextSecondary,
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    val profiles = listOf(
+                                        Triple("game", "GAME", FusaoPalette.IgnisAmber),
+                                        Triple("balanced", "BALANCED", FusaoPalette.CryoCyan),
+                                        Triple("battery", "BATTERY", FusaoPalette.BioEmerald),
+                                    )
+                                    profiles.forEach { (pKey, pLabel, pColor) ->
+                                        val selected = st.profile == pKey
+                                        val isTargetBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "profile:$pKey"
+                                        TacticalButton(
+                                            text = pKey,
+                                            subtitle = if (selected) "ATIVO" else pLabel,
+                                            onClick = { if (!selected) vm.setProfile(pKey) },
+                                            enabled = state.rooted && !busy && !selected,
+                                            filled = selected,
+                                            isLoading = isTargetBusy,
+                                            accentColor = pColor,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Card integrado do Jogo em Execução (game-active.txt)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(FusaoPalette.VoidBlack.copy(alpha = 0.72f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (st.inGame) FusaoPalette.IgnisAmber.copy(alpha = 0.55f)
+                                        else FusaoPalette.BorderSubtle.copy(alpha = 0.45f),
+                                        shape = RoundedCornerShape(10.dp),
+                                    )
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        if (st.inGame) {
+                                            AppIconBadge(
+                                                pkg = st.gameActive,
+                                                label = state.labelFor(st.gameActive),
+                                                size = 42.dp,
+                                                accentColor = FusaoPalette.IgnisAmber,
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(42.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(FusaoPalette.CryoSlate)
+                                                    .border(
+                                                        1.dp,
+                                                        FusaoPalette.BorderSubtle,
+                                                        RoundedCornerShape(10.dp),
+                                                    ),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                FusaoVectorGlyph(
+                                                    icon = FusaoNavIcon.GAMES,
+                                                    color = FusaoPalette.TextMuted,
+                                                )
+                                            }
+                                        }
+                                        Column {
+                                            Text(
+                                                text = "JOGO ATIVO (GAME-ACTIVE)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (st.inGame) FusaoPalette.IgnisAmber else FusaoPalette.TextMuted,
+                                            )
+                                            Text(
+                                                text = if (st.inGame) state.labelFor(st.gameActive) else "— (idle)",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = FusaoPalette.TextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            if (st.inGame) {
+                                                Text(
+                                                    text = st.gameActive,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = FusaoPalette.TextSecondary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    TelemetryPill(
+                                        text = if (st.inGame) "EM FOCO" else "IDLE",
+                                        color = if (st.inGame) FusaoPalette.IgnisAmber else FusaoPalette.TextMuted,
+                                        filled = st.inGame,
+                                    )
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Jogo ativo: " + if (st.inGame) st.gameActive else "— (idle)")
-                        Text("Display: " + st.display.ifEmpty { "—" })
-                        Text("Thermal: " + st.thermal.ifEmpty { "—" })
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Daemons", style = MaterialTheme.typography.titleMedium)
-                        Text("fusaod: " + daemonText(st.fusaodRunning))
-                        Text("watch: " + daemonText(st.watchRunning))
-                        Text("observer: " + daemonText(st.observerRunning))
+            }
+
+            // DISPLAY & ESTADO TÉRMICO (TELEMETRIA REAL DO SISTEMA + ESCALA WM SIZE)
+            item(key = "status_display_thermal") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        TacticalPanel(
+                            modifier = Modifier.weight(1f),
+                            accentColor = FusaoPalette.CryoCyan,
+                            contentPadding = PaddingValues(14.dp),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "DISPLAY (WM SIZE)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FusaoPalette.CryoCyan,
+                                )
+                                Text(
+                                    text = st.display.ifEmpty { "—" },
+                                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
+                                    color = FusaoPalette.TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = "Resolução reportada por display.sh",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FusaoPalette.TextSecondary,
+                                )
+                            }
+                        }
+
+                        TacticalPanel(
+                            modifier = Modifier.weight(1f),
+                            accentColor = FusaoPalette.IgnisAmber,
+                            contentPadding = PaddingValues(14.dp),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "ESTADO TÉRMICO",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FusaoPalette.IgnisAmber,
+                                )
+                                Text(
+                                    text = st.thermal.ifEmpty { "—" },
+                                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
+                                    color = FusaoPalette.TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = "Guard 78°C CPU / 45°C Batt",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FusaoPalette.TextSecondary,
+                                )
+                            }
+                        }
+                    }
+
+                    // Controles rápidos para downscale reversível via `fusao display`
+                    TacticalPanel(
+                        modifier = Modifier.fillMaxWidth(),
+                        accentColor = FusaoPalette.CryoTurquoise,
+                        contentPadding = PaddingValues(12.dp),
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "ESCALA DE RENDERIZAÇÃO (DOWNSCALE REVERSÍVEL)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FusaoPalette.TextSecondary,
+                                )
+                                Text(
+                                    text = "atual: ${st.display.ifEmpty { "—" }}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FusaoPalette.CryoCyan,
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                listOf(
+                                    "720p" to "720p",
+                                    "810p" to "810p",
+                                    "900p" to "900p",
+                                    "reset" to "Stock",
+                                ).forEach { (mode, label) ->
+                                    val isModeBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "display:$mode"
+                                    TacticalButton(
+                                        text = label,
+                                        onClick = { vm.setDisplay(mode) },
+                                        enabled = state.rooted && !busy,
+                                        filled = mode == "reset" && st.display.startsWith("1080"),
+                                        isLoading = isModeBusy,
+                                        accentColor = if (mode == "reset") FusaoPalette.BioEmerald else FusaoPalette.CryoCyan,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Ganchos (foi ou não)", style = MaterialTheme.typography.titleMedium)
-                        if (st.hooks.isEmpty()) {
-                            Text("—")
-                        } else {
-                            st.hooks.forEach { h -> MonoLine(h) }
+            }
+
+            // DAEMONS DO MÓDULO (fusaod, watch, observer)
+            item(key = "status_daemons") {
+                TacticalPanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    accentColor = FusaoPalette.PlasmaViolet,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        HudSectionHeader(
+                            code = "SYS // DAEMONS",
+                            title = "Daemons",
+                            subtitle = "Processos residentes monitorados via pgrep pelo módulo",
+                            accentColor = FusaoPalette.PlasmaViolet,
+                            trailing = {
+                                TelemetryPill(
+                                    text = "${st.runningDaemonsCount}/3 VIVOS",
+                                    color = if (st.runningDaemonsCount == 3) FusaoPalette.BioEmerald else FusaoPalette.CryoCyan,
+                                    filled = true,
+                                )
+                            },
+                        )
+
+                        DaemonStatusRow(
+                            name = "fusaod",
+                            role = "Single-writer Rust (CPU/GPU/MIF/INT/DISP)",
+                            running = st.fusaodRunning,
+                            flagEnabled = st.fusaod,
+                        )
+                        DaemonStatusRow(
+                            name = "watch",
+                            role = "Supervisor de sessão e disparo de ganchos",
+                            running = st.watchRunning,
+                            flagEnabled = true,
+                        )
+                        DaemonStatusRow(
+                            name = "observer",
+                            role = "IProcessObserver via app_process (detecção instantânea)",
+                            running = st.observerRunning,
+                            flagEnabled = true,
+                        )
+                    }
+                }
+            }
+
+            // GANCHOS (FOI OU NÃO)
+            item(key = "status_hooks") {
+                TacticalPanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    accentColor = FusaoPalette.CryoCyan,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        HudSectionHeader(
+                            code = "HOOKS // AUDIT",
+                            title = "Ganchos (foi ou não)",
+                            subtitle = "Últimas 8 transições verificadas em fusao.log (.1 + atual)",
+                            accentColor = FusaoPalette.CryoCyan,
+                            trailing = {
+                                TelemetryPill(
+                                    text = "${st.hooks.size} EVENTOS",
+                                    color = FusaoPalette.CryoCyan,
+                                )
+                            },
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(FusaoPalette.VoidBlack.copy(alpha = 0.82f))
+                                .border(1.dp, FusaoPalette.GridHairline, RoundedCornerShape(8.dp))
+                                .padding(12.dp)
+                        ) {
+                            if (st.hooks.isEmpty()) {
+                                Text(
+                                    text = "—",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = FusaoPalette.TextMuted,
+                                )
+                            } else {
+                                SelectionContainer {
+                                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        st.hooks.forEachIndexed { idx, h ->
+                                            Row(
+                                                verticalAlignment = Alignment.Top,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            ) {
+                                                Text(
+                                                    text = (idx + 1).toString().padStart(2, '0'),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = FusaoPalette.TextMuted,
+                                                )
+                                                Text(
+                                                    text = highlightTelemetryLine(h),
+                                                    style = MaterialTheme.typography.bodySmall.copy(
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontSize = 11.5.sp,
+                                                        lineHeight = 16.sp,
+                                                    ),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -199,39 +1071,176 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Composable
+    private fun DaemonStatusRow(
+        name: String,
+        role: String,
+        running: Boolean,
+        flagEnabled: Boolean,
+    ) {
+        val statusText = daemonText(running)
+        val dotColor = when {
+            running -> FusaoPalette.BioEmerald
+            !flagEnabled -> FusaoPalette.TextMuted
+            else -> FusaoPalette.IgnisAmber
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(FusaoPalette.VoidBlack.copy(alpha = 0.55f))
+                .border(
+                    width = 1.dp,
+                    color = if (running) FusaoPalette.BioEmerald.copy(alpha = 0.35f)
+                    else FusaoPalette.BorderSubtle.copy(alpha = 0.35f),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                StatusPulseDot(color = dotColor, active = running)
+                Column {
+                    Text(
+                        text = "$name: $statusText",
+                        style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
+                        color = FusaoPalette.TextPrimary,
+                    )
+                    Text(
+                        text = role,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FusaoPalette.TextSecondary,
+                    )
+                }
+            }
+            TelemetryPill(
+                text = statusText.uppercase(),
+                color = dotColor,
+                filled = running,
+            )
+        }
+    }
+
     private fun daemonText(running: Boolean): String = if (running) "vivo" else "parado"
 
+    // =========================================================================
+    // 2. ÁREA DE FLAGS — OS 7 CONTROLES DE SUBSISTEMA
+    // =========================================================================
     @Composable
     private fun FlagsTab(state: FusaoUiState) {
         val st = state.status
         val busy = state.anyBusy()
-        val defs = listOf(
-            "fusaod" to "Escritor CPU/GPU/MIF/INT/DISP (sobe no boot)",
-            "framework" to "Triads + overlay + tune no game-enter",
-            "perf" to "renice/IO do jogo no game-enter",
-            "dnd" to "Arma auto-DND no game-enter (off = desarmado)",
-            "preload" to "WILLNEED dos assets no game-enter",
-            "ramclean" to "Limpa RAM ANTES do preload no game-enter",
-            "gos" to "Mata o GOS da Samsung (off = pausado)",
-        )
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            items(defs) { (cmd, desc) ->
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item(key = "flags_header") {
+                TacticalPanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    accentColor = FusaoPalette.CryoCyan,
+                    contentPadding = PaddingValues(14.dp),
+                ) {
+                    HudSectionHeader(
+                        code = "MATRIX // 07 FLAGS",
+                        title = "Controles do Módulo",
+                        subtitle = "Cada chave opera diretamente via CLI `fusao <flag> on|off` em /data/adb/fusao/",
+                        accentColor = FusaoPalette.CryoCyan,
+                        trailing = {
+                            TelemetryPill(
+                                text = "${st.activeFlagsCount}/7 ATIVOS",
+                                color = FusaoPalette.CryoCyan,
+                                filled = true,
+                            )
+                        },
+                    )
+                }
+            }
+
+            items(items = FLAG_SPECS, key = { it.cmd }) { spec ->
+                val checked = st.flag(spec.cmd)
+                val isThisFlagBusy = state.isBusy(Busy.FLAG) && state.activeTarget == spec.cmd
+                val available = state.rooted && state.moduleInstalled
+
+                val stateBadgeText = when {
+                    !available -> "INDISPONÍVEL"
+                    isThisFlagBusy -> "PROCESSANDO"
+                    spec.cmd == "dnd" && checked && st.inGame -> "ATIVO EM JOGO"
+                    spec.cmd == "dnd" && checked -> "ARMADO (PRÓX. JOGO)"
+                    spec.cmd == "dnd" && !checked -> "DESARMADO"
+                    spec.cmd == "gos" && checked -> "KILLER ATIVO"
+                    spec.cmd == "gos" && !checked -> "PAUSADO"
+                    checked -> "ATIVO"
+                    else -> "INATIVO"
+                }
+
+                val badgeColor = when {
+                    !available -> FusaoPalette.TextMuted
+                    isThisFlagBusy -> FusaoPalette.CryoCyan
+                    checked -> spec.accent
+                    spec.cmd == "gos" && !checked -> FusaoPalette.IgnisAmber
+                    else -> FusaoPalette.TextMuted
+                }
+
+                TacticalPanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    accentColor = if (checked) spec.accent else FusaoPalette.BorderSubtle,
+                    highlighted = checked,
+                    contentPadding = PaddingValues(14.dp),
+                ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(cmd, style = MaterialTheme.typography.titleSmall)
-                            Text(desc, style = MaterialTheme.typography.bodySmall)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = spec.title,
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                    ),
+                                    color = FusaoPalette.TextPrimary,
+                                )
+                                TelemetryPill(
+                                    text = stateBadgeText,
+                                    color = badgeColor,
+                                    filled = checked || isThisFlagBusy,
+                                )
+                            }
+                            Text(
+                                text = spec.desc,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = FusaoPalette.TextSecondary,
+                            )
+                            Text(
+                                text = spec.category,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = spec.accent.copy(alpha = 0.85f),
+                            )
                         }
-                        Switch(
-                            checked = st.flag(cmd),
-                            onCheckedChange = { vm.toggleFlag(cmd, it) },
-                            enabled = state.rooted && !busy
+
+                        CyberSwitch(
+                            checked = checked,
+                            onCheckedChange = { vm.toggleFlag(spec.cmd, it) },
+                            enabled = state.rooted && !busy,
+                            isProcessing = isThisFlagBusy,
+                            accentColor = spec.accent,
                         )
                     }
                 }
@@ -239,118 +1248,629 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // =========================================================================
+    // 3. ÁREA DE PRELOAD & RAM CLEAN
+    // =========================================================================
     @Composable
     private fun PreloadTab(state: FusaoUiState) {
         val busy = state.anyBusy()
-        LaunchedEffect(Unit) {
-            if (state.preloadInfo.isEmpty()) vm.loadPreload()
-            if (state.ramcleanInfo.isEmpty()) vm.loadRamclean()
+        val preloadTelemetry = remember(state.preloadInfo) {
+            PreloadTelemetry.fromLines(state.preloadInfo)
         }
+        val ramcleanTelemetry = remember(state.ramcleanInfo) {
+            RamcleanTelemetry.fromLines(state.ramcleanInfo)
+        }
+
+        LaunchedEffect(state.rooted) {
+            if (state.rooted) {
+                vm.loadPreloadAndRamcleanIfEmpty()
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
                 .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Preload (WILLNEED)", style = MaterialTheme.typography.titleMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = { vm.loadPreload() },
-                            enabled = state.rooted && !busy
-                        ) { Text("Atualizar") }
-                        Button(
-                            onClick = { vm.preloadNow() },
-                            enabled = state.rooted && !busy && state.status.inGame
-                        ) { Text("Preload agora") }
-                    }
-                    OutlinedButton(
-                        onClick = { vm.preloadRecord() },
-                        enabled = state.rooted && !busy && state.status.inGame
-                    ) { Text(if (state.isBusy(Busy.RECORD)) "Observando..." else "Record 20s (jogo aberto)") }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (state.preloadInfo.isEmpty()) {
-                        Text("—")
-                    } else {
-                        state.preloadInfo.forEach { l -> MonoLine(l) }
+            // PAINEL PRINCIPAL: PRELOAD (WILLNEED) + RECORD 20S
+            TacticalPanel(
+                modifier = Modifier.fillMaxWidth(),
+                accentColor = FusaoPalette.ElectricOrchid,
+                highlighted = true,
+                contentPadding = PaddingValues(0.dp),
+            ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Image(
+                        painter = painterResource(id = R.drawable.bg_preload_matrix),
+                        contentDescription = null,
+                        modifier = Modifier.matchParentSize(),
+                        contentScale = ContentScale.Crop,
+                        alpha = 0.30f,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        FusaoPalette.VoidBlack.copy(alpha = 0.62f),
+                                        FusaoPalette.ObsidianSurface.copy(alpha = 0.92f),
+                                        FusaoPalette.AbyssNavy.copy(alpha = 0.98f),
+                                    )
+                                )
+                            )
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        HudSectionHeader(
+                            code = "MEM // WILLNEED",
+                            title = "Preload (WILLNEED)",
+                            subtitle = "posix_fadvise inteligente com seleção record→replay por jogo (cap 2000 arqs / 512 MB)",
+                            accentColor = FusaoPalette.ElectricOrchid,
+                            trailing = {
+                                TelemetryPill(
+                                    text = if (state.status.preload) "HOOK ON" else "HOOK OFF",
+                                    color = if (state.status.preload) FusaoPalette.ElectricOrchid else FusaoPalette.TextMuted,
+                                    filled = state.status.preload,
+                                )
+                            },
+                        )
+
+                        // Resumo estruturado extraído das linhas reais do CLI
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            MetricMiniCard(
+                                label = "ESTADO CLI",
+                                value = preloadTelemetry.stateLabel.substringBefore(" ").ifEmpty { "—" },
+                                accent = FusaoPalette.ElectricOrchid,
+                                modifier = Modifier.weight(1f),
+                            )
+                            MetricMiniCard(
+                                label = "PACKS GRAVADOS",
+                                value = preloadTelemetry.packCount,
+                                accent = FusaoPalette.CryoCyan,
+                                modifier = Modifier.weight(1f),
+                            )
+                            MetricMiniCard(
+                                label = "ALVO ATIVO",
+                                value = if (state.status.inGame) state.labelFor(state.status.gameActive) else "IDLE",
+                                accent = if (state.status.inGame) FusaoPalette.IgnisAmber else FusaoPalette.TextMuted,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+
+                        // Aviso contextual quando não há jogo em execução para Preload agora / Record 20s
+                        if (!state.status.inGame) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(FusaoPalette.VoidBlack.copy(alpha = 0.65f))
+                                    .border(1.dp, FusaoPalette.BorderSubtle, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                StatusPulseDot(color = FusaoPalette.IgnisAmber, active = false)
+                                Text(
+                                    text = "Abra um jogo da lista para habilitar \"Preload agora\" e \"Record 20s (jogo aberto)\".",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FusaoPalette.TextSecondary,
+                                )
+                            }
+                        }
+
+                        // Medidor ao vivo durante a gravação de 20 segundos
+                        AnimatedVisibility(
+                            visible = state.isBusy(Busy.RECORD),
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically(),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(FusaoPalette.VoidBlack.copy(alpha = 0.85f))
+                                    .border(1.2.dp, FusaoPalette.IgnisAmber, RoundedCornerShape(10.dp))
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                PreloadCountdownGauge(
+                                    remainingSec = state.recordRemainingSec,
+                                    totalSec = 20,
+                                )
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(
+                                        text = "OBSERVANDO JOGO ABERTO (~20S)",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = FusaoPalette.IgnisAmber,
+                                    )
+                                    Text(
+                                        text = "fusaod preload-record está mapeando os assets abertos para gerar o pack em /data/adb/fusao/preload/.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = FusaoPalette.TextPrimary,
+                                    )
+                                    LinearProgressIndicator(
+                                        progress = { (20 - state.recordRemainingSec).coerceIn(0, 20) / 20f },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 4.dp)
+                                            .height(5.dp)
+                                            .clip(RoundedCornerShape(3.dp)),
+                                        color = FusaoPalette.IgnisAmber,
+                                        trackColor = FusaoPalette.GridHairline,
+                                    )
+                                }
+                            }
+                        }
+
+                        // Botões de comando do Preload preservados integralmente
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            TacticalButton(
+                                text = "Atualizar",
+                                onClick = { vm.loadPreload() },
+                                enabled = state.rooted && !busy,
+                                isLoading = state.isBusy(Busy.PRELOAD) && state.activeTarget == "preload_status",
+                                accentColor = FusaoPalette.CryoCyan,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TacticalButton(
+                                text = "Preload agora",
+                                onClick = { vm.preloadNow() },
+                                enabled = state.rooted && !busy && state.status.inGame,
+                                filled = true,
+                                isLoading = state.isBusy(Busy.PRELOAD) && state.activeTarget == "preload_now",
+                                accentColor = FusaoPalette.ElectricOrchid,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+
+                        TacticalButton(
+                            text = if (state.isBusy(Busy.RECORD)) {
+                                "Observando... (${state.recordRemainingSec}s)"
+                            } else {
+                                "Record 20s (jogo aberto)"
+                            },
+                            onClick = { vm.preloadRecord() },
+                            enabled = state.rooted && !busy && state.status.inGame,
+                            filled = state.isBusy(Busy.RECORD),
+                            isLoading = state.isBusy(Busy.RECORD),
+                            accentColor = FusaoPalette.IgnisAmber,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+
+                        // Console de saída real do CLI `fusao preload status` / `now` / `record`
+                        TerminalOutputConsole(
+                            title = "SAÍDA CLI // FUSAO PRELOAD",
+                            lines = state.preloadInfo,
+                        )
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("RAM clean (antes do preload)", style = MaterialTheme.typography.titleMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
+
+            // PAINEL SECUNDÁRIO: RAM CLEAN (ANTES DO PRELOAD)
+            TacticalPanel(
+                modifier = Modifier.fillMaxWidth(),
+                accentColor = FusaoPalette.BioEmerald,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HudSectionHeader(
+                        code = "VM // RECLAIM",
+                        title = "RAM clean (antes do preload)",
+                        subtitle = "sync + drop_caches (3) + compact_memory (1) para abrir janela limpa antes do WILLNEED",
+                        accentColor = FusaoPalette.BioEmerald,
+                        trailing = {
+                            TelemetryPill(
+                                text = if (state.status.ramclean) "HOOK ON" else "HOOK OFF",
+                                color = if (state.status.ramclean) FusaoPalette.BioEmerald else FusaoPalette.TextMuted,
+                                filled = state.status.ramclean,
+                            )
+                        },
+                    )
+
+                    if (ramcleanTelemetry.lastTransition.isNotEmpty() || ramcleanTelemetry.lastAvailKb.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            MetricMiniCard(
+                                label = "MEMFREE (KB)",
+                                value = ramcleanTelemetry.lastTransition.ifEmpty { "—" },
+                                accent = FusaoPalette.BioEmerald,
+                                modifier = Modifier.weight(1.3f),
+                            )
+                            MetricMiniCard(
+                                label = "MEMAVAIL (KB)",
+                                value = ramcleanTelemetry.lastAvailKb.ifEmpty { "—" },
+                                accent = FusaoPalette.CryoCyan,
+                                modifier = Modifier.weight(1f),
+                            )
+                            MetricMiniCard(
+                                label = "STATUS RC",
+                                value = ramcleanTelemetry.lastRc.ifEmpty { "—" },
+                                accent = FusaoPalette.MintPulse,
+                                modifier = Modifier.weight(0.7f),
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TacticalButton(
+                            text = "Atualizar",
                             onClick = { vm.loadRamclean() },
-                            enabled = state.rooted && !busy
-                        ) { Text("Atualizar") }
-                        Button(
+                            enabled = state.rooted && !busy,
+                            isLoading = state.isBusy(Busy.RAMCLEAN) && state.activeTarget == "ramclean_status",
+                            accentColor = FusaoPalette.CryoCyan,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TacticalButton(
+                            text = "Limpar agora",
                             onClick = { vm.ramcleanNow() },
-                            enabled = state.rooted && !busy
-                        ) { Text("Limpar agora") }
+                            enabled = state.rooted && !busy,
+                            filled = true,
+                            isLoading = state.isBusy(Busy.RAMCLEAN) && state.activeTarget == "ramclean_now",
+                            accentColor = FusaoPalette.BioEmerald,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (state.ramcleanInfo.isEmpty()) {
-                        Text("—")
-                    } else {
-                        state.ramcleanInfo.forEach { l -> MonoLine(l) }
-                    }
+
+                    TerminalOutputConsole(
+                        title = "SAÍDA CLI // FUSAO RAMCLEAN",
+                        lines = state.ramcleanInfo,
+                    )
                 }
             }
         }
     }
 
     @Composable
-    private fun GamesTab(state: FusaoUiState) {
-        val ctx = LocalContext.current
-        var pickerOpen by remember { mutableStateOf(false) }
-        val busy = state.anyBusy()
-        LaunchedEffect(Unit) {
-            if (state.games.isEmpty()) vm.loadGames()
+    private fun MetricMiniCard(
+        label: String,
+        value: String,
+        accent: Color,
+        modifier: Modifier = Modifier,
+    ) {
+        Column(
+            modifier = modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(FusaoPalette.VoidBlack.copy(alpha = 0.72f))
+                .border(1.dp, accent.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                color = FusaoPalette.TextMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { vm.loadGames() },
-                    enabled = state.rooted && !busy
-                ) { Text("Atualizar") }
-                Button(
-                    onClick = {
-                        vm.loadApps(ctx)
-                        pickerOpen = true
-                    },
-                    enabled = state.rooted && !busy
-                ) { Text("Adicionar") }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(state.games) { pkg ->
-                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(vm.appLabel(pkg), style = MaterialTheme.typography.titleSmall)
-                                Text(pkg, style = MaterialTheme.typography.bodySmall)
-                            }
+    }
+
+    @Composable
+    private fun TerminalOutputConsole(
+        title: String,
+        lines: List<String>,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(FusaoPalette.VoidBlack.copy(alpha = 0.85f))
+                .border(1.dp, FusaoPalette.GridHairline, RoundedCornerShape(8.dp))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                color = FusaoPalette.TextMuted,
+            )
+            if (lines.isEmpty()) {
+                Text(
+                    text = "—",
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    color = FusaoPalette.TextMuted,
+                )
+            } else {
+                SelectionContainer {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        lines.forEach { l ->
                             Text(
-                                "Remover",
-                                modifier = Modifier
-                                    .padding(start = 12.dp)
-                                    .clickable(enabled = state.rooted && !busy) { vm.gameDel(pkg) },
-                                color = MaterialTheme.colorScheme.error
+                                text = highlightTelemetryLine(l),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 16.sp,
+                                ),
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    // =========================================================================
+    // 4. ÁREA DE JOGOS — GAMELIST + SELETOR DE APLICATIVOS COM ÍCONES REAIS
+    // =========================================================================
+    @Composable
+    private fun GamesTab(state: FusaoUiState) {
+        val ctx = LocalContext.current
+        var pickerOpen by rememberSaveable { mutableStateOf(false) }
+        var filterQuery by rememberSaveable { mutableStateOf("") }
+        val busy = state.anyBusy()
+
+        LaunchedEffect(state.rooted) {
+            if (state.rooted && state.games.isEmpty()) {
+                vm.loadGames()
+            }
+        }
+
+        val filteredGames = remember(state.games, state.appLabelsMap, filterQuery) {
+            if (filterQuery.isBlank()) {
+                state.games
+            } else {
+                val q = filterQuery.trim()
+                state.games.filter { pkg ->
+                    val label = state.labelFor(pkg)
+                    label.contains(q, ignoreCase = true) || pkg.contains(q, ignoreCase = true)
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            TacticalPanel(
+                modifier = Modifier.fillMaxWidth(),
+                accentColor = FusaoPalette.CryoCyan,
+                contentPadding = PaddingValues(14.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HudSectionHeader(
+                        code = "TARGET // GAMELIST.TXT",
+                        title = "Jogos Monitorados",
+                        subtitle = "Pacotes que acionam o observer/watch e os ganchos de game-enter",
+                        accentColor = FusaoPalette.CryoCyan,
+                        trailing = {
+                            TelemetryPill(
+                                text = "${state.games.size} ALVOS",
+                                color = FusaoPalette.CryoCyan,
+                                filled = true,
+                            )
+                        },
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TacticalButton(
+                            text = "Atualizar",
+                            onClick = { vm.loadGames() },
+                            enabled = state.rooted && !busy,
+                            isLoading = state.isBusy(Busy.GAMELIST) && state.activeTarget == "gamelist_load",
+                            accentColor = FusaoPalette.CryoCyan,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TacticalButton(
+                            text = "Adicionar",
+                            onClick = {
+                                vm.loadApps(ctx)
+                                pickerOpen = true
+                            },
+                            enabled = state.rooted && !busy,
+                            filled = true,
+                            accentColor = FusaoPalette.PlasmaViolet,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    if (state.games.size > 4) {
+                        OutlinedTextField(
+                            value = filterQuery,
+                            onValueChange = { filterQuery = it },
+                            placeholder = {
+                                Text(
+                                    "Filtrar na gamelist por nome ou pacote...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FusaoPalette.TextMuted,
+                                )
+                            },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = FusaoPalette.TextPrimary),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = FusaoPalette.CryoCyan,
+                                unfocusedBorderColor = FusaoPalette.BorderSubtle,
+                                focusedContainerColor = FusaoPalette.VoidBlack.copy(alpha = 0.65f),
+                                unfocusedContainerColor = FusaoPalette.VoidBlack.copy(alpha = 0.45f),
+                                cursorColor = FusaoPalette.CryoCyan,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+
+            if (filteredGames.isEmpty()) {
+                TacticalPanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    accentColor = FusaoPalette.BorderSubtle,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FusaoVectorGlyph(
+                            icon = FusaoNavIcon.GAMES,
+                            color = FusaoPalette.TextMuted,
+                            modifier = Modifier.size(32.dp),
+                        )
+                        Text(
+                            text = if (state.games.isEmpty()) {
+                                "Nenhum jogo listado em gamelist.txt"
+                            } else {
+                                "Nenhum pacote corresponde ao filtro \"$filterQuery\""
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = FusaoPalette.TextSecondary,
+                        )
+                        Text(
+                            text = "Use \"Adicionar\" para escolher um aplicativo instalado ou \"Atualizar\" para reler do módulo.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FusaoPalette.TextMuted,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 12.dp),
+                ) {
+                    items(items = filteredGames, key = { it }) { pkg ->
+                        val label = vm.appLabel(pkg)
+                        val isInstalled = pkg in state.appLabelsMap
+                        val isCurrentlyRunning = state.status.gameActive == pkg
+                        val isDeletingThis = state.isBusy(Busy.GAMELIST) && state.activeTarget == "del:$pkg"
+
+                        TacticalPanel(
+                            modifier = Modifier.fillMaxWidth(),
+                            accentColor = when {
+                                isCurrentlyRunning -> FusaoPalette.IgnisAmber
+                                isInstalled -> FusaoPalette.CryoCyan
+                                else -> FusaoPalette.BorderSubtle
+                            },
+                            highlighted = isCurrentlyRunning,
+                            contentPadding = PaddingValues(12.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    AppIconBadge(
+                                        pkg = pkg,
+                                        label = label,
+                                        size = 46.dp,
+                                        accentColor = if (isCurrentlyRunning) FusaoPalette.IgnisAmber else FusaoPalette.CryoCyan,
+                                    )
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = FusaoPalette.TextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            if (isCurrentlyRunning) {
+                                                TelemetryPill(
+                                                    text = "ATIVO",
+                                                    color = FusaoPalette.IgnisAmber,
+                                                    filled = true,
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = pkg,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = FusaoPalette.TextSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (!isInstalled && state.apps.isNotEmpty()) {
+                                            Text(
+                                                text = "Registrado em gamelist.txt (não instalado)",
+                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.5.sp),
+                                                color = FusaoPalette.TextMuted,
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(FusaoPalette.CrimsonCore.copy(alpha = 0.14f))
+                                        .border(
+                                            1.dp,
+                                            FusaoPalette.CrimsonCore.copy(alpha = 0.45f),
+                                            RoundedCornerShape(8.dp),
+                                        )
+                                        .clickable(enabled = state.rooted && !busy) { vm.gameDel(pkg) }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (isDeletingThis) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = FusaoPalette.CrimsonCore,
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "Remover",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = FusaoPalette.CrimsonSoft,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (pickerOpen) {
             AppPicker(
                 state = state,
@@ -358,95 +1878,480 @@ class MainActivity : ComponentActivity() {
                     pickerOpen = false
                     vm.gameAdd(pkg)
                 },
-                onClose = { pickerOpen = false }
+                onClose = { pickerOpen = false },
             )
         }
     }
 
     @Composable
-    private fun AppPicker(state: FusaoUiState, onPick: (String) -> Unit, onClose: () -> Unit) {
-        var query by remember { mutableStateOf("") }
-        val inList = state.games.toSet()
-        val shown = state.apps.filter { a ->
-            a.pkg !in inList &&
-                (query.isEmpty() || a.label.contains(query, ignoreCase = true) || a.pkg.contains(query, ignoreCase = true))
+    private fun AppPicker(
+        state: FusaoUiState,
+        onPick: (String) -> Unit,
+        onClose: () -> Unit,
+    ) {
+        var query by rememberSaveable { mutableStateOf("") }
+        val shown = remember(state.apps, state.games, query) {
+            val inList = state.games.toSet()
+            val q = query.trim()
+            state.apps.filter { a ->
+                a.pkg !in inList &&
+                    (q.isEmpty() || a.label.contains(q, ignoreCase = true) || a.pkg.contains(q, ignoreCase = true))
+            }.take(200)
         }
-        androidx.compose.material3.AlertDialog(
+
+        Dialog(
             onDismissRequest = onClose,
-            title = { Text("Adicionar jogo") },
-            text = {
-                Column {
-                    androidx.compose.material3.OutlinedTextField(
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            TacticalPanel(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 24.dp),
+                accentColor = FusaoPalette.PlasmaViolet,
+                containerColor = FusaoPalette.ObsidianSurface,
+                highlighted = true,
+                contentPadding = PaddingValues(16.dp),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    HudSectionHeader(
+                        code = "PICKER // LAUNCHER APPS",
+                        title = "Adicionar jogo",
+                        subtitle = "Selecione um aplicativo instalado para incluir em gamelist.txt",
+                        accentColor = FusaoPalette.PlasmaViolet,
+                        trailing = {
+                            TelemetryPill(
+                                text = "${shown.size} APPS",
+                                color = FusaoPalette.CryoCyan,
+                            )
+                        },
+                    )
+
+                    OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
                         label = { Text("Buscar") },
+                        placeholder = { Text("Nome do jogo ou com.exemplo.app") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = FusaoPalette.TextPrimary),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = FusaoPalette.CryoCyan,
+                            unfocusedBorderColor = FusaoPalette.BorderSubtle,
+                            focusedLabelColor = FusaoPalette.CryoCyan,
+                            unfocusedLabelColor = FusaoPalette.TextSecondary,
+                            cursorColor = FusaoPalette.CryoCyan,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    LazyColumn(modifier = Modifier.height(320.dp)) {
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 240.dp, max = 380.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(FusaoPalette.VoidBlack.copy(alpha = 0.7f))
+                            .border(1.dp, FusaoPalette.GridHairline, RoundedCornerShape(8.dp))
+                    ) {
                         if (state.isBusy(Busy.APPS)) {
-                            item { Text("Listando apps...") }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(32.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    color = FusaoPalette.CryoCyan,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                                Text(
+                                    text = "Listando apps...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = FusaoPalette.TextSecondary,
+                                )
+                            }
+                        } else if (shown.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(32.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "Nenhum aplicativo encontrado para \"$query\".",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FusaoPalette.TextMuted,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
                         } else {
-                            items(shown.take(200)) { a ->
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onPick(a.pkg) }
-                                        .padding(vertical = 8.dp)
-                                ) {
-                                    Text(a.label, style = MaterialTheme.typography.titleSmall)
-                                    Text(a.pkg, style = MaterialTheme.typography.bodySmall)
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                items(items = shown, key = { it.pkg }) { app ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(FusaoPalette.CryoSlate.copy(alpha = 0.65f))
+                                            .border(
+                                                1.dp,
+                                                FusaoPalette.BorderSubtle.copy(alpha = 0.4f),
+                                                RoundedCornerShape(8.dp),
+                                            )
+                                            .clickable { onPick(app.pkg) }
+                                            .padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    ) {
+                                        AppIconBadge(
+                                            pkg = app.pkg,
+                                            label = app.label,
+                                            size = 40.dp,
+                                            accentColor = FusaoPalette.PlasmaViolet,
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = app.label,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = FusaoPalette.TextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                text = app.pkg,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = FusaoPalette.TextSecondary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        TelemetryPill(
+                                            text = "+ ADD",
+                                            color = FusaoPalette.CryoCyan,
+                                            filled = true,
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TacticalButton(
+                            text = "Fechar",
+                            onClick = onClose,
+                            accentColor = FusaoPalette.TextSecondary,
+                        )
+                    }
                 }
-            },
-            confirmButton = {},
-            dismissButton = {
-                OutlinedButton(onClick = onClose) { Text("Fechar") }
             }
-        )
+        }
     }
 
+    // =========================================================================
+    // 5. ÁREA DE LOG — FUSAO.LOG, FUSAOD.LOG & BUGREPORT
+    // =========================================================================
     @Composable
     private fun LogTab(state: FusaoUiState) {
         val busy = state.anyBusy()
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { vm.loadLog(false) },
-                    enabled = state.rooted && !busy
-                ) { Text("fusao.log") }
-                OutlinedButton(
-                    onClick = { vm.loadLog(true) },
-                    enabled = state.rooted && !busy
-                ) { Text("fusaod.log") }
-                OutlinedButton(
-                    onClick = { vm.bugreport() },
-                    enabled = state.rooted && !busy
-                ) { Text("Bugreport") }
+        val clipboard = LocalClipboardManager.current
+        var logFilter by rememberSaveable { mutableStateOf("") }
+        var severityFilter by rememberSaveable { mutableIntStateOf(0) } // 0=Todos, 1=Eventos OK, 2=Alertas/Contenda
+
+        LaunchedEffect(state.rooted) {
+            if (state.rooted && state.logLines.isEmpty()) {
+                vm.loadLog(false)
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                if (state.logFusaod) "fusaod.log (writer)" else "fusao.log (ganchos)",
-                style = MaterialTheme.typography.titleSmall
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(state.logLines) { l -> MonoLine(l) }
+        }
+
+        val displayedLines = remember(state.logLines, logFilter, severityFilter) {
+            val q = logFilter.trim()
+            state.logLines.mapIndexedNotNull { index, raw ->
+                val matchesQuery = q.isEmpty() || raw.contains(q, ignoreCase = true)
+                val matchesSeverity = when (severityFilter) {
+                    1 -> raw.contains("ok") || raw.contains("enter") || raw.contains("exit") || raw.contains("apply")
+                    2 -> raw.contains("FALHOU") || raw.contains("CONTENDA") || raw.contains("verify-fail") ||
+                        raw.contains("recuado") || raw.contains("erro", ignoreCase = true)
+                    else -> true
+                }
+                if (matchesQuery && matchesSeverity) (index + 1) to raw else null
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            TacticalPanel(
+                modifier = Modifier.fillMaxWidth(),
+                accentColor = FusaoPalette.CryoCyan,
+                contentPadding = PaddingValues(14.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HudSectionHeader(
+                        code = "TELEMETRY // LOGS & DUMP",
+                        title = if (state.logFusaod) "fusaod.log (writer)" else "fusao.log (ganchos)",
+                        subtitle = "Leitura direta de /data/adb/fusao/ e geração de pacote tar.gz em /sdcard/Download/",
+                        accentColor = FusaoPalette.CryoCyan,
+                        trailing = {
+                            TelemetryPill(
+                                text = "${displayedLines.size}/${state.logLines.size} LINHAS",
+                                color = FusaoPalette.CryoCyan,
+                                filled = true,
+                            )
+                        },
+                    )
+
+                    // Três ações principais preservadas: fusao.log, fusaod.log, Bugreport
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TacticalButton(
+                            text = "fusao.log",
+                            onClick = { vm.loadLog(false) },
+                            enabled = state.rooted && !busy,
+                            filled = !state.logFusaod,
+                            isLoading = state.isBusy(Busy.LOG) && state.activeTarget == "fusao.log",
+                            accentColor = FusaoPalette.CryoCyan,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TacticalButton(
+                            text = "fusaod.log",
+                            onClick = { vm.loadLog(true) },
+                            enabled = state.rooted && !busy,
+                            filled = state.logFusaod,
+                            isLoading = state.isBusy(Busy.LOG) && state.activeTarget == "fusaod.log",
+                            accentColor = FusaoPalette.PlasmaViolet,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TacticalButton(
+                            text = "Bugreport",
+                            onClick = { vm.bugreport() },
+                            enabled = state.rooted && !busy,
+                            isLoading = state.isBusy(Busy.BUGREPORT),
+                            accentColor = FusaoPalette.IgnisAmber,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    // Controles de profundidade (120 / 250 / 500 linhas), filtro de severidade e cópia
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        listOf(120, 250, 500).forEach { limit ->
+                            val activeLimit = state.logLineLimit == limit
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (activeLimit) FusaoPalette.CryoCyan.copy(alpha = 0.2f)
+                                        else FusaoPalette.VoidBlack.copy(alpha = 0.55f)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (activeLimit) FusaoPalette.CryoCyan else FusaoPalette.BorderSubtle,
+                                        RoundedCornerShape(6.dp),
+                                    )
+                                    .clickable(enabled = state.rooted && !busy) {
+                                        vm.loadLog(state.logFusaod, limit)
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "${limit}L",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (activeLimit) FusaoPalette.CryoCyan else FusaoPalette.TextSecondary,
+                                )
+                            }
+                        }
+
+                        listOf(
+                            0 to "TODOS",
+                            1 to "HOOKS/OK",
+                            2 to "CONTENDA/ERRO",
+                        ).forEach { (sKey, sLabel) ->
+                            val sel = severityFilter == sKey
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (sel) FusaoPalette.PlasmaViolet.copy(alpha = 0.22f)
+                                        else FusaoPalette.VoidBlack.copy(alpha = 0.55f)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (sel) FusaoPalette.PlasmaViolet else FusaoPalette.BorderSubtle,
+                                        RoundedCornerShape(6.dp),
+                                    )
+                                    .clickable { severityFilter = sKey }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = sLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (sel) FusaoPalette.ElectricOrchid else FusaoPalette.TextSecondary,
+                                )
+                            }
+                        }
+
+                        if (state.logLines.isNotEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(FusaoPalette.BioEmerald.copy(alpha = 0.16f))
+                                    .border(1.dp, FusaoPalette.BioEmerald.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        val joined = displayedLines.joinToString("\n") { it.second }
+                                        clipboard.setText(AnnotatedString(joined))
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "COPIAR",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FusaoPalette.MintPulse,
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = logFilter,
+                        onValueChange = { logFilter = it },
+                        placeholder = {
+                            Text(
+                                "Filtrar linhas do log (ex.: preload, dnd, p0, verify-fail)...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FusaoPalette.TextMuted,
+                            )
+                        },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodySmall.copy(
+                            color = FusaoPalette.TextPrimary,
+                            fontFamily = FontFamily.Monospace,
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = FusaoPalette.CryoCyan,
+                            unfocusedBorderColor = FusaoPalette.BorderSubtle,
+                            focusedContainerColor = FusaoPalette.VoidBlack.copy(alpha = 0.65f),
+                            unfocusedContainerColor = FusaoPalette.VoidBlack.copy(alpha = 0.45f),
+                            cursorColor = FusaoPalette.CryoCyan,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+
+            // VIEWPORT TÉCNICO DE LOGS
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(FusaoPalette.VoidBlack.copy(alpha = 0.92f))
+                    .border(1.dp, FusaoPalette.GridHairline, RoundedCornerShape(10.dp))
+            ) {
+                if (displayedLines.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        FusaoVectorGlyph(
+                            icon = FusaoNavIcon.LOG,
+                            color = FusaoPalette.TextMuted,
+                            modifier = Modifier.size(30.dp),
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (state.logLines.isEmpty()) {
+                                "Nenhuma linha carregada. Toque em fusao.log, fusaod.log ou Bugreport."
+                            } else {
+                                "Nenhuma linha corresponde ao filtro atual."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FusaoPalette.TextMuted,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                } else {
+                    SelectionContainer {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(vertical = 8.dp, horizontal = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            itemsIndexed(
+                                items = displayedLines,
+                                key = { _, pair -> pair.first },
+                            ) { _, (lineNum, rawLine) ->
+                                MonoLine(lineNum = lineNum, text = rawLine)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
     @Composable
-    private fun MonoLine(text: String) {
-        Text(
-            text,
-            style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.padding(vertical = 1.dp)
-        )
+    private fun MonoLine(text: String, lineNum: Int? = null) {
+        val gutterColor = when {
+            text.contains("FALHOU") || text.contains("verify-fail") -> FusaoPalette.CrimsonCore
+            text.contains("CONTENDA") || text.contains("recuado") -> FusaoPalette.IgnisAmber
+            text.contains(" ok") || text.contains(": enter") || text.contains(": on") -> FusaoPalette.BioEmerald
+            else -> FusaoPalette.GridHairline
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 1.5.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 3.dp, end = 6.dp)
+                    .width(2.5.dp)
+                    .height(13.dp)
+                    .background(gutterColor, RoundedCornerShape(1.dp))
+            )
+            if (lineNum != null) {
+                Text(
+                    text = lineNum.toString().padStart(3, '0'),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    ),
+                    color = FusaoPalette.TextMuted,
+                    modifier = Modifier.padding(end = 8.dp, top = 1.dp),
+                )
+            }
+            Text(
+                text = highlightTelemetryLine(text),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                ),
+            )
+        }
     }
 }

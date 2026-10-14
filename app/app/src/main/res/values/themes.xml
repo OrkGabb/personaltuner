@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Fusao" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/fusao_void</item>
+        <item name="android:navigationBarColor">@color/fusao_void</item>
+        <item name="android:windowBackground">@color/fusao_void</item>
+    </style>
+</resources>

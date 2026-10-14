@@ -1,5 +1,7 @@
 package com.orkgabb.fusao
 
+import androidx.compose.runtime.Immutable
+
 /**
  * O único canal do app até o módulo: chama o CLI `fusao` (que é quem mexe nas
  * flags em /data/adb/fusao) e lê de volta o que o módulo publicou. O app nunca
@@ -59,6 +61,16 @@ object FusaoBridge {
         val c = cli()
         if (c.isEmpty()) return "módulo ausente"
         val r = RootShell.run("\"$c\" profile $profile 2>&1")
+        return r.output.lastOrNull()?.trim().orEmpty()
+    }
+
+    /** Altera ou restaura o downscale via CLI `fusao display [show|720p|810p|900p|reset]`. */
+    suspend fun setDisplay(mode: String): String {
+        val c = cli()
+        if (c.isEmpty()) return "módulo ausente"
+        val allowed = setOf("show", "720p", "810p", "900p", "reset")
+        val safe = if (mode in allowed) mode else "show"
+        val r = RootShell.run("\"$c\" display $safe 2>&1")
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
@@ -133,6 +145,7 @@ object FusaoBridge {
 }
 
 /** Foto do módulo: tudo que o `fusao status` publica, mais se o módulo existe. */
+@Immutable
 data class FusaoStatus(
     val moduleInstalled: Boolean = false,
     val profile: String = "",
@@ -152,6 +165,12 @@ data class FusaoStatus(
     val observerRunning: Boolean = false,
 ) {
     val inGame: Boolean get() = gameActive.isNotEmpty()
+
+    val activeFlagsCount: Int
+        get() = listOf(fusaod, framework, perf, dnd, preload, ramclean, gos).count { it }
+
+    val runningDaemonsCount: Int
+        get() = listOf(fusaodRunning, watchRunning, observerRunning).count { it }
 
     fun flag(cmd: String): Boolean = when (cmd) {
         "fusaod" -> fusaod
@@ -223,6 +242,112 @@ data class FusaoStatus(
                 fusaodRunning = daemons["fusaod"] == true,
                 watchRunning = daemons["watch"] == true,
                 observerRunning = daemons["observer"] == true,
+            )
+        }
+    }
+}
+
+/**
+ * Extrai metadados estruturados reais a partir da saída textual de `fusao preload status`,
+ * sem inventar métricas nem descartar as linhas originais do CLI.
+ */
+@Immutable
+data class PreloadTelemetry(
+    val stateLabel: String = "—",
+    val isEnabled: Boolean = false,
+    val packCount: String = "—",
+    val packFiles: List<String> = emptyList(),
+    val recentEvents: List<String> = emptyList(),
+) {
+    companion object {
+        fun fromLines(lines: List<String>): PreloadTelemetry {
+            if (lines.isEmpty()) return PreloadTelemetry()
+            var stateLabel = "—"
+            var isEnabled = false
+            var packCount = "—"
+            val packs = mutableListOf<String>()
+            val events = mutableListOf<String>()
+            var inEvents = false
+
+            for (raw in lines) {
+                val line = raw.trim()
+                if (line.isEmpty()) continue
+                if (line.startsWith("---")) {
+                    inEvents = true
+                    continue
+                }
+                if (!inEvents) {
+                    when {
+                        line.startsWith("preload=") -> {
+                            stateLabel = line.removePrefix("preload=")
+                            isEnabled = stateLabel.startsWith("on")
+                        }
+                        line.startsWith("packs:") -> {
+                            packCount = line.removePrefix("packs:").trim()
+                        }
+                        line.endsWith(".pack") || line.contains(".pack") -> {
+                            packs.add(line)
+                        }
+                    }
+                } else {
+                    events.add(line)
+                }
+            }
+            return PreloadTelemetry(
+                stateLabel = stateLabel,
+                isEnabled = isEnabled,
+                packCount = packCount,
+                packFiles = packs,
+                recentEvents = events,
+            )
+        }
+    }
+}
+
+/**
+ * Extrai metadados reais da saída de `fusao ramclean status` / `fusao ramclean now`,
+ * preservando todas as linhas originais.
+ */
+@Immutable
+data class RamcleanTelemetry(
+    val stateLabel: String = "—",
+    val isEnabled: Boolean = false,
+    val lastTransition: String = "",
+    val lastAvailKb: String = "",
+    val lastRc: String = "",
+    val recentEvents: List<String> = emptyList(),
+) {
+    companion object {
+        private val FREE_REGEX = Regex("free=([0-9]+->[0-9]+)")
+        private val AVAIL_REGEX = Regex("avail=([0-9]+)")
+        private val RC_REGEX = Regex("rc=([0-9/]+)")
+
+        fun fromLines(lines: List<String>): RamcleanTelemetry {
+            if (lines.isEmpty()) return RamcleanTelemetry()
+            var stateLabel = "—"
+            var isEnabled = false
+            val events = mutableListOf<String>()
+            for (raw in lines) {
+                val line = raw.trim()
+                if (line.isEmpty() || line.startsWith("---")) continue
+                if (line.startsWith("ramclean=")) {
+                    stateLabel = line.removePrefix("ramclean=")
+                    isEnabled = stateLabel.startsWith("on")
+                } else if (line.contains("ramclean ok") || line.contains("free=")) {
+                    events.add(line)
+                }
+            }
+            val latest = events.lastOrNull().orEmpty()
+            val freeMatch = FREE_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
+            val availMatch = AVAIL_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
+            val rcMatch = RC_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
+            return RamcleanTelemetry(
+                stateLabel = stateLabel,
+                isEnabled = isEnabled,
+                lastTransition = freeMatch,
+                lastAvailKb = availMatch,
+                lastRc = rcMatch,
+                recentEvents = events,
             )
         }
     }
