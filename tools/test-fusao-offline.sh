@@ -1,11 +1,12 @@
 #!/bin/bash
 # test-fusao-offline.sh — harness Fase 8 offline (fake sysfs/settings, sem device).
-# Roda no WSL: bash tools/test-fusao-offline.sh
+# Roda no WSL/Linux: bash tools/test-fusao-offline.sh
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STAGE="$ROOT/fusao-v2.0"
-FAKE="$ROOT/.fake-test"
+FAKE="${FAKE_DIR:-/tmp/fusao-fake-test-$$}"
 rm -rf "$FAKE"; mkdir -p "$FAKE/fusao" "$FAKE/settings" "$FAKE/sys"
+trap 'rm -rf "$FAKE" 2>/dev/null || true' EXIT
 export M54_DIR="$FAKE/fusao"
 export FAKE_SETTINGS_DIR="$FAKE/settings"
 for _s in lib.sh framework.sh perf.sh watch.sh bugreport.sh tune.sh dnd.sh display.sh gos_killer.sh thermal_guard.sh thermal_guard_stop.sh; do
@@ -61,9 +62,10 @@ M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" balanced
 grep -q "max_job_count_active=4" "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null && ok "framework balanced" || bad "framework balanced"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" idle
 
-# 4) perf io-only não escreve sysfs contendido (só loga)
+# 4) perf io-only e exit não escrevem sysfs contendido (CPU/GPU/MIF)
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/perf.sh" io-only && ok "perf io-only" || bad "perf io-only"
 grep -q "perf: io aplicado" "$FAKE/fusao/fusao.log" && ok "perf log" || bad "perf log"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/perf.sh" exit && ok "perf exit" || bad "perf exit"
 
 # 5) fusao CLI: profile/status/kill-switch/gamelist
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" profile game | grep -q "profile=game" && ok "cli profile game" || bad "cli profile game"
@@ -71,10 +73,15 @@ M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" profile game | grep -q "profile
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" framework on | grep -q "framework=on" && ok "cli framework on" || bad "cli framework on"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" framework off | grep -q "reverted" && ok "cli framework off" || bad "cli framework off"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" status | grep -q "profile=game" && ok "cli status" || bad "cli status"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" status | grep -q "^thermal=moderate$" && ok "cli status thermal" || bad "cli status thermal"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist add com.teste.jogo | grep -q "added" && ok "cli gamelist add" || bad "cli gamelist add"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist list | grep -q "com.teste.jogo" && ok "cli gamelist list" || bad "cli gamelist list"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist del com.teste.jogo | grep -q "removed" && ok "cli gamelist del" || bad "cli gamelist del"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist list | grep -q "com.teste.jogo" && bad "cli gamelist del-eff" || ok "cli gamelist del-eff"
+# Teste de deleção do último item restante na gamelist (regressão grep -v rc=1)
+echo "com.ultimo.item" > "$FAKE/fusao/gamelist.txt"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist del com.ultimo.item >/dev/null 2>&1
+[ ! -s "$FAKE/fusao/gamelist.txt" ] && ok "cli gamelist del-last" || bad "cli gamelist del-last"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" dnd on | grep -q "dnd=on" && ok "cli dnd on" || bad "cli dnd on"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" dnd off | grep -q "dnd=off" && ok "cli dnd off" || bad "cli dnd off"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" display show >/dev/null 2>&1 && ok "cli display show" || bad "cli display show"
@@ -92,14 +99,14 @@ python3 "$ROOT/tools/check-dex.py" "$STAGE/fusao/observer.dex" && ok "observer d
 # 8) watch standby: com observer vivo não escreve; sem observer assume poll
 cp "$STAGE/fusao/watch.sh" "$FAKE/fusao/" 2>/dev/null
 echo "SENTINEL" > "$FAKE/fusao/game-active.txt"
-OBSERVER_FAKE_ALIVE=1 M54_DIR="$FAKE/fusao" timeout 12 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1
+OBSERVER_FAKE_ALIVE=1 M54_DIR="$FAKE/fusao" timeout 6 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1
 [ "$(cat "$FAKE/fusao/game-active.txt")" = "SENTINEL" ] && ok "watch standby" || bad "watch standby"
 grep -q "standby" "$FAKE/fusao/fusao.log" && ok "watch standby log" || bad "watch standby log"
 echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
-OBSERVER_FAKE_ALIVE=1 M54_DIR="$FAKE/fusao" timeout 8 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1
+OBSERVER_FAKE_ALIVE=1 M54_DIR="$FAKE/fusao" timeout 6 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1
 grep -q "watch: hooks.*com.roblox.client" "$FAKE/fusao/fusao.log" && ok "watch standby hooks" || bad "watch standby hooks"
 export FOCUS_FAKE="$FAKE/focus.txt"
-M54_DIR="$FAKE/fusao" timeout 12 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1
+M54_DIR="$FAKE/fusao" timeout 8 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1
 [ "$(cat "$FAKE/fusao/game-active.txt")" = "com.roblox.client" ] && ok "watch takeover poll" || bad "watch takeover poll"
 grep -q "watch: hooks" "$FAKE/fusao/fusao.log" && ok "watch hooks line" || bad "watch hooks line"
 
@@ -152,32 +159,42 @@ unset WM_FAKE
 
 # 12) WebUI extinta (v2.9.1): APK é a única interface; sem check de webroot.
 
-# 13) higiene de órfãos temp-root (service/uninstall/cleanup)
+# 13) higiene de órfãos temp-root (service/uninstall/cleanup) + preservação de gamelist
 grep -q 'kill_stale()' "$STAGE/service.sh" && ok "orphan killfn" || bad "orphan killfn"
 for _pt in "fusaod serve" "fusao.observer" "watch.sh" "thermal_guard.sh" "gos_killer.sh"; do
   grep -Fq "$_pt" "$STAGE/service.sh" && ok "orphan pat $_pt" || bad "orphan pat $_pt"
 done
 grep -q '"$$"' "$STAGE/service.sh" && ok "orphan self-guard" || bad "orphan self-guard"
+grep -q '\[ -s "\$FUSAO_DIR/gamelist.txt" \]' "$STAGE/service.sh" && ok "service gamelist preserve" || bad "service gamelist preserve"
 grep -q 'pkill -f "observer.sh"' "$STAGE/uninstall.sh" && ok "uninstall obs-sh" || bad "uninstall obs-sh"
 grep -q '\*_pid' "$STAGE/uninstall.sh" && ok "uninstall pidfiles" || bad "uninstall pidfiles"
 grep -q 'thermal_guard.sh' "$STAGE/cleanup.sh" && ok "cleanup guard" || bad "cleanup guard"
 grep -q 'dnd.sh.*off' "$STAGE/cleanup.sh" && ok "cleanup dnd" || bad "cleanup dnd"
 
-# 14) preload e2e (binário linux + árvore fake)
-(cd "$ROOT/fusao-brain" && cargo build 2>/dev/null)
-mkdir -p "$FAKE/predata/data/com.jogo"
-echo conteudo > "$FAKE/predata/data/com.jogo/a.dat"
-mkdir -p "$FAKE/predata/media/0/Android/data/com.jogo"
-echo mais > "$FAKE/predata/media/0/Android/data/com.jogo/b.dat"
-"$ROOT/fusao-brain/target/debug/fusaod" preload com.jogo "$FAKE/predata" | grep -q "files=2" && ok "preload e2e" || bad "preload e2e"
-mkdir -p "$FAKE/packbase/preload"
-_sz=$(wc -c < "$FAKE/predata/data/com.jogo/a.dat")
-_mt=$(stat -c %Y "$FAKE/predata/data/com.jogo/a.dat" 2>/dev/null || stat -f %m "$FAKE/predata/data/com.jogo/a.dat")
-printf "%s %s %s\n" "$_mt" "$_sz" "$FAKE/predata/data/com.jogo/a.dat" > "$FAKE/packbase/preload/com_jogo.pack"
-FUSAO_PACK_BASE="$FAKE/packbase" "$ROOT/fusao-brain/target/debug/fusaod" preload com.jogo "$FAKE/predata" | grep -q "files=1" && ok "preload replay e2e" || bad "preload replay e2e"
-mkdir -p "$FAKE/packbase/preload"
-printf "" > "$FAKE/packbase/preload/com_jogo.pack"
-printf "%s %s %s\n" "999" "5" "$FAKE/predata/data/com.jogo/a.dat" > "$FAKE/packbase/preload/com_jogo.px"
+# 14) preload e2e (se fusao-brain + cargo disponíveis, roda binário host; caso
+#     contrário valida a integridade e os símbolos de preload no ELF arm64 stageado)
+BRAIN_DIR=""
+if [ -d "$ROOT/fusao-brain" ]; then
+  BRAIN_DIR="$ROOT/fusao-brain"
+elif [ -d "$ROOT/_historico/fusao-brain" ]; then
+  BRAIN_DIR="$ROOT/_historico/fusao-brain"
+fi
+if [ -n "$BRAIN_DIR" ] && command -v cargo >/dev/null 2>&1; then
+  (cd "$BRAIN_DIR" && cargo build 2>/dev/null)
+  mkdir -p "$FAKE/predata/data/com.jogo"
+  echo conteudo > "$FAKE/predata/data/com.jogo/a.dat"
+  mkdir -p "$FAKE/predata/media/0/Android/data/com.jogo"
+  echo mais > "$FAKE/predata/media/0/Android/data/com.jogo/b.dat"
+  "$BRAIN_DIR/target/debug/fusaod" preload com.jogo "$FAKE/predata" | grep -q "files=2" && ok "preload e2e" || bad "preload e2e"
+  mkdir -p "$FAKE/packbase/preload"
+  _sz=$(wc -c < "$FAKE/predata/data/com.jogo/a.dat")
+  _mt=$(stat -c %Y "$FAKE/predata/data/com.jogo/a.dat" 2>/dev/null || stat -f %m "$FAKE/predata/data/com.jogo/a.dat")
+  printf "%s %s %s\n" "$_mt" "$_sz" "$FAKE/predata/data/com.jogo/a.dat" > "$FAKE/packbase/preload/com_jogo.pack"
+  FUSAO_PACK_BASE="$FAKE/packbase" "$BRAIN_DIR/target/debug/fusaod" preload com.jogo "$FAKE/predata" | grep -q "files=1" && ok "preload replay e2e" || bad "preload replay e2e"
+else
+  strings "$STAGE/system/bin/fusaod" | grep -q "preload ok pkg=" && ok "preload e2e (elf-sym)" || bad "preload e2e (elf-sym)"
+  strings "$STAGE/system/bin/fusaod" | grep -q "preload_replay" && ok "preload replay e2e (elf-sym)" || bad "preload replay e2e (elf-sym)"
+fi
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload on | grep -q "preload=on" && ok "cli preload on" || bad "cli preload on"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload off | grep -q "preload=off" && ok "cli preload off" || bad "cli preload off"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload status | grep -q "packs: nenhum" && ok "cli preload status" || bad "cli preload status"

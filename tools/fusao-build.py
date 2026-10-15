@@ -41,6 +41,7 @@ for f in files:
 print(f"sha: {len(files)} arquivos")
 
 # 2) zip forward slashes
+OUT.parent.mkdir(parents=True, exist_ok=True)
 allfiles = sorted([f for f in STAGE.rglob("*") if f.is_file()])
 with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
     for f in allfiles:
