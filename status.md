@@ -635,3 +635,28 @@ pendente), tune/DND/downscale ✓ (valores conservadores, matriz afina).
 - Fica p/ proxima sessao: (1) reboot consolida 2.9.4 (PIDs novos); (2) GPUWatch
   com numero p/ fechar a matriz; (3) feel prolongado ramclean+preload; (4) DND
   em uso real; (5) evoluir APK (aba termica/zram? dono decide).
+
+## FECHAMENTO 2026-10-15 (auditoria externa sincronizada + flash, cabo)
+- Outra AI auditou modulo+app (4 commits via `git am fusao-m54-audit-fixes.patch`:
+  `d84b9b6` ciclo de vida/gamelist/descida-degraus, `57e2fcd` perf/watch,
+  `749ee39` app UI/Log/estado, `6fd0991` suite 89 checks + hashes). Sincronizado
+  no PC: rebuild `_releases/fusao-v2.9.5-M54.zip` **byte-identico** ao dela
+  (60 entries, 0 diffs; exigiu LF puro — `core.autocrlf=false` local, working
+  tree normalizada sem tocar nos commits). Offline: **89/89 PASS**, sweep OK,
+  dex OK. `module.prop` segue 2.9.4/1596 (ela nao bumpou; nome do zip = rotulo).
+- App da auditoria **nao compilava** (`center` em `CacheDrawScope`,
+  `FusaoDesignSystem.kt:802-803`). Fix commit `6f3dab4` (`size.width/2f`,
+  `size.height/2f`) + build WSL `assembleDebug` OK (25.3MB, so warning
+  pre-existente `FLAG_REDIRECT_STDERR`). Instalado por cima (`Success`,
+  mesma assinatura debug).
+- **Falha minha (registrada p/ nao repetir):** probe `svc power reboot` sem
+  argumento REBOOTA de verdade → full reboot, temp-root perdido, boot_id novo
+  (`e1ea3dee-…`, uptime zerado). Nunca mais probe com `reboot` no nome; metodo
+  de soft reboot segue com o dono. Dono refez temp-root.
+- Reboot consumiu `modules_update` (vazio pós-boot) = modulo auditado LIVE:
+  PIDs novos (fusaod 5887, watch 5840, killer 5881, observer 5745), flags
+  preservadas, gamelist intacta (531 linhas — fix do boot provado), `fusao
+  status` sem `thermal=thermal=`, hooks NTE 15:06 (dnd zen=1, ramclean +974MB,
+  preload replay 661 arqs/8.5GB/1192ms) + exit limpo 15:12.
+- Fica: (1) GPUWatch com numero; (2) feel ramclean+preload + stamina Blackbird
+  em sessao real; (3) DND em uso real; (4) decidir bump 2.9.5/1597 no module.prop.
