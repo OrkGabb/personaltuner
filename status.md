@@ -612,6 +612,20 @@ pendente), tune/DND/downscale ✓ (valores conservadores, matriz afina).
 - Prova ao vivo (spawn daemon, NTE aberto): `dnd: on (zen=1)` de primeira, sem
   retry; off => zen=0. Falta o ciclo real exit->enter do dono p/ fechar.
 
+## REDESIGN APP APLICADO (2026-10-13 ~noite, outra AI via patch, cabo)- Patch `fusao-m54-redesign.patch` (26 arqs, +3884/-325, codigo + WebP + icons)
+  aplicado em branch `feat/fusao-m54-premium-redesign` (PR pendente p/ main).
+- Build QUEBROU 1x: 4 strings com aspas aninhadas sem escape no MainActivity.kt
+  (1365/1747/1753/1984); corrigido com `\"`, `assembleDebug` OK (25MB).
+- Instalado por cima via cabo (`install -r`, Success), MainActivity em foco,
+  PID vivo sem FATAL no logcat. Falta o dono: abrir, conceder root no prompt
+  do KSU e conferir Status com jogo aberto + visual do redesign.
+- Relatório do designer verificado no código aplicado: race do Preload real
+  (`loadPreload()`+`loadRamclean()` paralelos sobrescrevendo Busy) → trocado por
+  `loadPreloadAndRamcleanIfEmpty()` em 1 `LaunchedEffect` (só restam chamadas em
+  click manual, sequenciais). Revalidação de root no ON_START + `isAlive/isRoot`
+  + `collectAsStateWithLifecycle` + `@Immutable` + `AppIconCache` LruCache(128):
+  tudo presente. Designer não compilou (sandbox offline) — build feito aqui.
+
 ## FECHAMENTO 2026-10-13 (dono: "certinho", fim do dia)
 - DND fechado: hook + verify + stdio-fix provados ao vivo. v2.9.4/1596 stageado
   em modules_update (consolida no proximo soft-reboot, sem pressa).
