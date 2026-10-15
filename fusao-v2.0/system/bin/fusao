@@ -10,6 +10,23 @@ M54_DIR=${M54_DIR:-/data/adb/fusao}
 MODDIR_FUSAO=/data/adb/modules/encore/fusao
 [ -d "$M54_DIR" ] || M54_DIR="$MODDIR_FUSAO"
 
+restore_snapshot_nodes() {
+  [ -f "$M54_DIR/stock.snapshot" ] || return 0
+  while read -r _p _v; do
+    case "$_p" in \#*|"") continue;; esac
+    if [ -f "$_p" ]; then
+      chmod 644 "$_p" 2>/dev/null
+      if [ "$_p" = "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq" ]; then
+        for _step in 1152000 960000 768000 672000 "$_v"; do
+          echo "$_step" > "$_p" 2>/dev/null
+        done
+      else
+        echo "$_v" > "$_p" 2>/dev/null
+      fi
+    fi
+  done < "$M54_DIR/stock.snapshot"
+}
+
 cmd="$1"; arg="$2"
 case "$cmd" in
   profile)
@@ -20,24 +37,69 @@ case "$cmd" in
         mv -f "$M54_DIR/config.tmp" "$M54_DIR/config" 2>/dev/null
       }
       echo "profile=$arg" >> "$M54_DIR/config" 2>/dev/null
+      if [ -f "$M54_DIR/framework.enabled" ] && [ -x "$M54_DIR/framework.sh" ]; then
+        M54_DIR="$M54_DIR" sh "$M54_DIR/framework.sh" auto >/dev/null 2>&1
+      fi
       echo "profile=$arg"
       ;;
       *) cat "$M54_DIR/profile" 2>/dev/null || echo balanced;;
     esac;;
   framework)
-    case "$arg" in on) touch "$M54_DIR/framework.enabled"; echo "framework=on";;
+    case "$arg" in
+      on)
+        touch "$M54_DIR/framework.enabled"
+        if [ -x "$M54_DIR/framework.sh" ]; then
+          M54_DIR="$M54_DIR" sh "$M54_DIR/framework.sh" auto >/dev/null 2>&1
+        fi
+        echo "framework=on"
+        ;;
       off) rm -f "$M54_DIR/framework.enabled"; M54_DIR="$M54_DIR" sh "$M54_DIR/framework.sh" idle 2>/dev/null; echo "framework=off (reverted)";;
       game|balanced|battery|idle|auto) M54_DIR="$M54_DIR" sh "$M54_DIR/framework.sh" "$arg";;
       *) [ -f "$M54_DIR/framework.enabled" ] && echo "framework=on" || echo "framework=off";;
     esac;;
   perf)
-    case "$arg" in on) touch "$M54_DIR/perf.enabled"; echo "perf=on";;
-      off) rm -f "$M54_DIR/perf.enabled"; echo "perf=off";;
+    case "$arg" in
+      on)
+        touch "$M54_DIR/perf.enabled"
+        if [ -s "$M54_DIR/game-active.txt" ] && [ -x "$M54_DIR/perf.sh" ]; then
+          M54_DIR="$M54_DIR" sh "$M54_DIR/perf.sh" enter >/dev/null 2>&1
+        fi
+        echo "perf=on"
+        ;;
+      off)
+        rm -f "$M54_DIR/perf.enabled"
+        if [ -x "$M54_DIR/perf.sh" ]; then
+          M54_DIR="$M54_DIR" sh "$M54_DIR/perf.sh" exit >/dev/null 2>&1
+        fi
+        echo "perf=off"
+        ;;
       *) [ -f "$M54_DIR/perf.enabled" ] && echo "perf=on" || echo "perf=off";;
     esac;;
   fusaod)
-    case "$arg" in on) touch "$M54_DIR/fusaod.enabled"; echo "fusaod=on (sobe no boot)";;
-      off) rm -f "$M54_DIR/fusaod.enabled"; echo "fusaod=off";;
+    case "$arg" in
+      on)
+        touch "$M54_DIR/fusaod.enabled"
+        if [ ! -f "$M54_DIR/disable" ] && [ -z "$FAKE_SETTINGS_DIR" ]; then
+          if ! pgrep -f "[f]usaod serve" >/dev/null 2>&1; then
+            _b=$(command -v fusaod 2>/dev/null)
+            [ -z "$_b" ] && _b=/data/adb/modules/encore/system/bin/fusaod
+            if [ -x "$_b" ] && [ -d /sys/kernel/gpu ]; then
+              nohup "$_b" serve >>"$M54_DIR/fusaod.log" 2>&1 &
+            fi
+          fi
+        fi
+        echo "fusaod=on"
+        ;;
+      off)
+        rm -f "$M54_DIR/fusaod.enabled"
+        if [ -z "$FAKE_SETTINGS_DIR" ]; then
+          for _p in $(pgrep -f "[f]usaod serve" 2>/dev/null); do
+            [ "$_p" = "$$" ] || kill -TERM "$_p" 2>/dev/null
+          done
+          restore_snapshot_nodes
+        fi
+        echo "fusaod=off"
+        ;;
       *) [ -f "$M54_DIR/fusaod.enabled" ] && echo "fusaod=on" || echo "fusaod=off";;
     esac;;
   dnd)
@@ -63,7 +125,9 @@ case "$cmd" in
       status)
         [ -f "$M54_DIR/preload.enabled" ] && echo "preload=on" || echo "preload=off (game-enter não dispara)"
         if [ -d "$M54_DIR/preload" ]; then
-          echo "packs: $(ls "$M54_DIR/preload" 2>/dev/null | wc -l)"
+          _cnt=$(ls "$M54_DIR/preload" 2>/dev/null | wc -l)
+          _cnt=$(echo "$_cnt" | tr -d '[:space:]')
+          echo "packs: ${_cnt:-0}"
           ls -l "$M54_DIR/preload" 2>/dev/null
         else
           echo "packs: nenhum (rode com jogo aberto: fusao preload record)"
@@ -78,14 +142,14 @@ case "$cmd" in
       off) rm -f "$M54_DIR/ramclean.enabled"; echo "ramclean=off";;
       now)
         _rf0=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
-        _ra0=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
         sync 2>/dev/null
         echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
         _rc1=$?
         echo 1 > /proc/sys/vm/compact_memory 2>/dev/null
         _rc2=$?
         _rf1=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
-        echo "ramclean ok free=${_rf0}->${_rf1} avail=${_ra0} rc=${_rc1}/${_rc2}"
+        _ra1=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
+        echo "ramclean ok free=${_rf0}->${_rf1} avail=${_ra1} rc=${_rc1}/${_rc2}"
         ;;
       status)
         [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off (game-enter não limpa)"
@@ -134,26 +198,40 @@ case "$cmd" in
     [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off"
     [ -f "$M54_DIR/gos_killer.paused" ] && echo "gos=off" || echo "gos=on"
     echo "display=$(M54_DIR="$M54_DIR" sh "$M54_DIR/display.sh" show 2>/dev/null)"
-    echo "thermal=$(grep -E '^thermal=' "$M54_DIR/config" 2>/dev/null)"
+    echo "thermal=$(grep -E '^thermal=' "$M54_DIR/config" 2>/dev/null | tail -1 | cut -d= -f2-)"
     echo "--- última atividade dos ganchos (foi ou não) ---"
     { grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|perf: (io|proc)|dnd: (on|off)|preload ok|preload-record ok|ramclean ok" "$M54_DIR/fusao.log.1" 2>/dev/null; grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|perf: (io|proc)|dnd: (on|off)|preload ok|preload-record ok|ramclean ok" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 8
     pgrep -f "[f]usaod serve" >/dev/null 2>&1 && echo "fusaod=running" || echo "fusaod=stopped"
     pgrep -f "[w]atch.sh" >/dev/null 2>&1 && echo "watch=running" || echo "watch=stopped"
     pgrep -f "[f]usao.observer" >/dev/null 2>&1 && echo "observer=running" || echo "observer=stopped"
     ;;
-  log) tail -100 "$M54_DIR/fusao.log" 2>/dev/null;;
+  log)
+    { cat "$M54_DIR/fusao.log.1" 2>/dev/null; cat "$M54_DIR/fusao.log" 2>/dev/null; } | tail -100
+    ;;
   bugreport) M54_DIR="$M54_DIR" sh "$M54_DIR/bugreport.sh";;
   kill-switch)
-    case "$arg" in on) touch "$M54_DIR/disable"; echo "kill-switch=on (tudo parado no boot)";;
+    case "$arg" in
+      on)
+        touch "$M54_DIR/disable"
+        if [ -z "$FAKE_SETTINGS_DIR" ]; then
+          for _pat in "[f]usaod serve" "[f]usao.observer" "[w]atch.sh" "[t]hermal_guard.sh" "[g]os_killer"; do
+            for _p in $(pgrep -f "$_pat" 2>/dev/null); do
+              [ "$_p" = "$$" ] || kill -TERM "$_p" 2>/dev/null
+            done
+          done
+          restore_snapshot_nodes
+        fi
+        echo "kill-switch=on (tudo parado no boot)"
+        ;;
       off) rm -f "$M54_DIR/disable"; echo "kill-switch=off";;
       *) [ -f "$M54_DIR/disable" ] && echo "kill-switch=on" || echo "kill-switch=off";;
     esac;;
   gamelist)
     case "$arg" in
       list|"") cat "$M54_DIR/gamelist.txt" 2>/dev/null;;
-      count) wc -l < "$M54_DIR/gamelist.txt" 2>/dev/null;;
+      count) wc -l < "$M54_DIR/gamelist.txt" 2>/dev/null | tr -d '[:space:]'; echo "";;
       add) [ -n "$3" ] && { grep -Fxq "$3" "$M54_DIR/gamelist.txt" 2>/dev/null || echo "$3" >> "$M54_DIR/gamelist.txt"; echo "added $3"; };;
-      del) [ -n "$3" ] && { grep -Fxv "$3" "$M54_DIR/gamelist.txt" 2>/dev/null > "$M54_DIR/gamelist.tmp" && mv -f "$M54_DIR/gamelist.tmp" "$M54_DIR/gamelist.txt"; echo "removed $3"; };;
+      del) [ -n "$3" ] && { grep -Fxv "$3" "$M54_DIR/gamelist.txt" 2>/dev/null > "$M54_DIR/gamelist.tmp"; [ $? -le 1 ] && mv -f "$M54_DIR/gamelist.tmp" "$M54_DIR/gamelist.txt"; echo "removed $3"; };;
       *) printf "%s\n" "$arg" "$3" "$4" "$5" "$6" | grep -v "^$" > "$M54_DIR/gamelist.txt"; echo "gamelist substituida";;
     esac;;
   *) echo "fusao: profile|framework|perf|fusaod|dnd|preload|ramclean|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"; exit 1;;

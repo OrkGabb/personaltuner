@@ -29,6 +29,7 @@ CPUFREQ="/sys/devices/system/cpu/cpu0/cpufreq"
 # Guarda a cauda (últimas 2000 linhas) em vez de apagar tudo.
 if [ -f "$MODULE_CONFIG/fusaod.log" ]; then
   _sz=$(wc -c <"$MODULE_CONFIG/fusaod.log" 2>/dev/null)
+  _sz=$(echo "$_sz" | tr -d '[:space:]')
   case "$_sz" in ''|*[!0-9]*) _sz=0;; esac
   if [ "$_sz" -gt 1048576 ]; then
     tail -n 2000 "$MODULE_CONFIG/fusaod.log" >"$MODULE_CONFIG/fusaod.log.tmp" 2>/dev/null
@@ -37,20 +38,20 @@ if [ -f "$MODULE_CONFIG/fusaod.log" ]; then
 fi
 
 # Parse Governor to use
-chmod 644 "$CPUFREQ/scaling_governor"
-default_gov=$(cat "$CPUFREQ/scaling_governor")
-echo "$default_gov" >$MODULE_CONFIG/default_cpu_gov
+chmod 644 "$CPUFREQ/scaling_governor" 2>/dev/null
+default_gov=$(cat "$CPUFREQ/scaling_governor" 2>/dev/null)
+echo "$default_gov" >"$MODULE_CONFIG/default_cpu_gov"
 
 # Create cleanup script
 [ ! -f "$CLEANUP_SCRIPT" ] && {
-  mkdir -p "$(dirname $CLEANUP_SCRIPT)"
+  mkdir -p "$(dirname "$CLEANUP_SCRIPT")"
   cp "$MODDIR/cleanup.sh" "$CLEANUP_SCRIPT"
   chmod +x "$CLEANUP_SCRIPT"
 }
 
-# Wait until boot completed
-while [ -z "$(getprop sys.boot_completed)" ]; do
-	sleep 40
+# Wait until boot completed ("1")
+while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
+	sleep 5
 done
 
 # Handle case when 'default_gov' is performance
@@ -71,10 +72,10 @@ conservative
 powersave
 "
 
-if [ "$default_gov" == "performance" ]; then
+if [ "$default_gov" = "performance" ]; then
 	for gov in $default_gov_preferred_array; do
-		grep -q "$gov" "$CPUFREQ/scaling_available_governors" && {
-			echo "$gov" >$MODULE_CONFIG/default_cpu_gov
+		grep -q "$gov" "$CPUFREQ/scaling_available_governors" 2>/dev/null && {
+			echo "$gov" >"$MODULE_CONFIG/default_cpu_gov"
 			default_gov="$gov"
 			break
 		}
@@ -82,11 +83,13 @@ if [ "$default_gov" == "performance" ]; then
 fi
 
 # Revert to normal CPU governor
-echo "$default_gov" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+for _g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+	[ -f "$_g" ] && echo "$default_gov" >"$_g" 2>/dev/null
+done
 
 # FUSAO-M54: snapshot de stock no primeiro boot (o uninstall consome).
 # Só captura UMA vez — boot com estado tunado contaminaria o default.
-if [ ! -f "$MODULE_CONFIG/stock.snapshot" ]; then
+if [ ! -s "$MODULE_CONFIG/stock.snapshot" ]; then
 	{
 		echo "# stock.snapshot $(date)"
 		for p in /sys/devices/system/cpu/cpufreq/policy*/scaling_min_freq \
@@ -147,10 +150,13 @@ kill_stale() {
 for _pat in "fusaod serve" "fusao.observer" "watch.sh" "thermal_guard.sh" "gos_killer.sh"; do
 	kill_stale "$_pat"
 done
-# Self-heal (lição temp-root): boot recopia guard a partir do módulo.
-for f in thermal_guard.sh thermal_guard_stop.sh lib.sh gos_killer.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh dnd.sh display.sh observer.sh observer.dex gamelist.txt; do
+# Self-heal (lição temp-root): boot recopia scripts e dex a partir do módulo.
+# NOTA: gamelist.txt NÃO entra no cp -f incondicional para preservar adições/remoções
+# feitas pelo usuário via app/CLI (só semeia se ausente).
+for f in thermal_guard.sh thermal_guard_stop.sh lib.sh gos_killer.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh dnd.sh display.sh observer.sh observer.dex; do
 	[ -f "$MODDIR/fusao/$f" ] && cp -f "$MODDIR/fusao/$f" "$FUSAO_DIR/$f" 2>/dev/null
 done
+[ -s "$FUSAO_DIR/gamelist.txt" ] || cp -f "$MODDIR/fusao/gamelist.txt" "$FUSAO_DIR/gamelist.txt" 2>/dev/null
 chmod 0755 "$FUSAO_DIR/thermal_guard.sh" "$FUSAO_DIR/thermal_guard_stop.sh" "$FUSAO_DIR/gos_killer.sh" "$FUSAO_DIR/watch.sh" "$FUSAO_DIR/framework.sh" "$FUSAO_DIR/perf.sh" "$FUSAO_DIR/bugreport.sh" "$FUSAO_DIR/tune.sh" "$FUSAO_DIR/dnd.sh" "$FUSAO_DIR/display.sh" "$FUSAO_DIR/observer.sh" 2>/dev/null
 [ -f "$FUSAO_DIR/config" ] || {
 	echo "thermal=moderate" >"$FUSAO_DIR/config"
@@ -162,7 +168,7 @@ chmod 0755 "$FUSAO_DIR/thermal_guard.sh" "$FUSAO_DIR/thermal_guard_stop.sh" "$FU
 	chmod 0600 "$FUSAO_DIR/config" 2>/dev/null
 }
 # Guard: só com thermal=aggressive; reverte sozinho (HIGH/BATT/timeout).
-if grep -q "^thermal=aggressive" "$FUSAO_DIR/config" 2>/dev/null; then
+if [ ! -f "$FUSAO_DIR/disable" ] && grep -q "^thermal=aggressive" "$FUSAO_DIR/config" 2>/dev/null; then
 	M54_DIR="$FUSAO_DIR" nohup sh "$FUSAO_DIR/thermal_guard.sh" >>"$FUSAO_DIR/fusao.log" 2>&1 &
 fi
 [ -f "$FUSAO_DIR/profile" ] || {
@@ -171,7 +177,7 @@ fi
 	printf "%s" "$_grep_prof" >"$FUSAO_DIR/profile" 2>/dev/null
 	chmod 0600 "$FUSAO_DIR/profile" 2>/dev/null
 }
-[ -f "$FUSAO_DIR/game-active.txt" ] || : >"$FUSAO_DIR/game-active.txt" 2>/dev/null
+: >"$FUSAO_DIR/game-active.txt" 2>/dev/null
 # Observer event-driven (primário): app_process como root.
 if [ ! -f "$FUSAO_DIR/disable" ] && [ -x "$FUSAO_DIR/observer.sh" ] && [ -f "$FUSAO_DIR/observer.dex" ]; then
 	if ! pgrep -f "[f]usao.observer" >/dev/null 2>&1; then
@@ -186,16 +192,15 @@ if [ ! -f "$FUSAO_DIR/disable" ] && [ -x "$FUSAO_DIR/watch.sh" ]; then
 fi
 # GOS killer: Samsung ressuscita o GOS; mata por schedule e loga.
 # Padrão pgrep com colchetes: não casa a própria shell.
-if [ -x "$FUSAO_DIR/gos_killer.sh" ]; then
+if [ ! -f "$FUSAO_DIR/disable" ] && [ -x "$FUSAO_DIR/gos_killer.sh" ]; then
 	if ! pgrep -f "[g]os_killer" >/dev/null 2>&1; then
 		M54_DIR="$FUSAO_DIR" nohup sh "$FUSAO_DIR/gos_killer.sh" >>"$FUSAO_DIR/fusao.log" 2>&1 &
 	fi
 fi
 # Cérebro (CPU floors + GPU/MIF/INT/DISP via cache): só com fusaod.enabled.
 # Descida de policy0 por degraus (tabela real). Sem o arquivo, zero writer.
-if [ -f "$FUSAO_DIR/fusaod.enabled" ] && [ -x "$MODDIR/system/bin/fusaod" ]; then
-	if ! pgrep -f "fusaod serve" >/dev/null 2>&1; then
+if [ ! -f "$FUSAO_DIR/disable" ] && [ -f "$FUSAO_DIR/fusaod.enabled" ] && [ -x "$MODDIR/system/bin/fusaod" ]; then
+	if ! pgrep -f "[f]usaod serve" >/dev/null 2>&1; then
 		nohup "$MODDIR/system/bin/fusaod" serve >>"$FUSAO_DIR/fusaod.log" 2>&1 &
 	fi
 fi
-

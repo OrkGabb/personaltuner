@@ -37,6 +37,9 @@ fi
 if [ -x /data/adb/fusao/display.sh ]; then
 	M54_DIR=/data/adb/fusao sh /data/adb/fusao/display.sh reset 2>/dev/null
 fi
+if [ -x /data/adb/fusao/perf.sh ]; then
+	M54_DIR=/data/adb/fusao sh /data/adb/fusao/perf.sh exit 2>/dev/null
+fi
 if [ -x /data/adb/fusao/tune.sh ]; then
 	M54_DIR=/data/adb/fusao sh /data/adb/fusao/tune.sh idle 2>/dev/null
 fi
@@ -69,25 +72,32 @@ for z in /sys/class/thermal/thermal_zone*/mode; do
 done
 
 # 3. Stock snapshot (se existir): restaura min/max travados por perfil.
+#    Policy0 exige descida por degraus de tabela no Exynos 1380.
 if [ -f "$MODULE_CONFIG/stock.snapshot" ]; then
-	while IFS= read -r line; do
-		case "$line" in
+	while read -r p v; do
+		case "$p" in
 		\#* | "") continue ;;
 		*)
-			p=$(echo "$line" | cut -d' ' -f1)
-			v=$(echo "$line" | cut -d' ' -f2-)
 			if [ -f "$p" ]; then
 				chmod 644 "$p" 2>/dev/null
-				echo "$v" >"$p" 2>/dev/null
+				if [ "$p" = "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq" ]; then
+					for _step in 1152000 960000 768000 672000 "$v"; do
+						echo "$_step" >"$p" 2>/dev/null
+					done
+				else
+					echo "$v" >"$p" 2>/dev/null
+				fi
 			fi
 			;;
 		esac
 	done <"$MODULE_CONFIG/stock.snapshot"
 fi
 
-# IO scheduler de volta ao stock (ssg neste aparelho).
-for b in sda sdb sdc sdd sde; do
+# IO scheduler e fila de volta ao stock (ssg neste aparelho).
+for b in sda sdb sdc sdd sde sdf; do
 	[ -f /sys/block/$b/queue/scheduler ] && echo "ssg" >/sys/block/$b/queue/scheduler 2>/dev/null
+	[ -f /sys/block/$b/queue/nomerges ] && echo "0" >/sys/block/$b/queue/nomerges 2>/dev/null
+	[ -f /sys/block/$b/queue/add_random ] && echo "1" >/sys/block/$b/queue/add_random 2>/dev/null
 done
 
 # Config por último: o restore acima leu daqui.
@@ -101,7 +111,7 @@ manager_paths="/data/adb/ap/bin /data/adb/ksu/bin"
 for dir in $manager_paths; do
 	[ -d "$dir" ] && {
 		for bin in $need_gone; do
-			rm "$dir/$bin"
+			rm -f "$dir/$bin"
 		done
 	}
 done
