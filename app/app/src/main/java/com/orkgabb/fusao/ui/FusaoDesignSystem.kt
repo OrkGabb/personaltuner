@@ -799,8 +799,8 @@ fun ReactorCoreEmblem(
                     colors = listOf(accent, secondary, accent)
                 )
                 val r = size.minDimension * 0.47f
-                val cx = center.x
-                val cy = center.y
+                val cx = size.width / 2f
+                val cy = size.height / 2f
                 val tickInner = r - 4.dp.toPx()
                 val tickOuter = r + 2.dp.toPx()
                 val tickStroke = 2.dp.toPx()
