@@ -38,7 +38,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -235,7 +234,7 @@ class MainActivity : ComponentActivity() {
                     // Conteúdo principal das 5 áreas com transição suave
                     Crossfade(
                         targetState = tab,
-                        animationSpec = tween(durationMillis = 220),
+                        animationSpec = tween(durationMillis = 180),
                         modifier = Modifier.weight(1f),
                         label = "fusaoTabCrossfade",
                     ) { currentTab ->
@@ -263,13 +262,16 @@ class MainActivity : ComponentActivity() {
                 "M54 SINGLE"
             } else {
                 rawVersion
+                    .substringBefore("|")
                     .replace("version=", "")
                     .substringBefore(" ")
                     .trim()
                     .ifEmpty { "M54" }
             }
         }
-        val hasStagedUpdate = remember(rawVersion) { rawVersion.contains("|") }
+        val hasStagedUpdate = remember(rawVersion) {
+            rawVersion.contains("staged:") || rawVersion.contains("|")
+        }
         val isRefreshing = state.isBusy(Busy.REFRESH)
 
         Column(
@@ -316,16 +318,18 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.size(30.dp),
                         )
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
                                 text = "FUSAO",
                                 style = MaterialTheme.typography.titleLarge,
                                 color = FusaoPalette.TextPrimary,
+                                maxLines = 1,
+                                softWrap = false,
                             )
                             TelemetryPill(
                                 text = cleanVersion,
@@ -334,7 +338,7 @@ class MainActivity : ComponentActivity() {
                             )
                             if (hasStagedUpdate) {
                                 TelemetryPill(
-                                    text = "UPD STAGE",
+                                    text = "UPD",
                                     color = FusaoPalette.IgnisAmber,
                                     filled = true,
                                 )
@@ -418,8 +422,8 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 tabs.forEachIndexed { idx, (label, icon, badge) ->
@@ -439,33 +443,41 @@ class MainActivity : ComponentActivity() {
                                 shape = RoundedCornerShape(10.dp),
                             )
                             .clickable { onSelectTab(idx) }
-                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                            .padding(vertical = 7.dp, horizontal = 2.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
                         ) {
-                            Box(contentAlignment = Alignment.TopEnd) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                modifier = Modifier.height(20.dp),
+                            ) {
                                 FusaoVectorGlyph(
                                     icon = icon,
                                     color = itemColor,
-                                    modifier = Modifier
-                                        .padding(horizontal = 8.dp)
-                                        .size(20.dp),
+                                    modifier = Modifier.size(18.dp),
                                 )
                                 if (badge != null) {
                                     Text(
                                         text = badge,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 8.sp,
+                                            lineHeight = 10.sp,
+                                            letterSpacing = 0.2.sp,
+                                        ),
                                         color = if (selected) FusaoPalette.VoidBlack else accentColor,
+                                        maxLines = 1,
+                                        softWrap = false,
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(4.dp))
                                             .background(
                                                 if (selected) accentColor
                                                 else FusaoPalette.ElevatedHud
                                             )
-                                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                                            .padding(horizontal = 3.5.dp, vertical = 1.dp),
                                     )
                                 }
                             }
@@ -476,6 +488,8 @@ class MainActivity : ComponentActivity() {
                                 ),
                                 color = itemColor,
                                 maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
@@ -618,6 +632,7 @@ class MainActivity : ComponentActivity() {
                         text = text,
                         style = MaterialTheme.typography.bodyMedium,
                         color = FusaoPalette.TextPrimary,
+                        modifier = Modifier.weight(1f),
                     )
                 }
                 if (onClose != null) {
@@ -625,8 +640,10 @@ class MainActivity : ComponentActivity() {
                         text = "OK",
                         style = MaterialTheme.typography.labelMedium,
                         color = accentColor,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier
-                            .padding(start = 12.dp)
+                            .padding(start = 10.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(accentColor.copy(alpha = 0.14f))
                             .clickable { onClose() }
@@ -660,16 +677,13 @@ class MainActivity : ComponentActivity() {
                     contentPadding = PaddingValues(0.dp),
                 ) {
                     Box(modifier = Modifier.fillMaxWidth()) {
-                        // Arte abstrata gerada para a área principal de Status
                         Image(
                             painter = painterResource(id = R.drawable.bg_status_reactor),
                             contentDescription = null,
-                            modifier = Modifier
-                                .matchParentSize(),
+                            modifier = Modifier.matchParentSize(),
                             contentScale = ContentScale.Crop,
                             alpha = 0.36f,
                         )
-                        // Vinheta para máxima legibilidade AMOLED
                         Box(
                             modifier = Modifier
                                 .matchParentSize()
@@ -710,9 +724,17 @@ class MainActivity : ComponentActivity() {
                                             "balanced" -> "PERFIL // BALANCED"
                                             else -> "PERFIL // ${st.profile.ifEmpty { "—" }.uppercase()}"
                                         },
-                                        style = MaterialTheme.typography.headlineMedium,
+                                        style = MaterialTheme.typography.headlineMedium.copy(
+                                            fontSize = 20.sp,
+                                            lineHeight = 25.sp,
+                                            letterSpacing = 0.7.sp,
+                                        ),
                                         color = FusaoPalette.TextPrimary,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
+                                    Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = when (st.profile) {
                                             "game" -> "Teto GPU 949 MHz · P0/P4 degraus · Triads de jogo"
@@ -724,7 +746,7 @@ class MainActivity : ComponentActivity() {
                                         color = FusaoPalette.TextSecondary,
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(12.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
                                 ReactorCoreEmblem(
                                     profile = st.profile,
                                     inGame = st.inGame,
@@ -738,6 +760,8 @@ class MainActivity : ComponentActivity() {
                                     text = "SELECIONAR PERFIL DE OPERAÇÃO",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.TextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -815,11 +839,13 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             }
                                         }
-                                        Column {
+                                        Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = "JOGO ATIVO (GAME-ACTIVE)",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = if (st.inGame) FusaoPalette.IgnisAmber else FusaoPalette.TextMuted,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                             )
                                             Text(
                                                 text = if (st.inGame) state.labelFor(st.gameActive) else "— (idle)",
@@ -839,6 +865,7 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
                                     }
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     TelemetryPill(
                                         text = if (st.inGame) "EM FOCO" else "IDLE",
                                         color = if (st.inGame) FusaoPalette.IgnisAmber else FusaoPalette.TextMuted,
@@ -868,18 +895,23 @@ class MainActivity : ComponentActivity() {
                                     text = "DISPLAY (WM SIZE)",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.CryoCyan,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     text = st.display.ifEmpty { "—" },
                                     style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
                                     color = FusaoPalette.TextPrimary,
                                     maxLines = 1,
+                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = "Resolução reportada por display.sh",
+                                    text = "Resolução via display.sh",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = FusaoPalette.TextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -894,18 +926,23 @@ class MainActivity : ComponentActivity() {
                                     text = "ESTADO TÉRMICO",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.IgnisAmber,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     text = st.thermal.ifEmpty { "—" },
                                     style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
                                     color = FusaoPalette.TextPrimary,
                                     maxLines = 1,
+                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     text = "Guard 78°C CPU / 45°C Batt",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = FusaoPalette.TextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -924,7 +961,7 @@ class MainActivity : ComponentActivity() {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "ESCALA DE RENDERIZAÇÃO (DOWNSCALE REVERSÍVEL)",
+                                    text = "ESCALA DE RENDERIZAÇÃO (DOWNSCALE)",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.TextSecondary,
                                     maxLines = 1,
@@ -1046,6 +1083,7 @@ class MainActivity : ComponentActivity() {
                                 SelectionContainer {
                                     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                         st.hooks.forEachIndexed { idx, h ->
+                                            val highlighted = remember(h) { highlightTelemetryLine(h) }
                                             Row(
                                                 verticalAlignment = Alignment.Top,
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1056,7 +1094,7 @@ class MainActivity : ComponentActivity() {
                                                     color = FusaoPalette.TextMuted,
                                                 )
                                                 Text(
-                                                    text = highlightTelemetryLine(h),
+                                                    text = highlighted,
                                                     style = MaterialTheme.typography.bodySmall.copy(
                                                         fontFamily = FontFamily.Monospace,
                                                         fontSize = 11.5.sp,
@@ -1110,11 +1148,13 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier.weight(1f),
             ) {
                 StatusPulseDot(color = dotColor, active = running)
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "$name: $statusText",
                         style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
                         color = FusaoPalette.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         text = role,
@@ -1123,6 +1163,7 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+            Spacer(modifier = Modifier.width(8.dp))
             TelemetryPill(
                 text = statusText.uppercase(),
                 color = dotColor,
@@ -1219,6 +1260,8 @@ class MainActivity : ComponentActivity() {
                                         fontFamily = FontFamily.Monospace,
                                     ),
                                     color = FusaoPalette.TextPrimary,
+                                    maxLines = 1,
+                                    softWrap = false,
                                 )
                                 TelemetryPill(
                                     text = stateBadgeText,
@@ -1235,6 +1278,8 @@ class MainActivity : ComponentActivity() {
                                 text = spec.category,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = spec.accent.copy(alpha = 0.85f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
 
@@ -1314,7 +1359,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         HudSectionHeader(
                             title = "Preload (WILLNEED)",
-                            subtitle = "posix_fadvise inteligente com seleção record→replay por jogo (cap 2000 arqs / 512 MB)",
+                            subtitle = "posix_fadvise inteligente com seleção record→replay por jogo (cap 2000 arqs / 512 MB/arq)",
                             accentColor = FusaoPalette.ElectricOrchid,
                             trailing = {
                                 TelemetryPill(
@@ -1367,6 +1412,7 @@ class MainActivity : ComponentActivity() {
                                     text = "Abra um jogo da lista para habilitar \"Preload agora\" e \"Record 20s (jogo aberto)\".",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = FusaoPalette.TextSecondary,
+                                    modifier = Modifier.weight(1f),
                                 )
                             }
                         }
@@ -1494,7 +1540,7 @@ class MainActivity : ComponentActivity() {
                                 label = "MEMFREE (KB)",
                                 value = ramcleanTelemetry.lastTransition.ifEmpty { "—" },
                                 accent = FusaoPalette.BioEmerald,
-                                modifier = Modifier.weight(1.3f),
+                                modifier = Modifier.weight(1.35f),
                             )
                             MetricMiniCard(
                                 label = "MEMAVAIL (KB)",
@@ -1506,7 +1552,7 @@ class MainActivity : ComponentActivity() {
                                 label = "STATUS RC",
                                 value = ramcleanTelemetry.lastRc.ifEmpty { "—" },
                                 accent = FusaoPalette.MintPulse,
-                                modifier = Modifier.weight(0.7f),
+                                modifier = Modifier.weight(0.65f),
                             )
                         }
                     }
@@ -1550,26 +1596,32 @@ class MainActivity : ComponentActivity() {
         accent: Color,
         modifier: Modifier = Modifier,
     ) {
+        val valueFontSize = if (value.length > 11) 11.sp else 13.sp
         Column(
             modifier = modifier
                 .clip(RoundedCornerShape(8.dp))
                 .background(FusaoPalette.VoidBlack.copy(alpha = 0.72f))
                 .border(1.dp, accent.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 9.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.8.sp),
                 color = FusaoPalette.TextMuted,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = value,
-                style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = valueFontSize,
+                ),
                 color = accent,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -1593,6 +1645,8 @@ class MainActivity : ComponentActivity() {
                 text = title,
                 style = MaterialTheme.typography.labelSmall,
                 color = FusaoPalette.TextMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             if (lines.isEmpty()) {
                 Text(
@@ -1604,8 +1658,9 @@ class MainActivity : ComponentActivity() {
                 SelectionContainer {
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         lines.forEach { l ->
+                            val highlighted = remember(l) { highlightTelemetryLine(l) }
                             Text(
-                                text = highlightTelemetryLine(l),
+                                text = highlighted,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 11.5.sp,
@@ -1748,6 +1803,7 @@ class MainActivity : ComponentActivity() {
                             },
                             style = MaterialTheme.typography.titleSmall,
                             color = FusaoPalette.TextSecondary,
+                            textAlign = TextAlign.Center,
                         )
                         Text(
                             text = "Use \"Adicionar\" para escolher um aplicativo instalado ou \"Atualizar\" para reler do módulo.",
@@ -1809,6 +1865,7 @@ class MainActivity : ComponentActivity() {
                                                 color = FusaoPalette.TextPrimary,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false),
                                             )
                                             if (isCurrentlyRunning) {
                                                 TelemetryPill(
@@ -1830,6 +1887,8 @@ class MainActivity : ComponentActivity() {
                                                 text = "Registrado em gamelist.txt (não instalado)",
                                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.5.sp),
                                                 color = FusaoPalette.TextMuted,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                             )
                                         }
                                     }
@@ -1861,6 +1920,8 @@ class MainActivity : ComponentActivity() {
                                             text = "Remover",
                                             style = MaterialTheme.typography.labelMedium,
                                             color = FusaoPalette.CrimsonSoft,
+                                            maxLines = 1,
+                                            softWrap = false,
                                         )
                                     }
                                 }
@@ -2100,7 +2161,7 @@ class MainActivity : ComponentActivity() {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     HudSectionHeader(
                         title = if (state.logFusaod) "fusaod.log (writer)" else "fusao.log (ganchos)",
-                        subtitle = "Leitura direta de /data/adb/fusao/ e geração de pacote tar.gz em /sdcard/Download/",
+                        subtitle = "Leitura direta de /data/adb/fusao/ (.1 + atual) e bugreport em /sdcard/Download/",
                         accentColor = FusaoPalette.CryoCyan,
                         trailing = {
                             TelemetryPill(
@@ -2175,6 +2236,8 @@ class MainActivity : ComponentActivity() {
                                     text = "${limit}L",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (activeLimit) FusaoPalette.CryoCyan else FusaoPalette.TextSecondary,
+                                    maxLines = 1,
+                                    softWrap = false,
                                 )
                             }
                         }
@@ -2204,6 +2267,8 @@ class MainActivity : ComponentActivity() {
                                     text = sLabel,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (sel) FusaoPalette.ElectricOrchid else FusaoPalette.TextSecondary,
+                                    maxLines = 1,
+                                    softWrap = false,
                                 )
                             }
                         }
@@ -2224,6 +2289,8 @@ class MainActivity : ComponentActivity() {
                                     text = "COPIAR",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.MintPulse,
+                                    maxLines = 1,
+                                    softWrap = false,
                                 )
                             }
                         }
@@ -2256,7 +2323,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // VIEWPORT TÉCNICO DE LOGS
+            // VIEWPORT TÉCNICO DE LOGS (LazyColumn de alta fluidez sem SelectionContainer global)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -2290,18 +2357,16 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 } else {
-                    SelectionContainer {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(vertical = 8.dp, horizontal = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            itemsIndexed(
-                                items = displayedLines,
-                                key = { _, pair -> pair.first },
-                            ) { _, (lineNum, rawLine) ->
-                                MonoLine(lineNum = lineNum, text = rawLine)
-                            }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        itemsIndexed(
+                            items = displayedLines,
+                            key = { _, pair -> pair.first },
+                        ) { _, (lineNum, rawLine) ->
+                            MonoLine(lineNum = lineNum, text = rawLine)
                         }
                     }
                 }
@@ -2311,11 +2376,14 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun MonoLine(text: String, lineNum: Int? = null) {
-        val gutterColor = when {
-            text.contains("FALHOU") || text.contains("verify-fail") -> FusaoPalette.CrimsonCore
-            text.contains("CONTENDA") || text.contains("recuado") -> FusaoPalette.IgnisAmber
-            text.contains(" ok") || text.contains(": enter") || text.contains(": on") -> FusaoPalette.BioEmerald
-            else -> FusaoPalette.GridHairline
+        val highlighted = remember(text) { highlightTelemetryLine(text) }
+        val gutterColor = remember(text) {
+            when {
+                text.contains("FALHOU") || text.contains("verify-fail") -> FusaoPalette.CrimsonCore
+                text.contains("CONTENDA") || text.contains("recuado") -> FusaoPalette.IgnisAmber
+                text.contains(" ok") || text.contains(": enter") || text.contains(": on") -> FusaoPalette.BioEmerald
+                else -> FusaoPalette.GridHairline
+            }
         }
 
         Row(
@@ -2339,11 +2407,13 @@ class MainActivity : ComponentActivity() {
                         fontSize = 10.sp,
                     ),
                     color = FusaoPalette.TextMuted,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(end = 8.dp, top = 1.dp),
                 )
             }
             Text(
-                text = highlightTelemetryLine(text),
+                text = highlighted,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.5.sp,

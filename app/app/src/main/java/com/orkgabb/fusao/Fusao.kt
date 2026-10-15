@@ -17,6 +17,10 @@ object FusaoBridge {
     @Volatile
     private var cachedCli: String? = null
 
+    fun clearCache() {
+        cachedCli = null
+    }
+
     suspend fun cli(): String {
         cachedCli?.let { return it }
         val r = RootShell.run(
@@ -36,10 +40,11 @@ object FusaoBridge {
 
     suspend fun moduleVersion(): String {
         val r = RootShell.run(
-            "grep -E '^version' \"$MOD_DIR/module.prop\" 2>/dev/null; " +
-                "grep -E '^version' /data/adb/modules_update/encore/module.prop 2>/dev/null"
+            "grep -E '^version=' \"$MOD_DIR/module.prop\" 2>/dev/null | head -n 1; " +
+                "[ -f /data/adb/modules_update/encore/module.prop ] && " +
+                "echo \"staged:\$(grep -E '^version=' /data/adb/modules_update/encore/module.prop 2>/dev/null | head -n 1)\""
         )
-        return r.output.joinToString(" | ").ifEmpty { "—" }
+        return r.output.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" | ").ifEmpty { "—" }
     }
 
     suspend fun status(): FusaoStatus {
@@ -130,11 +135,16 @@ object FusaoBridge {
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
-    /** Cauda do log do módulo (fusao.log = ganchos, fusaod.log = writer). */
+    /** Cauda do log do módulo (fusao.log = ganchos com suporte a .1, fusaod.log = writer). */
     suspend fun logTail(lines: Int = 120, fusaod: Boolean = false): List<String> {
-        val f = if (fusaod) "fusaod.log" else "fusao.log"
         val n = lines.coerceIn(20, 500)
-        return RootShell.run("tail -n $n \"$DATA_DIR/$f\" 2>/dev/null").output
+        return if (fusaod) {
+            RootShell.run("tail -n $n \"$DATA_DIR/fusaod.log\" 2>/dev/null").output
+        } else {
+            RootShell.run(
+                "{ cat \"$DATA_DIR/fusao.log.1\" 2>/dev/null; cat \"$DATA_DIR/fusao.log\" 2>/dev/null; } | tail -n $n"
+            ).output
+        }
     }
 
     suspend fun bugreport(): List<String> {
@@ -283,7 +293,12 @@ data class PreloadTelemetry(
                             isEnabled = stateLabel.startsWith("on")
                         }
                         line.startsWith("packs:") -> {
-                            packCount = line.removePrefix("packs:").trim()
+                            val rawCount = line.removePrefix("packs:").trim()
+                            packCount = if (rawCount.startsWith("nenhum", ignoreCase = true)) {
+                                "0"
+                            } else {
+                                rawCount.substringBefore(" ").ifEmpty { "0" }
+                            }
                         }
                         line.endsWith(".pack") || line.contains(".pack") -> {
                             packs.add(line)

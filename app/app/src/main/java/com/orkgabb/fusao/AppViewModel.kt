@@ -116,10 +116,11 @@ class FusaoViewModel : ViewModel() {
     fun bootstrap(ctx: Context? = null) {
         ctx?.let { ensureAppsCatalogLoaded(it) }
         viewModelScope.launch {
-            if (_state.value.busy == Busy.RECORD) return@launch
+            if (_state.value.anyBusy()) return@launch
             _state.update { it.copy(busy = Busy.REFRESH, activeTarget = "bootstrap") }
             val root = RootShell.hasRoot()
             if (!root) {
+                FusaoBridge.clearCache()
                 _state.update {
                     it.copy(
                         ready = true,
@@ -133,6 +134,7 @@ class FusaoViewModel : ViewModel() {
                 return@launch
             }
             val present = FusaoBridge.modulePresent()
+            if (!present) FusaoBridge.clearCache()
             val version = if (present) FusaoBridge.moduleVersion() else ""
             val st = if (present) FusaoBridge.status() else FusaoStatus()
             val games = if (present && _state.value.games.isEmpty()) {
@@ -151,7 +153,7 @@ class FusaoViewModel : ViewModel() {
                     busy = Busy.NONE,
                     activeTarget = "",
                     notice = if (present) {
-                        if (it.notice.startsWith("Sem root")) "" else it.notice
+                        if (it.notice.startsWith("Sem root") || it.notice.startsWith("Módulo encore")) "" else it.notice
                     } else {
                         "Módulo encore ausente."
                     },
@@ -161,15 +163,16 @@ class FusaoViewModel : ViewModel() {
     }
 
     /**
-     * Revalida root e atualiza status, versão e lista de jogos.
+     * Revalida root e atualiza status, versão, lista de jogos e abas já inicializadas.
      * Se o usuário acabou de conceder temp-root e tocou em Atualizar, o app detecta na hora.
      */
     fun refresh() {
         viewModelScope.launch {
-            if (_state.value.busy == Busy.RECORD) return@launch
+            if (_state.value.anyBusy()) return@launch
             _state.update { it.copy(busy = Busy.REFRESH, activeTarget = "refresh") }
             val root = RootShell.hasRoot()
             if (!root) {
+                FusaoBridge.clearCache()
                 _state.update {
                     it.copy(
                         ready = true,
@@ -182,8 +185,18 @@ class FusaoViewModel : ViewModel() {
                 return@launch
             }
             val present = FusaoBridge.modulePresent()
+            if (!present) FusaoBridge.clearCache()
             val st = if (present) FusaoBridge.status() else FusaoStatus()
             val version = if (present) FusaoBridge.moduleVersion() else ""
+            val cur = _state.value
+            val games = if (present) FusaoBridge.gamelist() else emptyList()
+            val pInfo = if (present && cur.preloadInfo.isNotEmpty()) FusaoBridge.preloadStatus() else cur.preloadInfo
+            val rInfo = if (present && cur.ramcleanInfo.isNotEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
+            val lLines = if (present && cur.logLines.isNotEmpty()) {
+                FusaoBridge.logTail(cur.logLineLimit, cur.logFusaod)
+            } else {
+                cur.logLines
+            }
             _state.update {
                 it.copy(
                     ready = true,
@@ -191,9 +204,17 @@ class FusaoViewModel : ViewModel() {
                     moduleInstalled = present,
                     status = st,
                     moduleVersion = version,
+                    games = games,
+                    preloadInfo = pInfo,
+                    ramcleanInfo = rInfo,
+                    logLines = lLines,
                     busy = Busy.NONE,
                     activeTarget = "",
-                    notice = if (!present) "Módulo encore ausente." else it.notice.takeIf { n -> !n.startsWith("Sem root") }.orEmpty(),
+                    notice = if (!present) {
+                        "Módulo encore ausente."
+                    } else {
+                        it.notice.takeIf { n -> !n.startsWith("Sem root") && !n.startsWith("Módulo encore") }.orEmpty()
+                    },
                 )
             }
         }
@@ -205,7 +226,27 @@ class FusaoViewModel : ViewModel() {
             _state.update { it.copy(busy = Busy.FLAG, activeTarget = cmd) }
             val out = FusaoBridge.setFlag(cmd, on)
             val st = FusaoBridge.status()
-            _state.update { it.copy(status = st, busy = Busy.NONE, activeTarget = "", notice = out) }
+            val cur = _state.value
+            val pInfo = if (cmd == "preload" && cur.preloadInfo.isNotEmpty()) {
+                FusaoBridge.preloadStatus()
+            } else {
+                cur.preloadInfo
+            }
+            val rInfo = if (cmd == "ramclean" && cur.ramcleanInfo.isNotEmpty()) {
+                FusaoBridge.ramcleanStatus()
+            } else {
+                cur.ramcleanInfo
+            }
+            _state.update {
+                it.copy(
+                    status = st,
+                    preloadInfo = pInfo,
+                    ramcleanInfo = rInfo,
+                    busy = Busy.NONE,
+                    activeTarget = "",
+                    notice = out,
+                )
+            }
         }
     }
 
@@ -242,6 +283,7 @@ class FusaoViewModel : ViewModel() {
         val cur = _state.value
         if (cur.preloadInfo.isNotEmpty() && cur.ramcleanInfo.isNotEmpty()) return
         viewModelScope.launch {
+            if (_state.value.anyBusy()) return@launch
             _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_init") }
             val pInfo = if (cur.preloadInfo.isEmpty()) FusaoBridge.preloadStatus() else cur.preloadInfo
             val rInfo = if (cur.ramcleanInfo.isEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
@@ -349,6 +391,7 @@ class FusaoViewModel : ViewModel() {
     fun loadGames() {
         if (!guardRoot()) return
         viewModelScope.launch {
+            if (_state.value.anyBusy()) return@launch
             _state.update { it.copy(busy = Busy.GAMELIST, activeTarget = "gamelist_load") }
             val games = FusaoBridge.gamelist()
             _state.update { it.copy(games = games, busy = Busy.NONE, activeTarget = "") }

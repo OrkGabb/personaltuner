@@ -2,13 +2,8 @@ package com.orkgabb.fusao.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -59,7 +54,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -82,6 +76,10 @@ import com.orkgabb.fusao.R
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
+
+private val TELEMETRY_TS_REGEX = Regex(
+    "^([0-9]{4}-[0-9]{2}-[0-9]{2}\\s+[0-9]{2}:[0-9]{2}:[0-9]{2}|[0-9]{2}:[0-9]{2}:[0-9]{2})\\s+"
+)
 
 /**
  * Paleta oficial Cyber-Cryo // Reactor Core M54.
@@ -164,30 +162,30 @@ private val FusaoTypography = Typography(
     headlineMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Black,
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
-        letterSpacing = 1.2.sp,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = 0.9.sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.ExtraBold,
-        fontSize = 19.sp,
-        lineHeight = 25.sp,
-        letterSpacing = 0.8.sp,
+        fontSize = 18.sp,
+        lineHeight = 24.sp,
+        letterSpacing = 0.7.sp,
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
         fontSize = 15.sp,
         lineHeight = 21.sp,
-        letterSpacing = 0.6.sp,
+        letterSpacing = 0.5.sp,
     ),
     titleSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-        letterSpacing = 0.5.sp,
+        letterSpacing = 0.4.sp,
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -208,14 +206,14 @@ private val FusaoTypography = Typography(
         fontWeight = FontWeight.Bold,
         fontSize = 11.sp,
         lineHeight = 15.sp,
-        letterSpacing = 0.9.sp,
+        letterSpacing = 0.8.sp,
     ),
     labelSmall = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.Medium,
         fontSize = 10.sp,
-        lineHeight = 14.sp,
-        letterSpacing = 0.8.sp,
+        lineHeight = 13.sp,
+        letterSpacing = 0.7.sp,
     ),
 )
 
@@ -252,7 +250,7 @@ fun chamferedHudShape(
     lineTo(bs, h)
     if (bs > 0f) lineTo(0f, h - bs)
     lineTo(0f, ts)
-    if (ts > 0f) close() else close()
+    close()
 }
 
 /**
@@ -268,7 +266,7 @@ fun FusaoAmbientCanvas(
 ) {
     val animAccent by animateColorAsState(
         targetValue = accentColor,
-        animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
         label = "ambientAccent",
     )
     Box(
@@ -392,7 +390,6 @@ fun TacticalPanel(
                 onDrawWithContent {
                     drawRect(brush = glowBrush, size = Size(size.width, 36.dp.toPx()))
                     drawContent()
-                    // Marcas de calibração técnica nos cantos retos
                     drawLine(
                         color = tickColor,
                         start = Offset(0f, 0f),
@@ -425,7 +422,7 @@ fun TacticalPanel(
 }
 
 /**
- * Cabeçalho técnico de seção com marcador luminoso, título em caixa alta e metadado opcional.
+ * Cabeçalho técnico de seção com marcador luminoso, título e metadado opcional.
  */
 @Composable
 fun HudSectionHeader(
@@ -464,6 +461,7 @@ fun HudSectionHeader(
                             style = MaterialTheme.typography.labelSmall,
                             color = accentColor,
                             maxLines = 1,
+                            softWrap = false,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Spacer(modifier = Modifier.width(6.dp))
@@ -525,6 +523,7 @@ fun TelemetryPill(
             style = MaterialTheme.typography.labelSmall,
             color = if (filled) color else FusaoPalette.TextPrimary,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis,
         )
     }
@@ -574,7 +573,7 @@ fun CyberSwitch(
 ) {
     val thumbOffset by animateDpAsState(
         targetValue = if (checked) 24.dp else 2.dp,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
         label = "cyberSwitchOffset",
     )
     val trackColor by animateColorAsState(
@@ -583,7 +582,7 @@ fun CyberSwitch(
             checked -> accentColor.copy(alpha = 0.22f)
             else -> FusaoPalette.AbyssNavy
         },
-        animationSpec = tween(durationMillis = 220),
+        animationSpec = tween(durationMillis = 200),
         label = "cyberSwitchTrack",
     )
     val borderColor by animateColorAsState(
@@ -592,7 +591,7 @@ fun CyberSwitch(
             checked -> accentColor.copy(alpha = 0.85f)
             else -> FusaoPalette.BorderSubtle.copy(alpha = 0.7f)
         },
-        animationSpec = tween(durationMillis = 220),
+        animationSpec = tween(durationMillis = 200),
         label = "cyberSwitchBorder",
     )
     val interactionSource = remember { MutableInteractionSource() }
@@ -613,11 +612,12 @@ fun CyberSwitch(
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
-        // Marca textual ON / OFF sutil no trilho
         Text(
             text = if (checked) "ON" else "OFF",
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
             color = if (checked) accentColor.copy(alpha = 0.85f) else FusaoPalette.TextMuted.copy(alpha = 0.65f),
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier
                 .align(if (checked) Alignment.CenterStart else Alignment.CenterEnd)
                 .padding(horizontal = 6.dp),
@@ -725,17 +725,17 @@ fun TacticalButton(
         Row(
             modifier = Modifier
                 .background(bgBrush)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (isLoading) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(13.dp),
+                    strokeWidth = 1.8.dp,
                     color = accentColor,
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
@@ -743,6 +743,7 @@ fun TacticalButton(
                     style = MaterialTheme.typography.titleSmall,
                     color = contentColor,
                     maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (!subtitle.isNullOrEmpty()) {
@@ -751,6 +752,7 @@ fun TacticalButton(
                         style = MaterialTheme.typography.labelSmall,
                         color = FusaoPalette.TextSecondary,
                         maxLines = 1,
+                        softWrap = false,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -761,8 +763,7 @@ fun TacticalButton(
 
 /**
  * Núcleo visual do Reator FUSAO-M54 para a tela principal de Status.
- * Combina os assets gerados (`bg_status_reactor` e `img_fusao_emblem`) com anéis
- * de telemetria desenhados nativamente em Canvas.
+ * Usa `drawWithCache` sem animações infinitas contínuas para zero overhead de CPU/GPU em repouso.
  */
 @Composable
 fun ReactorCoreEmblem(
@@ -775,94 +776,80 @@ fun ReactorCoreEmblem(
     val secondary = FusaoPalette.profileSecondary(profile)
     val progressRatio by animateFloatAsState(
         targetValue = (daemonsAlive.coerceIn(0, 3) / 3f),
-        animationSpec = tween(durationMillis = 600),
+        animationSpec = tween(durationMillis = 450),
         label = "daemonArc",
     )
 
-    val transition = rememberInfiniteTransition(label = "reactorPulse")
-    val slowAngle by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (inGame) 14000 else 28000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "reactorRotation",
-    )
-
     Box(
-        modifier = modifier.size(104.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val strokeOuter = 2.5.dp.toPx()
-            val strokeInner = 4.dp.toPx()
-            val pad = 6.dp.toPx()
-            val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
-
-            // Halo radial de energia
-            drawCircle(
-                brush = Brush.radialGradient(
+        modifier = modifier
+            .size(92.dp)
+            .drawWithCache {
+                val strokeOuter = 2.5.dp.toPx()
+                val strokeInner = 4.dp.toPx()
+                val pad = 6.dp.toPx()
+                val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
+                val haloBrush = Brush.radialGradient(
                     colors = listOf(
                         accent.copy(alpha = if (inGame) 0.30f else 0.16f),
                         secondary.copy(alpha = 0.08f),
                         Color.Transparent,
                     )
-                ),
-                radius = size.minDimension * 0.5f,
-            )
-
-            // Anel base segmentado
-            drawArc(
-                color = FusaoPalette.GridHairline,
-                startAngle = 0f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = Offset(pad, pad),
-                size = arcSize,
-                style = Stroke(width = strokeOuter),
-            )
-
-            // Arco de liveness dos 3 daemons (fusaod, watch, observer)
-            drawArc(
-                brush = Brush.sweepGradient(
+                )
+                val sweepBrush = Brush.sweepGradient(
                     colors = listOf(accent, secondary, accent)
-                ),
-                startAngle = -90f,
-                sweepAngle = 360f * progressRatio.coerceAtLeast(0.08f),
-                useCenter = false,
-                topLeft = Offset(pad, pad),
-                size = arcSize,
-                style = Stroke(width = strokeInner, cap = StrokeCap.Round),
-            )
-
-            // Retícula orbital giratória leve
-            rotate(degrees = slowAngle) {
+                )
                 val r = size.minDimension * 0.47f
                 val cx = center.x
                 val cy = center.y
-                for (i in 0 until 6) {
-                    val rad = Math.toRadians((i * 60).toDouble())
-                    val x1 = cx + (r - 4.dp.toPx()) * cos(rad).toFloat()
-                    val y1 = cy + (r - 4.dp.toPx()) * sin(rad).toFloat()
-                    val x2 = cx + (r + 2.dp.toPx()) * cos(rad).toFloat()
-                    val y2 = cy + (r + 2.dp.toPx()) * sin(rad).toFloat()
-                    drawLine(
-                        color = accent.copy(alpha = 0.7f),
-                        start = Offset(x1, y1),
-                        end = Offset(x2, y2),
-                        strokeWidth = 2.dp.toPx(),
-                        cap = StrokeCap.Round,
-                    )
-                }
-            }
-        }
+                val tickInner = r - 4.dp.toPx()
+                val tickOuter = r + 2.dp.toPx()
+                val tickStroke = 2.dp.toPx()
+                val tickColor = accent.copy(alpha = 0.7f)
 
+                onDrawBehind {
+                    drawCircle(
+                        brush = haloBrush,
+                        radius = size.minDimension * 0.5f,
+                    )
+                    drawArc(
+                        color = FusaoPalette.GridHairline,
+                        startAngle = 0f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = Offset(pad, pad),
+                        size = arcSize,
+                        style = Stroke(width = strokeOuter),
+                    )
+                    drawArc(
+                        brush = sweepBrush,
+                        startAngle = -90f,
+                        sweepAngle = 360f * progressRatio.coerceAtLeast(0.08f),
+                        useCenter = false,
+                        topLeft = Offset(pad, pad),
+                        size = arcSize,
+                        style = Stroke(width = strokeInner, cap = StrokeCap.Round),
+                    )
+                    for (i in 0 until 6) {
+                        val rad = Math.toRadians((i * 60).toDouble())
+                        val cosA = cos(rad).toFloat()
+                        val sinA = sin(rad).toFloat()
+                        drawLine(
+                            color = tickColor,
+                            start = Offset(cx + tickInner * cosA, cy + tickInner * sinA),
+                            end = Offset(cx + tickOuter * cosA, cy + tickOuter * sinA),
+                            strokeWidth = tickStroke,
+                            cap = StrokeCap.Round,
+                        )
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
         Image(
             painter = painterResource(id = R.drawable.img_fusao_emblem),
             contentDescription = "Emblema FUSAO-M54",
             modifier = Modifier
-                .size(76.dp)
+                .size(68.dp)
                 .clip(CircleShape),
             contentScale = ContentScale.Fit,
         )
@@ -881,49 +868,57 @@ fun PreloadCountdownGauge(
     val progress = (remainingSec.coerceIn(0, totalSec).toFloat() / totalSec.toFloat())
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = tween(durationMillis = 350),
         label = "recordCountdown",
     )
 
     Box(
-        modifier = modifier.size(72.dp),
+        modifier = modifier
+            .size(72.dp)
+            .drawWithCache {
+                val stroke = 5.dp.toPx()
+                val inset = stroke / 2f + 2.dp.toPx()
+                val arcSize = Size(size.width - inset * 2, size.height - inset * 2)
+                val sweepBrush = Brush.sweepGradient(
+                    colors = listOf(FusaoPalette.IgnisAmber, FusaoPalette.CryoCyan, FusaoPalette.PlasmaViolet)
+                )
+                onDrawBehind {
+                    drawArc(
+                        color = FusaoPalette.GridHairline,
+                        startAngle = 0f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = Offset(inset, inset),
+                        size = arcSize,
+                        style = Stroke(width = stroke),
+                    )
+                    drawArc(
+                        brush = sweepBrush,
+                        startAngle = -90f,
+                        sweepAngle = 360f * animatedProgress,
+                        useCenter = false,
+                        topLeft = Offset(inset, inset),
+                        size = arcSize,
+                        style = Stroke(width = stroke, cap = StrokeCap.Round),
+                    )
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 5.dp.toPx()
-            val inset = stroke / 2f + 2.dp.toPx()
-            val arcSize = Size(size.width - inset * 2, size.height - inset * 2)
-            drawArc(
-                color = FusaoPalette.GridHairline,
-                startAngle = 0f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = arcSize,
-                style = Stroke(width = stroke),
-            )
-            drawArc(
-                brush = Brush.sweepGradient(
-                    colors = listOf(FusaoPalette.IgnisAmber, FusaoPalette.CryoCyan, FusaoPalette.PlasmaViolet)
-                ),
-                startAngle = -90f,
-                sweepAngle = 360f * animatedProgress,
-                useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = arcSize,
-                style = Stroke(width = stroke, cap = StrokeCap.Round),
-            )
-        }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = "${remainingSec}s",
                 style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
                 color = FusaoPalette.IgnisAmber,
+                maxLines = 1,
+                softWrap = false,
             )
             Text(
                 text = "REC",
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
                 color = FusaoPalette.CryoCyan,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }
@@ -1008,6 +1003,8 @@ fun AppIconBadge(
                 text = initials,
                 style = MaterialTheme.typography.labelMedium,
                 color = accentColor,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }
@@ -1031,7 +1028,6 @@ fun FusaoVectorGlyph(
         val h = size.height
         when (icon) {
             FusaoNavIcon.STATUS -> {
-                // Hexágono de núcleo + pulso central
                 val path = Path().apply {
                     moveTo(w * 0.5f, h * 0.08f)
                     lineTo(w * 0.9f, h * 0.29f)
@@ -1045,7 +1041,6 @@ fun FusaoVectorGlyph(
                 drawCircle(color = color, radius = w * 0.16f, center = center)
             }
             FusaoNavIcon.FLAGS -> {
-                // Três trilhos de matriz com chaves seletoras
                 val ys = listOf(h * 0.24f, h * 0.50f, h * 0.76f)
                 val knobs = listOf(w * 0.72f, w * 0.32f, w * 0.66f)
                 ys.forEachIndexed { idx, y ->
@@ -1064,7 +1059,6 @@ fun FusaoVectorGlyph(
                 }
             }
             FusaoNavIcon.PRELOAD -> {
-                // Bloco de memória RAM/WILLNEED com condutos de alta velocidade
                 drawRoundRect(
                     color = color,
                     topLeft = Offset(w * 0.22f, h * 0.22f),
@@ -1072,7 +1066,6 @@ fun FusaoVectorGlyph(
                     cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
                     style = stroke,
                 )
-                // Pinos superiores/inferiores/laterais
                 for (f in listOf(0.36f, 0.64f)) {
                     drawLine(color, Offset(w * f, h * 0.06f), Offset(w * f, h * 0.22f), stroke.width)
                     drawLine(color, Offset(w * f, h * 0.78f), Offset(w * f, h * 0.94f), stroke.width)
@@ -1086,7 +1079,6 @@ fun FusaoVectorGlyph(
                 )
             }
             FusaoNavIcon.GAMES -> {
-                // Mira / Retícula tática de alvo de jogo
                 drawCircle(
                     color = color,
                     radius = w * 0.36f,
@@ -1100,7 +1092,6 @@ fun FusaoVectorGlyph(
                 drawCircle(color = color, radius = w * 0.08f, center = center)
             }
             FusaoNavIcon.LOG -> {
-                // Terminal / Prompt de telemetria
                 drawRoundRect(
                     color = color,
                     topLeft = Offset(w * 0.1f, h * 0.14f),
@@ -1136,7 +1127,7 @@ fun highlightTelemetryLine(raw: String): AnnotatedString = buildAnnotatedString 
     val baseColor = when {
         line.contains("FALHOU") || line.contains("verify-fail") || lower.contains("erro") || lower.contains("error") ->
             FusaoPalette.CrimsonSoft
-        line.contains("CONTENDA") || line.contains("recuado") || line.contains("paused") ->
+        line.contains("CONTENDA") || line.contains("recuado") || line.contains("paused") || line.contains("(warm)") ->
             FusaoPalette.IgnisAmber
         line.contains(" ok") || line.contains(": enter") || line.contains(": on") || line.contains("apply game") ->
             FusaoPalette.MintPulse
@@ -1145,9 +1136,7 @@ fun highlightTelemetryLine(raw: String): AnnotatedString = buildAnnotatedString 
         else -> FusaoPalette.TextCode
     }
 
-    // Destaca timestamp inicial caso exista (ex.: "2026-10-13 13:01:01 ")
-    val tsRegex = Regex("^([0-9]{4}-[0-9]{2}-[0-9]{2}\\s+[0-9]{2}:[0-9]{2}:[0-9]{2}|[0-9]{2}:[0-9]{2}:[0-9]{2})\\s+")
-    val tsMatch = tsRegex.find(line)
+    val tsMatch = TELEMETRY_TS_REGEX.find(line)
     var cursor = 0
     if (tsMatch != null) {
         withStyle(SpanStyle(color = FusaoPalette.TextMuted)) {
