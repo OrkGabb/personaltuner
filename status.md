@@ -643,7 +643,7 @@ pendente), tune/DND/downscale ✓ (valores conservadores, matriz afina).
   no PC: rebuild `_releases/fusao-v2.9.5-M54.zip` **byte-identico** ao dela
   (60 entries, 0 diffs; exigiu LF puro — `core.autocrlf=false` local, working
   tree normalizada sem tocar nos commits). Offline: **89/89 PASS**, sweep OK,
-  dex OK. `module.prop` segue 2.9.4/1596 (ela nao bumpou; nome do zip = rotulo).
+  dex OK. Bump p/ 2.9.5/1597 feito depois a pedido do dono (`5b6d91c`).
 - App da auditoria **nao compilava** (`center` em `CacheDrawScope`,
   `FusaoDesignSystem.kt:802-803`). Fix commit `6f3dab4` (`size.width/2f`,
   `size.height/2f`) + build WSL `assembleDebug` OK (25.3MB, so warning
