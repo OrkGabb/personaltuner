@@ -21,7 +21,16 @@ trap cleanup_watch EXIT INT TERM
 GAMEFILE="$M54_DIR/game-active.txt"
 GAMELIST="$M54_DIR/gamelist.txt"
 LAST=""
+LAST_HEAVY_PKG=""
+LAST_HEAVY_TS=0
 log "watch v2.0: inicio (gamelist=$GAMELIST)"
+
+read_gamefile() {
+  local _g=""
+  [ -r "$GAMEFILE" ] && IFS= read -r _g < "$GAMEFILE" 2>/dev/null
+  _g=$(printf "%s" "$_g" | tr -d '[:space:]')
+  echo "$_g"
+}
 
 # FOCUS_FAKE (testes offline): arquivo com nome do pacote em foco.
 # DUMPSYS_FAKE: saída fake de dumpsys para parser.
@@ -67,7 +76,9 @@ relaunch_observer() {
   [ -x "$M54_DIR/observer.sh" ] || return 1
   [ -f "$M54_DIR/observer.dex" ] || return 1
   [ -f "$M54_DIR/disable" ] && return 1
+  pgrep -f "[o]bserver.sh" >/dev/null 2>&1 && return 0
   NOW_R=$(uptime_s)
+  case "$NOW_R" in ''|*[!0-9]*) NOW_R=0;; esac
   if [ "$LAST_RELAUNCH" != "0" ] && [ $((NOW_R - LAST_RELAUNCH)) -lt 60 ]; then
     return 1
   fi
@@ -81,18 +92,19 @@ relaunch_observer() {
   log "watch: relaunch falhou (nova tentativa em 1min)"
   return 1
 }
+
 # Sem observer no ar, o watch assume: limpa resíduo de sessão morta.
 if ! observer_alive; then
   write_state ""
   log "watch: inicio sem observer, relaunch + poll 5s"
   relaunch_observer
 fi
+
 fire_enter() {
   _pkg="$1"
   HOOKS=""
   log "watch: enter $_pkg"
-  # Gancho perf (processo, não sysfs): renice/IO no game-enter, atrás de flag.
-  if [ -x "$M54_DIR/../fusao/perf.sh" ]; then :; fi
+  # Gancho perf (processo + IO queue): renice/IO no game-enter, atrás de flag.
   if [ -f "$M54_DIR/perf.enabled" ] && [ -x "$(dirname "$0")/perf.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/perf.sh" enter "$_pkg" 2>/dev/null && HOOKS="$HOOKS perf"
   fi
@@ -102,29 +114,50 @@ fire_enter() {
     M54_DIR="$M54_DIR" nohup sh "$(dirname "$0")/dnd.sh" on >>"$M54_DIR/fusao.log" 2>&1 &
     HOOKS="$HOOKS dnd"
   fi
+  # Proteção contra bounce de foco durante o loading/sessão: se o mesmo jogo
+  # já sofreu ramclean+preload há menos de 120s e o processo não morreu, evita
+  # derrubar o pagecache recém-aquecido com novo drop_caches=3 + WILLNEED.
+  _now_h=$(uptime_s)
+  case "$_now_h" in ''|*[!0-9]*) _now_h=0;; esac
+  _skip_heavy=0
+  if [ "$_pkg" = "$LAST_HEAVY_PKG" ] && [ "$LAST_HEAVY_TS" != "0" ] && [ $((_now_h - LAST_HEAVY_TS)) -lt 120 ]; then
+    _skip_heavy=1
+  fi
   # RAM clean ANTES do preload (ordem manda: limpar depois do WILLNEED anula ele).
   # Simples estilo Encore (sync+drop+compact), atrás de flag, síncrono e logado.
   if [ -f "$M54_DIR/ramclean.enabled" ]; then
-    _rf0=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
-    _ra0=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
-    sync 2>/dev/null
-    echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
-    _rc1=$?
-    echo 1 > /proc/sys/vm/compact_memory 2>/dev/null
-    _rc2=$?
-    _rf1=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
-    log "ramclean ok free=${_rf0}->${_rf1} avail=${_ra0} rc=${_rc1}/${_rc2} [$_pkg]"
-    HOOKS="$HOOKS ramclean"
+    if [ "$_skip_heavy" = 0 ]; then
+      _rf0=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
+      sync 2>/dev/null
+      echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+      _rc1=$?
+      echo 1 > /proc/sys/vm/compact_memory 2>/dev/null
+      _rc2=$?
+      _rf1=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
+      _ra1=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
+      log "ramclean ok free=${_rf0}->${_rf1} avail=${_ra1} rc=${_rc1}/${_rc2} [$_pkg]"
+      HOOKS="$HOOKS ramclean"
+    else
+      HOOKS="$HOOKS ramclean(warm)"
+    fi
   fi
   # Preload: WILLNEED async nos dados do jogo.
   if [ -f "$M54_DIR/preload.enabled" ]; then
-    for _b in "$M54_DIR/../system/bin/fusaod" /data/adb/modules/encore/system/bin/fusaod; do
-      if [ -x "$_b" ]; then
-        nohup "$_b" preload "$_pkg" >>"$M54_DIR/fusao.log" 2>&1 &
-        HOOKS="$HOOKS preload"
-        break
-      fi
-    done
+    if [ "$_skip_heavy" = 0 ]; then
+      for _b in "$M54_DIR/../system/bin/fusaod" /data/adb/modules/encore/system/bin/fusaod; do
+        if [ -x "$_b" ]; then
+          nohup "$_b" preload "$_pkg" >>"$M54_DIR/fusao.log" 2>&1 &
+          HOOKS="$HOOKS preload"
+          break
+        fi
+      done
+    else
+      HOOKS="$HOOKS preload(warm)"
+    fi
+  fi
+  if [ "$_skip_heavy" = 0 ] && { [ -f "$M54_DIR/ramclean.enabled" ] || [ -f "$M54_DIR/preload.enabled" ]; }; then
+    LAST_HEAVY_PKG="$_pkg"
+    LAST_HEAVY_TS="$_now_h"
   fi
   if [ -f "$M54_DIR/framework.enabled" ] && [ -x "$(dirname "$0")/framework.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/framework.sh" game 2>/dev/null && HOOKS="$HOOKS framework"
@@ -135,7 +168,16 @@ fire_enter() {
 }
 
 fire_exit() {
+  _exited_pkg="$1"
   log "watch: exit (foco fora da lista)"
+  # Se o processo do jogo realmente encerrou, zera o cooldown de ramclean/preload.
+  if [ -n "$_exited_pkg" ] && ! pidof "$_exited_pkg" >/dev/null 2>&1; then
+    LAST_HEAVY_PKG=""
+    LAST_HEAVY_TS=0
+  fi
+  if [ -f "$M54_DIR/perf.enabled" ] && [ -x "$(dirname "$0")/perf.sh" ]; then
+    M54_DIR="$M54_DIR" sh "$(dirname "$0")/perf.sh" exit "$_exited_pkg" 2>/dev/null
+  fi
   if [ -f "$M54_DIR/framework.enabled" ] && [ -x "$(dirname "$0")/framework.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/framework.sh" idle 2>/dev/null
   fi
@@ -151,9 +193,7 @@ while true; do
       log "watch: observer ativo, standby (consome game-active, sem poll)"
     fi
     # Observer é o escritor; o watch CONSOME o estado p/ disparar os ganchos.
-    # (Sem isso, com observer vivo NENHUM gancho — perf/dnd/preload/framework —
-    #  jamais disparava: bug provado ao vivo, 2 sessões com tudo ON e zero hooks.)
-    CUR=$(tr -d '[:space:]' < "$GAMEFILE" 2>/dev/null)
+    CUR=$(read_gamefile)
     if [ "$CUR" != "$LAST" ]; then
       if [ -n "$CUR" ] && ! in_gamelist "$CUR"; then
         LAST="$CUR"
@@ -161,11 +201,22 @@ while true; do
         fire_enter "$CUR"
         LAST="$CUR"
       else
-        fire_exit
+        # Debounce curto (2s) se o processo do jogo continua vivo (evita bounce
+        # de foco na transição splash -> GameActivity durante o loading).
+        if [ -n "$LAST" ] && pidof "$LAST" >/dev/null 2>&1; then
+          sleep 2
+          CUR=$(read_gamefile)
+          if [ -n "$CUR" ] && in_gamelist "$CUR"; then
+            [ "$CUR" != "$LAST" ] && { fire_enter "$CUR"; LAST="$CUR"; }
+            sleep 2
+            continue
+          fi
+        fi
+        fire_exit "$LAST"
         LAST=""
       fi
     fi
-    sleep 5
+    sleep 2
     continue
   fi
   if [ "$STANDBY" = 1 ]; then
@@ -188,7 +239,7 @@ while true; do
     if [ -n "$CUR" ]; then
       fire_enter "$CUR"
     else
-      fire_exit
+      fire_exit "$LAST"
     fi
     LAST="$CUR"
   fi

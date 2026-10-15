@@ -38,7 +38,7 @@ stock_of() {
 }
 
 snapshot() {
-  [ -f "$STOCK_F" ] && return 0
+  [ -s "$STOCK_F" ] && return 0
   c=$(cur)
   [ -n "$c" ] && printf "stock=%s" "$c" | atomic_write "$STOCK_F" 0600
 }
@@ -53,7 +53,13 @@ scale_of() {
 
 case "$MODE" in
   ""|show) cur; exit 0;;
-  reset|stock) snapshot; reset_size; log "display: reset ($(cur))"; exit 0;;
+  reset|stock)
+    snapshot
+    reset_size
+    rm -f "$M54_DIR/display.mode" 2>/dev/null
+    log "display: reset ($(cur))"
+    exit 0
+    ;;
   720p|810p|900p)
     snapshot
     s=$(stock_of); [ -z "$s" ] && { echo "stock desconhecido" >&2; exit 1; }

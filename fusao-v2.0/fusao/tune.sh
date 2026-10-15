@@ -30,7 +30,7 @@ tcp_nodes() {
 }
 
 snapshot_stock() {
-  [ -f "$STOCK" ] && return 0
+  [ -s "$STOCK" ] && return 0
   {
     for n in $(vm_nodes) $(readahead_nodes) $(tcp_nodes); do
       [ -f "$n" ] && echo "$n $(cat "$n" 2>/dev/null)"
@@ -49,11 +49,9 @@ w() {
 }
 
 restore_stock() {
-  [ -f "$STOCK" ] || return 0
-  while IFS= read -r line; do
-    case "$line" in ""|\#*) continue;; esac
-    p=$(echo "$line" | cut -d' ' -f1)
-    v=$(echo "$line" | cut -d' ' -f2-)
+  [ -s "$STOCK" ] || return 0
+  while read -r p v; do
+    case "$p" in ""|\#*) continue;; esac
     [ -f "$p" ] && w "$p" "$v"
   done <"$STOCK"
   log "tune: restore stock"

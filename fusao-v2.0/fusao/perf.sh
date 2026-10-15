@@ -4,7 +4,7 @@
 # sysfs contendido (CPU/GPU/MIF) = proibido aqui (é do fusaod).
 # Permitido: renice/ionice/oom/top-app tasks (processo) + IO queue
 # (nomerges/add_random em sd*/ufs* — nó não disputado, writer único = aqui).
-# Uso: perf.sh enter [pkg] | perf.sh exit | perf.sh io-only
+# Uso: perf.sh enter [pkg] | perf.sh exit [pkg] | perf.sh io-only
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -21,13 +21,23 @@ optimize_io() {
   for dev in /sys/block/mmcblk* /sys/block/sd* /sys/block/nvme*; do
     [ ! -d "$dev/queue" ] && continue
     [ -w "$dev/queue/add_random" ] && echo 0 > "$dev/queue/add_random" 2>/dev/null
-    [ -w "$dev/queue/nomerges" ] && echo 2 > "$dev/queue/nomerges" 2>/dev/null
+    # nomerges=1 desativa apenas lookups complexos (hash/rbtree) mantendo
+    # back-merges adjacentes sequenciais essenciais p/ streaming de .pak/.obb.
+    [ -w "$dev/queue/nomerges" ] && echo 1 > "$dev/queue/nomerges" 2>/dev/null
   done
   for u in /sys/devices/platform/*.ufs; do
     [ -d "$u" ] || continue
     echo 1 > "$u/clkgate_enable" 2>/dev/null
   done
   log "perf: io aplicado"
+}
+
+restore_io() {
+  for dev in /sys/block/mmcblk* /sys/block/sd* /sys/block/nvme*; do
+    [ ! -d "$dev/queue" ] && continue
+    [ -w "$dev/queue/nomerges" ] && echo 0 > "$dev/queue/nomerges" 2>/dev/null
+    [ -w "$dev/queue/add_random" ] && echo 1 > "$dev/queue/add_random" 2>/dev/null
+  done
 }
 
 optimize_proc() {
@@ -40,9 +50,29 @@ optimize_proc() {
     if command -v ionice >/dev/null 2>&1; then
       ionice -c 2 -n 0 -p "$pid" >/dev/null 2>&1
     fi
-    [ -d "/dev/stune/top-app" ] && echo "$pid" > "/dev/stune/top-app/tasks" 2>/dev/null
-    [ -d "/dev/cpuset/top-app" ] && echo "$pid" > "/dev/cpuset/top-app/tasks" 2>/dev/null
+    if [ -d "/dev/stune/top-app" ]; then
+      echo "$pid" > "/dev/stune/top-app/cgroup.procs" 2>/dev/null
+      echo "$pid" > "/dev/stune/top-app/tasks" 2>/dev/null
+    fi
+    if [ -d "/dev/cpuset/top-app" ]; then
+      echo "$pid" > "/dev/cpuset/top-app/cgroup.procs" 2>/dev/null
+      echo "$pid" > "/dev/cpuset/top-app/tasks" 2>/dev/null
+    fi
     echo "-500" > "/proc/$pid/oom_score_adj" 2>/dev/null
+    # Eleva também as threads críticas de frame-pacing (Unreal/Unity/OpenGL/Vulkan)
+    # sem achatar a hierarquia dos worker pools secundários do motor.
+    for _tdir in "/proc/$pid/task/"*; do
+      [ -r "$_tdir/comm" ] || continue
+      IFS= read -r _tcomm < "$_tdir/comm" 2>/dev/null
+      case "$_tcomm" in
+        RenderThread*|GameThread*|RHIThread*|UnityMain*|UnityGfx*|GLThread*|Vulkan*)
+          _tid="${_tdir##*/}"
+          renice -n -10 -p "$_tid" >/dev/null 2>&1
+          [ -d "/dev/cpuset/top-app" ] && echo "$_tid" > "/dev/cpuset/top-app/tasks" 2>/dev/null
+          [ -d "/dev/stune/top-app" ] && echo "$_tid" > "/dev/stune/top-app/tasks" 2>/dev/null
+          ;;
+      esac
+    done
   done
   log "perf: proc $1 aplicado"
 }
@@ -55,6 +85,14 @@ case "$MODE" in
     optimize_proc "$T"
     ;;
   io-only) optimize_io;;
-  exit) log "perf: exit (sem revert: renice/oom são transitórios)";;
+  exit)
+    restore_io
+    if [ -n "$PKG" ]; then
+      for _p in $(pidof "$PKG" 2>/dev/null); do
+        echo "0" > "/proc/$_p/oom_score_adj" 2>/dev/null
+      done
+    fi
+    log "perf: exit (io restaurado)"
+    ;;
   *) echo "uso: perf.sh [enter|io-only|exit] [pkg]" >&2; exit 1;;
 esac

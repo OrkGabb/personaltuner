@@ -64,7 +64,7 @@ dget() {
 }
 
 snapshot_stock() {
-  [ -f "$STOCK_F" ] && return 0
+  [ -s "$STOCK_F" ] && return 0
   {
     echo "activity_manager_constants=$(sget global activity_manager_constants)"
     echo "job_scheduler_constants=$(sget global job_scheduler_constants)"
@@ -77,7 +77,7 @@ snapshot_stock() {
 }
 
 restore_stock() {
-  [ -f "$STOCK_F" ] || return 0
+  [ -s "$STOCK_F" ] || return 0
   _v=$(grep "^activity_manager_constants=" "$STOCK_F" 2>/dev/null | cut -d= -f2-)
   if [ -z "$_v" ] || [ "$_v" = "null" ]; then sdel global activity_manager_constants; else sput global activity_manager_constants "$_v"; fi
   _v=$(grep "^job_scheduler_constants=" "$STOCK_F" 2>/dev/null | cut -d= -f2-)
