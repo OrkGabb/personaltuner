@@ -129,6 +129,18 @@ mkdir -p \
   "$FAKE/proc/sys/vm" \
   "$FAKE/proc/sys/net/ipv4"
 
+# Tabelas REAIS do M54 (leitura ao vivo 2026-10-18): é o que o tune.sh 2.9.7 lê p/ fazer snap dos alvos.
+P0_TAB_REAL="533000 672000 768000 864000 960000 1056000 1152000 1248000 1344000 1440000 1536000 1632000 1728000 1824000 1920000 2002000"
+P4_TAB_REAL="533000 672000 768000 864000 960000 1056000 1152000 1248000 1344000 1440000 1536000 1632000 1728000 1824000 1920000 2016000 2112000 2208000 2304000 2400000"
+GPU_TAB_REAL="221000 351000 455000 552000 650000 754000 845000 949000"
+CPUF="$FAKE/sys/devices/system/cpu/cpufreq"
+echo "$P0_TAB_REAL" > "$CPUF/policy0/scaling_available_frequencies"
+echo 533000 > "$CPUF/policy0/cpuinfo_min_freq"
+echo 2002000 > "$CPUF/policy0/cpuinfo_max_freq"
+echo "$P4_TAB_REAL" > "$CPUF/policy4/scaling_available_frequencies"
+echo 533000 > "$CPUF/policy4/cpuinfo_min_freq"
+echo 2400000 > "$CPUF/policy4/cpuinfo_max_freq"
+echo "$GPU_TAB_REAL" > "$FAKE/sys/kernel/gpu/gpu_freq_table"
 echo 533000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"
 echo 2002000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
 echo 533000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq"
@@ -157,8 +169,12 @@ rm -f "$FAKE/fusao/tune.stock"
 rm -f "$FAKE/fusao/framework.enabled"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile game > "$FAKE/prof_game.out"
 grep -q "profile_state=applied" "$FAKE/prof_game.out" && ok "profile game verified" || bad "profile game verified"
-[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "999000" ] && ok "tune game p0_min" || bad "tune game p0_min"
-[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "889000" ] && ok "tune game p4_min" || bad "tune game p4_min"
+grep -q "profile_verify=10/10" "$FAKE/prof_game.out" && ok "profile game verify 10/10" || bad "profile game verify 10/10"
+# alvos do game = degraus REAIS da tabela (999000/889000 eram de outro SoC; 1056000/960000 existem no 1380)
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "1056000" ] && ok "tune game p0_min" || bad "tune game p0_min"
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "960000" ] && ok "tune game p4_min" || bad "tune game p4_min"
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")" = "2002000" ] && ok "tune game p0_max" || bad "tune game p0_max"
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune game p4_max" || bad "tune game p4_max"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_min_clock")" = "351000" ] && ok "tune game gpu_min" || bad "tune game gpu_min"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "949000" ] && ok "tune game gpu_max" || bad "tune game gpu_max"
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "845000" ] && ok "tune game mif_min" || bad "tune game mif_min"
@@ -171,31 +187,189 @@ grep -q "profile_state=applied" "$FAKE/prof_game.out" && ok "profile game verifi
 # 9b) Transição GAME -> BALANCED (sem resíduos do modo Game)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced > "$FAKE/prof_bal.out"
 grep -q "profile_state=applied" "$FAKE/prof_bal.out" && ok "profile balanced verified" || bad "profile balanced verified"
+grep -q "profile_verify=10/10" "$FAKE/prof_bal.out" && ok "profile balanced verify 10/10" || bad "profile balanced verify 10/10"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "533000" ] && ok "tune balanced p0_min" || bad "tune balanced p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "533000" ] && ok "tune balanced p4_min" || bad "tune balanced p4_min"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_min_clock")" = "221000" ] && ok "tune balanced gpu_min" || bad "tune balanced gpu_min"
-[ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "858000" ] && ok "tune balanced gpu_max" || bad "tune balanced gpu_max"
+# 858000 não existe na tabela do Mali-G68; o degrau real logo abaixo do máximo (949000) é 845000
+[ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "845000" ] && ok "tune balanced gpu_max" || bad "tune balanced gpu_max"
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "421000" ] && ok "tune balanced mif_min" || bad "tune balanced mif_min"
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "120" ] && ok "tune balanced swap" || bad "tune balanced swap"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "100" ] && ok "tune balanced pressure" || bad "tune balanced pressure"
 [ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "256" ] && ok "tune balanced readahead" || bad "tune balanced readahead"
 [ "$(cat "$FAKE/sys/block/sda/queue/nomerges")" = "0" ] && ok "tune balanced nomerges-clean" || bad "tune balanced nomerges-clean"
 
-# 9c) Transição BALANCED -> BATTERY / PowerSaving (tetos reduzidos + piso 400MHz em P0)
+# 9c) Transição BALANCED -> BATTERY / PowerSaving (tetos reduzidos; piso do P0 = 533000, o mínimo físico e o stock)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile battery > "$FAKE/prof_bat.out"
 grep -q "profile_state=applied" "$FAKE/prof_bat.out" && ok "profile battery verified" || bad "profile battery verified"
-[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "400000" ] && ok "tune battery p0_min" || bad "tune battery p0_min"
+grep -q "profile_verify=10/10" "$FAKE/prof_bat.out" && ok "profile battery verify 10/10" || bad "profile battery verify 10/10"
+# 400000 não existe no 1380: o driver clampa p/ 533000 em silêncio. O alvo agora É 533000 (e não 672000: subir o piso gasta mais em ocioso)
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "533000" ] && ok "tune battery p0_min" || bad "tune battery p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")" = "1728000" ] && ok "tune battery p0_max" || bad "tune battery p0_max"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1440000" ] && ok "tune battery p4_max" || bad "tune battery p4_max"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "650000" ] && ok "tune battery gpu_max" || bad "tune battery gpu_max"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "150" ] && ok "tune battery" || bad "tune battery"
 [ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "128" ] && ok "tune battery readahead" || bad "tune battery readahead"
 
+# 9c2) GAME com jogo em foco -> BATTERY direto: o piso do P0 só chega a 533000 se o dado de fato desce
+# pelos degraus da tabela (o estado anterior é 1152000; um nó que não mexeu não passaria)
+echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" game >/dev/null 2>&1
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "1152000" ] && ok "tune game+jogo p0_min" || bad "tune game+jogo p0_min"
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "1056000" ] && ok "tune game+jogo p4_min" || bad "tune game+jogo p4_min"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify game | grep -q "profile_verify=10/10" && ok "tune game+jogo verify 10/10" || bad "tune game+jogo verify 10/10"
+: > "$FAKE/fusao/game-active.txt"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" battery >/dev/null 2>&1
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "533000" ] && ok "tune game->battery p0_min desce a 533000" || bad "tune game->battery p0_min desce a 533000"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery | grep -q "profile_verify=10/10" && ok "tune game->battery verify 10/10" || bad "tune game->battery verify 10/10"
+
 # 9d) Restauração completa ao stock via idle
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" idle
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "150" ] && ok "tune idle restore" || bad "tune idle restore"
 [ "$(cat "$FAKE/proc/sys/net/ipv4/tcp_congestion_control")" = "cubic" ] && ok "tune idle tcp" || bad "tune idle tcp"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune idle p4_max restore" || bad "tune idle p4_max restore"
+
+# 9e) 2.9.7: tabela LIDA do nó + snap + readback. O probe carrega só as funções do tune.sh
+# (TUNE_SOURCE_ONLY=1) e roda o comando recebido, com um driver falso opcional:
+#   clamp: escrever abaixo do mínimo em policy0/scaling_min_freq "dá certo" (rc 0, sem errno) mas o nó
+#          guarda o mínimo (400000 -> 533000), exatamente como o driver do Exynos 1380 faz no aparelho;
+#   trace: anota cada valor escrito (prova a SEQUÊNCIA de degraus, não só o estado final).
+cat > "$FAKE/fusao/tune-probe.sh" <<'EOF'
+#!/bin/sh
+TUNE_SOURCE_ONLY=1
+. "$(dirname "$0")/tune.sh"
+if [ -n "${PROBE_CLAMP_MIN:-}${PROBE_TRACE:-}" ]; then
+  sysfs_put() {
+    local v="$2"
+    case "$1" in
+      */policy0/scaling_min_freq) [ -n "${PROBE_CLAMP_MIN:-}" ] && [ "$v" -lt "$PROBE_CLAMP_MIN" ] 2>/dev/null && v="$PROBE_CLAMP_MIN";;
+    esac
+    [ -n "${PROBE_TRACE:-}" ] && echo "$1 $v" >> "$PROBE_TRACE"
+    { echo "$v" > "$1"; } 2>/dev/null
+  }
+fi
+# w() do 2.9.6 (literal; só o primitivo de escrita é o mesmo do driver falso): controle negativo do clamp.
+w_legacy() {
+  [ -e "$1" ] || return 0
+  chmod 0644 "$1" 2>/dev/null
+  if [ -w "$1" ]; then
+    sysfs_put "$1" "$2"
+    return $?
+  fi
+  return 1
+}
+"$@"
+EOF
+# probe_at <FS_ROOT> <clamp-min|-> <trace-file|-> <comando...>
+probe_at() {
+  local _root="$1" _clamp="$2" _trace="$3"; shift 3
+  [ "$_clamp" = "-" ] && _clamp=""
+  [ "$_trace" = "-" ] && _trace=""
+  M54_DIR="$FAKE/fusao" FS_ROOT="$_root" PROBE_CLAMP_MIN="$_clamp" PROBE_TRACE="$_trace" sh "$FAKE/fusao/tune-probe.sh" "$@"
+}
+FLOG="$FAKE/fusao/fusao.log"
+PNODE="$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"
+
+# 9e-1) snap na tabela real: min arredonda p/ cima (como o kernel), max p/ baixo; alvo que não existe vira degrau
+: > "$FLOG"
+[ "$(probe_at "$FAKE" - - snap_domain min p0 999000)" = "1056000" ] && ok "snap p0 min 999000->1056000" || bad "snap p0 min 999000->1056000"
+[ "$(probe_at "$FAKE" - - snap_domain min p4 889000)" = "960000" ] && ok "snap p4 min 889000->960000" || bad "snap p4 min 889000->960000"
+[ "$(probe_at "$FAKE" - - snap_domain max p0 1700000)" = "1632000" ] && ok "snap p0 max 1700000->1632000" || bad "snap p0 max 1700000->1632000"
+[ "$(probe_at "$FAKE" - - snap_domain max p4 1500000)" = "1440000" ] && ok "snap p4 max 1500000->1440000" || bad "snap p4 max 1500000->1440000"
+[ "$(probe_at "$FAKE" - - snap_domain max gpu 858000)" = "845000" ] && ok "snap gpu max 858000->845000" || bad "snap gpu max 858000->845000"
+[ "$(probe_at "$FAKE" - - snap_domain min gpu 300000)" = "351000" ] && ok "snap gpu min 300000->351000" || bad "snap gpu min 300000->351000"
+[ "$(probe_at "$FAKE" - - snap_domain min p0 1056000)" = "1056000" ] && ok "snap degrau exato fica" || bad "snap degrau exato fica"
+grep -q "tune: snap p0/min pedido=999000 -> 1056000" "$FLOG" && ok "snap loga o arredondamento" || bad "snap loga o arredondamento"
+grep -q "pedido=1056000" "$FLOG" && bad "snap degrau exato nao loga" || ok "snap degrau exato nao loga"
+
+# 9e-2) fora da faixa vira o limite físico, com WARN explícito (fail-loud no log, rc 0, fluxo segue)
+: > "$FLOG"
+[ "$(probe_at "$FAKE" - - snap_domain min p0 400000)" = "533000" ] && ok "snap p0 min 400000->533000" || bad "snap p0 min 400000->533000"
+grep -q "WARN tune: snap p0/min pedido=400000 abaixo do mínimo físico 533000, usando 533000" "$FLOG" && ok "snap abaixo do minimo loga WARN" || bad "snap abaixo do minimo loga WARN"
+[ "$(probe_at "$FAKE" - - snap_domain max p0 3000000)" = "2002000" ] && ok "snap p0 max 3000000->2002000" || bad "snap p0 max 3000000->2002000"
+grep -q "WARN tune: snap p0/max pedido=3000000 acima do máximo físico 2002000, usando 2002000" "$FLOG" && ok "snap acima do maximo loga WARN" || bad "snap acima do maximo loga WARN"
+[ "$(probe_at "$FAKE" - - snap_domain min gpu 100000)" = "221000" ] && ok "snap gpu min 100000->221000" || bad "snap gpu min 100000->221000"
+[ "$(probe_at "$FAKE" - - snap_domain min p0 abc)" = "533000" ] && ok "snap alvo invalido vira limite" || bad "snap alvo invalido vira limite"
+grep -q "WARN tune: snap p0/min alvo inválido 'abc'" "$FLOG" && ok "snap alvo invalido loga WARN" || bad "snap alvo invalido loga WARN"
+
+# 9e-3) a tabela vem do NÓ (e não do fallback embutido): tabela falsa com degraus que o 1380 não tem
+# (700000, 1100000), descendente e com CRLF. Só quem leu o nó responde 1100000 p/ 999000 (fallback real: 1056000).
+ALT="$FAKE/alt"
+mkdir -p "$ALT/sys/devices/system/cpu/cpufreq/policy0" "$ALT/sys/kernel/gpu"
+printf '2002000 1100000 700000 533000\r\n' > "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies"
+echo 533000 > "$ALT/sys/devices/system/cpu/cpufreq/policy0/cpuinfo_min_freq"
+echo 2002000 > "$ALT/sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq"
+echo 1100000 > "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"
+echo 2002000 > "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+echo "221000 500000 949000" > "$ALT/sys/kernel/gpu/gpu_freq_table"
+echo 221000 > "$ALT/sys/kernel/gpu/gpu_min_clock"
+echo 949000 > "$ALT/sys/kernel/gpu/gpu_max_clock"
+[ "$(probe_at "$ALT" - - snap_domain min p0 999000)" = "1100000" ] && ok "tabela p0 lida do no (min)" || bad "tabela p0 lida do no (min)"
+[ "$(probe_at "$ALT" - - snap_domain max p0 1099000)" = "700000" ] && ok "tabela p0 lida do no (max)" || bad "tabela p0 lida do no (max)"
+[ "$(probe_at "$ALT" - - snap_domain max gpu 858000)" = "500000" ] && ok "tabela gpu lida do no" || bad "tabela gpu lida do no"
+# descida do piso por degraus DO NÓ: de 1100000 até 533000 só passa por 700000 (a lista antiga hardcoded nunca teve 700000)
+rm -f "$FAKE/trace.txt"
+probe_at "$ALT" - "$FAKE/trace.txt" set_policy0 533000 2002000
+[ "$(grep scaling_min_freq "$FAKE/trace.txt" | cut -d' ' -f2 | tr '\n' ' ')" = "700000 533000 " ] && ok "descida de degraus usa a tabela do no" || bad "descida de degraus usa a tabela do no"
+[ "$(cat "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "533000" ] && ok "descida chegou ao piso" || bad "descida chegou ao piso"
+# controle negativo: sem os nós de tabela cai no fallback (tabela real do M54) e avisa no log
+: > "$FLOG"
+rm -f "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies" "$ALT/sys/kernel/gpu/gpu_freq_table"
+[ "$(probe_at "$ALT" - - snap_domain min p0 999000)" = "1056000" ] && ok "fallback p0 = tabela real do M54" || bad "fallback p0 = tabela real do M54"
+[ "$(probe_at "$ALT" - - snap_domain max gpu 858000)" = "845000" ] && ok "fallback gpu = tabela real do M54" || bad "fallback gpu = tabela real do M54"
+grep -q "WARN tune: p0 sem tabela legível" "$FLOG" && ok "fallback loga WARN" || bad "fallback loga WARN"
+
+# 9e-4) w() relê: driver honesto devolve 0; driver que clampa em silêncio devolve 1 + WARN (nao mente rc 0)
+echo 533000 > "$PNODE"
+probe_at "$FAKE" - - w "$PNODE" 768000
+[ "$?" = "0" ] && [ "$(cat "$PNODE")" = "768000" ] && ok "w honesto rc 0" || bad "w honesto rc 0"
+: > "$FLOG"
+probe_at "$FAKE" 533000 - w "$PNODE" 400000
+_rc=$?
+[ "$_rc" = "1" ] && ok "w clampado rc 1" || bad "w clampado rc 1 (rc=$_rc)"
+[ "$(cat "$PNODE")" = "533000" ] && ok "w clampado: driver guardou o minimo" || bad "w clampado: driver guardou o minimo"
+grep -q "WARN tune: clamp .*policy0/scaling_min_freq pedido=400000 lido=533000" "$FLOG" && ok "w clampado loga WARN clamp" || bad "w clampado loga WARN clamp"
+# controle negativo: o w() do 2.9.6 no MESMO driver devolve 0 com o dado errado no nó (a mentira que a 2.9.7 corrige)
+echo 768000 > "$PNODE"
+probe_at "$FAKE" 533000 - w_legacy "$PNODE" 400000
+_rc=$?
+[ "$_rc" = "0" ] && [ "$(cat "$PNODE")" = "533000" ] && ok "controle negativo: w legado mente rc 0" || bad "controle negativo: w legado mente rc 0 (rc=$_rc)"
+probe_at "$FAKE" - - w "$FAKE/nao/existe" 1 && ok "w nó ausente = no-op rc 0" || bad "w nó ausente = no-op rc 0"
+grep -v '^[[:space:]]*#' "$STAGE/fusao/tune.sh" | grep -Eq 'chmod[[:space:]]+0*444' && bad "tune sem chmod 444" || ok "tune sem chmod 444"
+
+# 9e-5) driver que clampa o P0 min p/ 672000 (o aparelho em 2026-10-18: profile_verify=9/10 e p0_min:533000!=400000):
+# o battery pede 533000 e o nó guarda 672000 => o verify NÃO fecha 10/10 e aponta o nó
+echo 2002000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+echo 533000 > "$PNODE"
+rm -f "$FAKE/fusao/profile.state"; : > "$FLOG"
+probe_at "$FAKE" 672000 - apply_battery
+grep -q "^profile_verify=9/10$" "$FAKE/fusao/profile.state" && ok "driver clampa: verify 9/10" || bad "driver clampa: verify 9/10"
+grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "driver clampa: state partial" || bad "driver clampa: state partial"
+grep -q "^profile_mismatch=p0_min:672000!=533000$" "$FAKE/fusao/profile.state" && ok "driver clampa: mismatch aponta p0_min" || bad "driver clampa: mismatch aponta p0_min"
+grep -q "WARN tune: clamp .*policy0/scaling_min_freq pedido=533000 lido=672000" "$FLOG" && ok "driver clampa: WARN clamp no apply" || bad "driver clampa: WARN clamp no apply"
+# mesmo apply num driver honesto fecha 10/10
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" battery >/dev/null 2>&1
+grep -q "^profile_verify=10/10$" "$FAKE/fusao/profile.state" && ok "driver honesto: verify 10/10" || bad "driver honesto: verify 10/10"
+
+# 9e-6) verify confere o valor JÁ com snap: tabela do aparelho sem os degraus do perfil (P0 = 700000 1100000 2002000,
+# cpuinfo_min 700000). O battery pede 533000/1728000 e o aparelho só pode dar 700000/1100000: com o alvo cru
+# (1728000) o p0_max nunca fecharia; com o alvo snapado fecha 4/4 (P0 min/max + GPU min/max) e o nó prova o valor.
+printf '700000 1100000 2002000\n' > "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies"
+echo 700000 > "$ALT/sys/devices/system/cpu/cpufreq/policy0/cpuinfo_min_freq"
+echo 700000 > "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"
+echo 2002000 > "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+: > "$FLOG"
+M54_DIR="$FAKE/fusao" FS_ROOT="$ALT" sh "$FAKE/fusao/tune.sh" battery >/dev/null 2>&1
+[ "$(cat "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")" = "1100000" ] && ok "battery snapado p0_max=1100000" || bad "battery snapado p0_max=1100000"
+[ "$(cat "$ALT/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "700000" ] && ok "battery snapado p0_min=700000" || bad "battery snapado p0_min=700000"
+grep -q "^profile_verify=4/4$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && ok "verify usa alvo snapado (4/4)" || bad "verify usa alvo snapado (4/4)"
+grep -q "WARN tune: snap p0/min pedido=533000 abaixo do mínimo físico 700000, usando 700000" "$FLOG" && ok "apply loga WARN do alvo abaixo do minimo" || bad "apply loga WARN do alvo abaixo do minimo"
+# o verify só confere: não repete os WARN do snap que o apply já logou (o app consulta o status toda hora)
+_n0=$(grep -c "WARN tune: snap" "$FLOG")
+M54_DIR="$FAKE/fusao" FS_ROOT="$ALT" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+[ "$_n0" -ge 1 ] && [ "$(grep -c "WARN tune: snap" "$FLOG")" = "$_n0" ] && ok "verify nao repete WARN do snap" || bad "verify nao repete WARN do snap"
+# restaura o fake principal p/ as seções seguintes
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" idle
 
 # 10) dnd on/off com verify+retry (DND_FAKE_ZEN finge o settings get).
 cp "$STAGE/fusao/dnd.sh" "$FAKE/fusao/" 2>/dev/null

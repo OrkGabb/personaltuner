@@ -3,6 +3,10 @@
 # com restauração limpa entre transições e verificação real por readback.
 # Alvo: Samsung Galaxy M54 (SM-M546B), Exynos 1380 (s5e8835), kernel 5.15.189.
 # FS_ROOT prefixa /proc e /sys para testes offline determinísticos.
+#
+# 2.9.7: tabelas de degraus LIDAS do próprio aparelho (scaling_available_frequencies / gpu_freq_table),
+# todo alvo de min/max passa por snap p/ um degrau que existe, w() relê e não mente rc 0 quando o
+# driver clampa em silêncio, e verify_profile confere exatamente o que o perfil pede depois do snap.
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -24,6 +28,22 @@ MIF_MIN="$R/sys/class/devfreq/17000010.devfreq_mif/min_freq"
 MIF_MAX="$R/sys/class/devfreq/17000010.devfreq_mif/max_freq"
 INT_MIN="$R/sys/class/devfreq/17000020.devfreq_int/min_freq"
 DISP_MIN="$R/sys/class/devfreq/17000040.devfreq_disp/min_freq"
+
+# Tabelas de degraus e limites físicos (a verdade é o aparelho; ver load_domains).
+P0_AVAIL="$R/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies"
+P0_CPUINFO_MIN="$R/sys/devices/system/cpu/cpufreq/policy0/cpuinfo_min_freq"
+P0_CPUINFO_MAX="$R/sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq"
+P4_AVAIL="$R/sys/devices/system/cpu/cpufreq/policy4/scaling_available_frequencies"
+P4_CPUINFO_MIN="$R/sys/devices/system/cpu/cpufreq/policy4/cpuinfo_min_freq"
+P4_CPUINFO_MAX="$R/sys/devices/system/cpu/cpufreq/policy4/cpuinfo_max_freq"
+GPU_TABLE="$R/sys/kernel/gpu/gpu_freq_table"
+
+# FALLBACK, só se o nó não existir/ilegível: tabelas reais do M54, lidas ao vivo em 2026-10-18.
+# As tabelas antigas (1512000 1320000 1104000 999000 889000 400000...) eram de OUTRO SoC e não
+# existem no Exynos 1380. O driver clampa em silêncio (400000 em policy0/scaling_min_freq fica 533000).
+P0_TABLE_FB="533000 672000 768000 864000 960000 1056000 1152000 1248000 1344000 1440000 1536000 1632000 1728000 1824000 1920000 2002000"
+P4_TABLE_FB="533000 672000 768000 864000 960000 1056000 1152000 1248000 1344000 1440000 1536000 1632000 1728000 1824000 1920000 2016000 2112000 2208000 2304000 2400000"
+GPU_TABLE_FB="221000 351000 455000 552000 650000 754000 845000 949000"
 
 hw_nodes() {
   for _n in "$P0_MIN" "$P0_MAX" "$P4_MIN" "$P4_MAX" "$GPU_MIN" "$GPU_MAX" "$MIF_MIN" "$MIF_MAX" "$INT_MIN" "$DISP_MIN"; do
@@ -73,72 +93,206 @@ rval() {
   [ -r "$1" ] && cat "$1" 2>/dev/null | tr -d '[:space:]'
 }
 
+# Primitivo de escrita isolado: o teste offline o troca por um driver falso que clampa
+# (TUNE_SOURCE_ONLY=1 carrega só as funções; produção nunca redefine).
+sysfs_put() {
+  { echo "$2" > "$1"; } 2>/dev/null
+}
+
+# w <nó> <valor> — escreve e RELÊ. rc 0 só quando o nó guardou o que foi pedido.
+# O driver do Exynos 1380 clampa em silêncio (pedir 400000 em policy0/scaling_min_freq deixa 533000,
+# sem errno, e o echo devolve 0): relido != pedido => WARN no log + rc 1, nunca rc 0 mentindo.
+# Nó ausente = no-op rc 0 (teste non-root). Só garante 0644; NUNCA chmod 444 (nodes-m54.md §10).
 w() {
-  # w <path> <value> — garante 0644 em sysfs quando possível, sem travar em 0444.
+  local want got rc
   [ -e "$1" ] || return 0
   chmod 0644 "$1" 2>/dev/null
-  if [ -w "$1" ]; then
-    echo "$2" > "$1" 2>/dev/null
-    return $?
+  if [ ! -w "$1" ]; then
+    log "WARN tune: sem escrita em $1 pedido=$2"
+    return 1
   fi
+  sysfs_put "$1" "$2"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "WARN tune: falha de escrita $1 pedido=$2 rc=$rc"
+    return "$rc"
+  fi
+  [ -r "$1" ] || return 0
+  want=$(printf '%s' "$2" | tr -d '[:space:]')
+  got=$(rval "$1")
+  if [ "$got" != "$want" ]; then
+    log "WARN tune: clamp $1 pedido=$want lido=$got"
+    return 1
+  fi
+  return 0
+}
+
+# num_or <valor> <padrão> — o valor se for inteiro, senão o padrão.
+num_or() {
+  case "$1" in
+    ''|*[!0-9]*) echo "$2";;
+    *) echo "$1";;
+  esac
+}
+
+# freq_table <nó> <fallback> — tabela de degraus ASCENDENTE, só números, sem repetidos, separada por
+# espaço (aceita ordem qualquer/CRLF do nó). Nó ausente/ilegível/sem número => fallback e rc 1.
+freq_table() {
+  local raw="" f lista="" out=""
+  [ -r "$1" ] && raw=$(cat "$1" 2>/dev/null | tr '\r\n\t' '   ')
+  for f in $raw; do
+    case "$f" in
+      ''|*[!0-9]*) ;;
+      *) lista="$lista$f
+";;
+    esac
+  done
+  [ -n "$lista" ] && out=$(printf '%s' "$lista" | sort -n -u | tr '\n' ' ')
+  out=$(echo $out)
+  if [ -n "$out" ]; then
+    echo "$out"
+    return 0
+  fi
+  echo "$2"
   return 1
 }
 
-# Exynos 1380 policy0 (Cortex-A55) exige descida por degraus da tabela real:
-# 2002000 1920000 1824000 1728000 1632000 1512000 1416000 1320000 1200000 1104000 999000 889000 768000 672000 533000 400000
-set_policy0() {
-  local t_min="$1" t_max="$2" c_min c_max _s
-  [ -f "$P0_MIN" ] || [ -f "$P0_MAX" ] || return 0
-  c_min=$(rval "$P0_MIN"); case "$c_min" in ''|*[!0-9]*) c_min=533000;; esac
-  c_max=$(rval "$P0_MAX"); case "$c_max" in ''|*[!0-9]*) c_max=2002000;; esac
-  # Se o novo max é maior que o atual, sobe o max primeiro p/ não rejeitar o min
-  if [ "$t_max" -gt "$c_max" ] 2>/dev/null; then
-    w "$P0_MAX" "$t_max"
-  fi
-  if [ "$t_min" -lt "$c_min" ] 2>/dev/null; then
-    for _s in 1728000 1512000 1320000 1104000 999000 889000 768000 672000 533000 400000; do
-      if [ "$_s" -lt "$c_min" ] && [ "$_s" -gt "$t_min" ]; then
-        w "$P0_MIN" "$_s"
-      fi
-    done
-  fi
-  w "$P0_MIN" "$t_min"
-  w "$P0_MAX" "$t_max"
+# load_domains — lê UMA vez por execução a tabela e os limites físicos de P0, P4 e GPU.
+# Limites: cpuinfo_min/max_freq (CPU) ou a ponta da própria tabela (GPU, ou nó ausente).
+load_domains() {
+  [ -n "$DOM_READY" ] && return 0
+  local rc
+  T_P0=$(freq_table "$P0_AVAIL" "$P0_TABLE_FB"); rc=$?
+  [ "$rc" -ne 0 ] && [ -f "$P0_MIN" ] && log "WARN tune: p0 sem tabela legível em $P0_AVAIL, usando fallback do Exynos 1380"
+  LO_P0=$(num_or "$(rval "$P0_CPUINFO_MIN")" "${T_P0%% *}")
+  HI_P0=$(num_or "$(rval "$P0_CPUINFO_MAX")" "${T_P0##* }")
+  T_P4=$(freq_table "$P4_AVAIL" "$P4_TABLE_FB"); rc=$?
+  [ "$rc" -ne 0 ] && [ -f "$P4_MIN" ] && log "WARN tune: p4 sem tabela legível em $P4_AVAIL, usando fallback do Exynos 1380"
+  LO_P4=$(num_or "$(rval "$P4_CPUINFO_MIN")" "${T_P4%% *}")
+  HI_P4=$(num_or "$(rval "$P4_CPUINFO_MAX")" "${T_P4##* }")
+  T_GPU=$(freq_table "$GPU_TABLE" "$GPU_TABLE_FB"); rc=$?
+  [ "$rc" -ne 0 ] && [ -f "$GPU_MIN" ] && log "WARN tune: gpu sem tabela legível em $GPU_TABLE, usando fallback do Mali-G68"
+  LO_GPU="${T_GPU%% *}"
+  HI_GPU="${T_GPU##* }"
+  DOM_READY=1
 }
 
-# Exynos 1380 policy4 (Cortex-A78):
-# 1824000 1728000 1632000 1536000 1440000 1320000 1200000 1104000 999000 889000 768000 672000 533000
-set_policy4() {
-  local t_min="$1" t_max="$2" c_min c_max _s
-  [ -f "$P4_MIN" ] || [ -f "$P4_MAX" ] || return 0
-  c_min=$(rval "$P4_MIN"); case "$c_min" in ''|*[!0-9]*) c_min=533000;; esac
-  c_max=$(rval "$P4_MAX"); case "$c_max" in ''|*[!0-9]*) c_max=1824000;; esac
-  if [ "$t_max" -gt "$c_max" ] 2>/dev/null; then
-    w "$P4_MAX" "$t_max"
-  fi
-  if [ "$t_min" -lt "$c_min" ] 2>/dev/null; then
-    for _s in 1632000 1440000 1200000 999000 889000 768000 672000 533000; do
-      if [ "$_s" -lt "$c_min" ] && [ "$_s" -gt "$t_min" ]; then
-        w "$P4_MIN" "$_s"
-      fi
-    done
-  fi
-  w "$P4_MIN" "$t_min"
-  w "$P4_MAX" "$t_max"
+# dom_select <p0|p4|gpu> — expõe tabela e limites do domínio em D_TBL / D_LO / D_HI.
+dom_select() {
+  load_domains
+  case "$1" in
+    p0) D_TBL="$T_P0"; D_LO="$LO_P0"; D_HI="$HI_P0";;
+    p4) D_TBL="$T_P4"; D_LO="$LO_P4"; D_HI="$HI_P4";;
+    gpu) D_TBL="$T_GPU"; D_LO="$LO_GPU"; D_HI="$HI_GPU";;
+    *) return 1;;
+  esac
 }
 
-# Mali-G68 MP5: 949000 858000 754000 650000 552000 455000 351000 221000
-set_gpu() {
-  local t_min="$1" t_max="$2" c_max
-  [ -f "$GPU_MIN" ] || [ -f "$GPU_MAX" ] || return 0
-  c_max=$(rval "$GPU_MAX"); case "$c_max" in ''|*[!0-9]*) c_max=949000;; esac
-  if [ "$t_max" -gt "$c_max" ] 2>/dev/null; then
-    w "$GPU_MAX" "$t_max"
-    w "$GPU_MIN" "$t_min"
+# snap_log <msg> — log do snap, mudo com SNAP_QUIET=1 (o verify só confere; quem pediu já logou).
+snap_log() {
+  [ -n "$SNAP_QUIET" ] || log "$*"
+}
+
+# snap_domain <min|max> <p0|p4|gpu> <alvo> — imprime o valor EFETIVO: um degrau que existe na tabela
+# do domínio, dentro de [mínimo, máximo] físico.
+#   min: menor degrau >= alvo (como o kernel arredonda o piso); max: maior degrau <= alvo.
+# Alvo fora da faixa vira o limite físico com WARN explícito no log; alvo inválido idem.
+# Fail-loud no log, nunca aborta o fluxo. Arredondar dentro da faixa loga "snap" (informativo).
+snap_domain() {
+  local kind="$1" dom="$2" tgt="$3" f first="" last="" best="" res="" num=1
+  case "$tgt" in ''|*[!0-9]*) num=0;; esac
+  if ! dom_select "$dom"; then
+    snap_log "WARN tune: snap domínio desconhecido '$dom'"
+    echo "$tgt"
+    return 1
+  fi
+  for f in $D_TBL; do
+    { [ "$f" -ge "$D_LO" ] && [ "$f" -le "$D_HI" ]; } || continue
+    [ -z "$first" ] && first="$f"
+    last="$f"
+    [ "$num" = 1 ] || continue
+    if [ "$kind" = "min" ]; then
+      [ -z "$best" ] && [ "$f" -ge "$tgt" ] && best="$f"
+    else
+      [ "$f" -le "$tgt" ] && best="$f"
+    fi
+  done
+  if [ -z "$first" ]; then
+    # nenhum degrau da tabela cabe na faixa física: só resta o limite
+    if [ "$kind" = "min" ]; then res="$D_LO"; else res="$D_HI"; fi
+    snap_log "WARN tune: snap $dom/$kind sem degrau em [$D_LO,$D_HI] (pedido=$tgt), usando $res"
+  elif [ "$num" = 0 ]; then
+    if [ "$kind" = "min" ]; then res="$first"; else res="$last"; fi
+    snap_log "WARN tune: snap $dom/$kind alvo inválido '$tgt', usando $res"
+  elif [ "$tgt" -lt "$D_LO" ]; then
+    res="$first"
+    snap_log "WARN tune: snap $dom/$kind pedido=$tgt abaixo do mínimo físico $D_LO, usando $res"
+  elif [ "$tgt" -gt "$D_HI" ]; then
+    res="$last"
+    snap_log "WARN tune: snap $dom/$kind pedido=$tgt acima do máximo físico $D_HI, usando $res"
   else
-    w "$GPU_MIN" "$t_min"
-    w "$GPU_MAX" "$t_max"
+    if [ "$kind" = "min" ]; then res="${best:-$last}"; else res="${best:-$first}"; fi
+    [ "$res" = "$tgt" ] || snap_log "tune: snap $dom/$kind pedido=$tgt -> $res"
   fi
+  echo "$res"
+}
+
+# set_cpu_domain <p0|p4> <nó min> <nó max> <alvo min> <alvo max>
+# Ordem segura (min <= max o tempo todo) e descida do piso por degraus REAIS da tabela
+# (nodes-m54.md §10: policy0/min só desce via intermediário). rc 1 se algum nó final não guardou o pedido.
+set_cpu_domain() {
+  local dom="$1" n_min="$2" n_max="$3" t_min t_max c_min c_max _s rev="" rc=0
+  [ -f "$n_min" ] || [ -f "$n_max" ] || return 0
+  load_domains
+  t_min=$(snap_domain min "$dom" "$4")
+  t_max=$(snap_domain max "$dom" "$5")
+  dom_select "$dom"
+  c_min=$(num_or "$(rval "$n_min")" "$D_LO")
+  c_max=$(num_or "$(rval "$n_max")" "$D_HI")
+  # Se o novo max é maior que o atual, sobe o max primeiro p/ não rejeitar o min
+  if [ "$t_max" -gt "$c_max" ]; then
+    w "$n_max" "$t_max"
+  fi
+  if [ "$t_min" -lt "$c_min" ]; then
+    # degraus da tabela do aparelho, do maior p/ o menor, estritamente entre o alvo e o piso atual
+    for _s in $D_TBL; do rev="$_s $rev"; done
+    for _s in $rev; do
+      if [ "$_s" -lt "$c_min" ] && [ "$_s" -gt "$t_min" ]; then
+        w "$n_min" "$_s"
+      fi
+    done
+  fi
+  w "$n_min" "$t_min" || rc=1
+  w "$n_max" "$t_max" || rc=1
+  return "$rc"
+}
+
+# Exynos 1380 policy0 (Cortex-A55): tabela em scaling_available_frequencies (533000..2002000)
+set_policy0() {
+  set_cpu_domain p0 "$P0_MIN" "$P0_MAX" "$1" "$2"
+}
+
+# Exynos 1380 policy4 (Cortex-A78): tabela em scaling_available_frequencies (533000..2400000)
+set_policy4() {
+  set_cpu_domain p4 "$P4_MIN" "$P4_MAX" "$1" "$2"
+}
+
+# Mali-G68 MP5: tabela em /sys/kernel/gpu/gpu_freq_table (221000..949000)
+set_gpu() {
+  local t_min t_max c_max rc=0
+  [ -f "$GPU_MIN" ] || [ -f "$GPU_MAX" ] || return 0
+  load_domains
+  t_min=$(snap_domain min gpu "$1")
+  t_max=$(snap_domain max gpu "$2")
+  c_max=$(num_or "$(rval "$GPU_MAX")" "$HI_GPU")
+  if [ "$t_max" -gt "$c_max" ]; then
+    w "$GPU_MAX" "$t_max" || rc=1
+    w "$GPU_MIN" "$t_min" || rc=1
+  else
+    w "$GPU_MIN" "$t_min" || rc=1
+    w "$GPU_MAX" "$t_max" || rc=1
+  fi
+  return "$rc"
 }
 
 restore_one() {
@@ -179,34 +333,71 @@ bbr_if_avail() {
   fi
 }
 
-# Verifica por readback se os nós presentes no sistema refletem o perfil alvo
-verify_profile() {
-  local target="$1" ok_cnt=0 tot_cnt=0 mis=""
-  local exp_p0min exp_p0max exp_p4min exp_p4max exp_gmin exp_gmax exp_mif exp_swap exp_vfs exp_ra
-  case "$target" in
+# profile_targets <game|balanced|battery> — SSOT dos alvos de cada perfil. CPU/GPU saem JÁ com snap
+# (T_P0_MIN T_P0_MAX T_P4_MIN T_P4_MAX T_GMIN T_GMAX): o valor que existe na tabela do aparelho.
+# apply_* escrevem estes valores e verify_profile confere EXATAMENTE estes, então N/N significa
+# "o aparelho aceitou o que o perfil realmente pede" (e não "o arquivo falso engoliu qualquer número").
+# Alvos já são degraus reais do Exynos 1380; o snap fica de rede de proteção (loga se algum desviar).
+# Mantém a intenção de cada perfil. game-active.txt não vazio sobe pisos e MIF/INT (jogo em foco).
+profile_targets() {
+  local p="$1" act=0 r_p0min r_p0max r_p4min r_p4max r_gmin r_gmax
+  [ -s "$GAME_ACTIVE" ] && act=1
+  load_domains
+  case "$p" in
     game)
-      exp_p0min=999000; exp_p0max=2002000
-      exp_p4min=889000; exp_p4max=1824000
-      exp_gmin=351000;  exp_gmax=949000
-      exp_mif=845000
-      exp_swap=60; exp_vfs=50; exp_ra=512
+      # P0 piso era 999000 (1104000 com jogo) e P4 889000 (999000): de outro SoC, agora degraus reais
+      r_p0min=1056000; r_p0max=2002000
+      r_p4min=960000;  r_p4max=1824000
+      r_gmin=351000;   r_gmax=949000
+      T_MIF_MIN=845000; T_INT_MIN=200000; T_DISP_MIN=200000
+      T_SWAP=60; T_VFS=50; T_RA=512
+      if [ "$act" = 1 ]; then
+        r_p0min=1152000; r_p4min=1056000
+        T_MIF_MIN=1014000; T_INT_MIN=267000
+      fi
       ;;
     battery)
-      exp_p0min=400000; exp_p0max=1728000
-      exp_p4min=533000; exp_p4max=1440000
-      exp_gmin=221000;  exp_gmax=650000
-      exp_mif=421000
-      exp_swap=160; exp_vfs=150; exp_ra=128
+      # Piso do P0 = 533000: o mínimo físico e o stock. NÃO subir p/ 672000 (gasta mais em ocioso) e
+      # 400000 não existe (o driver clampa p/ 533000 em silêncio e o verify nunca fechava 10/10).
+      r_p0min=533000; r_p0max=1728000
+      r_p4min=533000; r_p4max=1440000
+      r_gmin=221000;  r_gmax=650000
+      T_MIF_MIN=421000; T_INT_MIN=50000; T_DISP_MIN=66000
+      T_SWAP=160; T_VFS=150; T_RA=128
       ;;
-    balanced|*)
-      target="balanced"
-      exp_p0min=533000; exp_p0max=2002000
-      exp_p4min=533000; exp_p4max=1824000
-      exp_gmin=221000;  exp_gmax=858000
-      exp_mif=421000
-      exp_swap=120; exp_vfs=100; exp_ra=256
+    *)
+      # teto da GPU era 858000 (não existe na tabela); 845000 é o degrau logo abaixo do máximo 949000
+      r_p0min=533000; r_p0max=2002000
+      r_p4min=533000; r_p4max=1824000
+      r_gmin=221000;  r_gmax=845000
+      T_MIF_MIN=421000; T_INT_MIN=100000; T_DISP_MIN=133000
+      T_SWAP=120; T_VFS=100; T_RA=256
+      if [ "$act" = 1 ]; then
+        r_p0min=672000; r_p4min=672000
+        T_MIF_MIN=676000
+      fi
       ;;
   esac
+  T_P0_MIN=$(snap_domain min p0 "$r_p0min")
+  T_P0_MAX=$(snap_domain max p0 "$r_p0max")
+  T_P4_MIN=$(snap_domain min p4 "$r_p4min")
+  T_P4_MAX=$(snap_domain max p4 "$r_p4max")
+  T_GMIN=$(snap_domain min gpu "$r_gmin")
+  T_GMAX=$(snap_domain max gpu "$r_gmax")
+}
+
+# Verifica por readback se os nós presentes no sistema refletem o perfil alvo
+# (alvo = profile_targets, já com snap).
+verify_profile() {
+  local target="$1" ok_cnt=0 tot_cnt=0 mis=""
+  case "$target" in
+    game|battery) ;;
+    *) target="balanced";;
+  esac
+  # recalcula quieto: o apply já logou qualquer desvio do snap; o verify só confere
+  SNAP_QUIET=1
+  profile_targets "$target"
+  SNAP_QUIET=""
 
   check_eq() {
     local path="$1" expected="$2" label="$3" cur
@@ -234,25 +425,25 @@ verify_profile() {
   }
 
   if [ "$target" = "battery" ]; then
-    check_eq "$P0_MIN" "$exp_p0min" "p0_min"
-    check_eq "$P4_MIN" "$exp_p4min" "p4_min"
-    check_eq "$GPU_MIN" "$exp_gmin" "gpu_min"
-    check_eq "$MIF_MIN" "$exp_mif" "mif_min"
+    check_eq "$P0_MIN" "$T_P0_MIN" "p0_min"
+    check_eq "$P4_MIN" "$T_P4_MIN" "p4_min"
+    check_eq "$GPU_MIN" "$T_GMIN" "gpu_min"
+    check_eq "$MIF_MIN" "$T_MIF_MIN" "mif_min"
   else
-    check_ge "$P0_MIN" "$exp_p0min" "p0_min"
-    check_ge "$P4_MIN" "$exp_p4min" "p4_min"
-    check_ge "$GPU_MIN" "$exp_gmin" "gpu_min"
-    check_ge "$MIF_MIN" "$exp_mif" "mif_min"
+    check_ge "$P0_MIN" "$T_P0_MIN" "p0_min"
+    check_ge "$P4_MIN" "$T_P4_MIN" "p4_min"
+    check_ge "$GPU_MIN" "$T_GMIN" "gpu_min"
+    check_ge "$MIF_MIN" "$T_MIF_MIN" "mif_min"
   fi
-  check_eq "$P0_MAX" "$exp_p0max" "p0_max"
-  check_eq "$P4_MAX" "$exp_p4max" "p4_max"
-  check_eq "$GPU_MAX" "$exp_gmax" "gpu_max"
-  check_eq "$R/proc/sys/vm/swappiness" "$exp_swap" "swappiness"
-  check_eq "$R/proc/sys/vm/vfs_cache_pressure" "$exp_vfs" "vfs_pressure"
+  check_eq "$P0_MAX" "$T_P0_MAX" "p0_max"
+  check_eq "$P4_MAX" "$T_P4_MAX" "p4_max"
+  check_eq "$GPU_MAX" "$T_GMAX" "gpu_max"
+  check_eq "$R/proc/sys/vm/swappiness" "$T_SWAP" "swappiness"
+  check_eq "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS" "vfs_pressure"
 
   local _ra_node
   _ra_node=$(readahead_nodes | head -n 1)
-  [ -n "$_ra_node" ] && check_eq "$_ra_node" "$exp_ra" "read_ahead"
+  [ -n "$_ra_node" ] && check_eq "$_ra_node" "$T_RA" "read_ahead"
 
   local state="applied"
   if [ "$tot_cnt" -eq 0 ]; then
@@ -292,27 +483,21 @@ verify_profile() {
 
 apply_game() {
   snapshot_stock
-  local p0_min=999000 p4_min=889000 mif_min=845000 int_min=200000
-  if [ -s "$GAME_ACTIVE" ]; then
-    p0_min=1104000
-    p4_min=999000
-    mif_min=1014000
-    int_min=267000
-  fi
-  set_policy0 "$p0_min" "2002000"
-  set_policy4 "$p4_min" "1824000"
-  set_gpu "351000" "949000"
+  profile_targets game
+  set_policy0 "$T_P0_MIN" "$T_P0_MAX"
+  set_policy4 "$T_P4_MIN" "$T_P4_MAX"
+  set_gpu "$T_GMIN" "$T_GMAX"
   w "$MIF_MAX" "2093000"
-  w "$MIF_MIN" "$mif_min"
-  w "$INT_MIN" "$int_min"
-  w "$DISP_MIN" "200000"
+  w "$MIF_MIN" "$T_MIF_MIN"
+  w "$INT_MIN" "$T_INT_MIN"
+  w "$DISP_MIN" "$T_DISP_MIN"
 
-  w "$R/proc/sys/vm/swappiness" "60"
-  w "$R/proc/sys/vm/vfs_cache_pressure" "50"
+  w "$R/proc/sys/vm/swappiness" "$T_SWAP"
+  w "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS"
   w "$R/proc/sys/vm/stat_interval" "10"
   w "$R/proc/sys/vm/page-cluster" "0"
 
-  for n in $(readahead_nodes); do w "$n" "512"; done
+  for n in $(readahead_nodes); do w "$n" "$T_RA"; done
   for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
     [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "1"
     [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"
@@ -329,26 +514,21 @@ apply_game() {
 
 apply_balanced() {
   snapshot_stock
-  local p0_min=533000 p4_min=533000 mif_min=421000
-  if [ -s "$GAME_ACTIVE" ]; then
-    p0_min=672000
-    p4_min=672000
-    mif_min=676000
-  fi
-  set_policy0 "$p0_min" "2002000"
-  set_policy4 "$p4_min" "1824000"
-  set_gpu "221000" "858000"
+  profile_targets balanced
+  set_policy0 "$T_P0_MIN" "$T_P0_MAX"
+  set_policy4 "$T_P4_MIN" "$T_P4_MAX"
+  set_gpu "$T_GMIN" "$T_GMAX"
   w "$MIF_MAX" "2093000"
-  w "$MIF_MIN" "$mif_min"
-  w "$INT_MIN" "100000"
-  w "$DISP_MIN" "133000"
+  w "$MIF_MIN" "$T_MIF_MIN"
+  w "$INT_MIN" "$T_INT_MIN"
+  w "$DISP_MIN" "$T_DISP_MIN"
 
-  w "$R/proc/sys/vm/swappiness" "120"
-  w "$R/proc/sys/vm/vfs_cache_pressure" "100"
+  w "$R/proc/sys/vm/swappiness" "$T_SWAP"
+  w "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS"
   w "$R/proc/sys/vm/stat_interval" "5"
   w "$R/proc/sys/vm/page-cluster" "0"
 
-  for n in $(readahead_nodes); do w "$n" "256"; done
+  for n in $(readahead_nodes); do w "$n" "$T_RA"; done
   for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
     [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "0"
     [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"
@@ -361,22 +541,28 @@ apply_balanced() {
   log "tune: apply balanced"
 }
 
+# ATENÇÃO (medido ao vivo em 2026-10-18): os tetos do battery (P0 max 1728000 / P4 max 1440000 /
+# GPU max 650000) SOMEM sozinhos quando a tela entra em Dozing — a Samsung reescreve os nós
+# (presentes até uptime ~3194s, ausentes em ~3709s). Isso NÃO se resolve com loop de reescrita
+# (briga com o framework da ROM, gasta bateria e esconde o sintoma). Se um dia for preciso reaplicar,
+# que seja por EVENTO de tela-acesa, UMA vez, com releitura (w/verify_profile) — não implementado.
 apply_battery() {
   snapshot_stock
-  set_policy0 "400000" "1728000"
-  set_policy4 "533000" "1440000"
-  set_gpu "221000" "650000"
+  profile_targets battery
+  set_policy0 "$T_P0_MIN" "$T_P0_MAX"
+  set_policy4 "$T_P4_MIN" "$T_P4_MAX"
+  set_gpu "$T_GMIN" "$T_GMAX"
   w "$MIF_MAX" "2093000"
-  w "$MIF_MIN" "421000"
-  w "$INT_MIN" "50000"
-  w "$DISP_MIN" "66000"
+  w "$MIF_MIN" "$T_MIF_MIN"
+  w "$INT_MIN" "$T_INT_MIN"
+  w "$DISP_MIN" "$T_DISP_MIN"
 
-  w "$R/proc/sys/vm/swappiness" "160"
-  w "$R/proc/sys/vm/vfs_cache_pressure" "150"
+  w "$R/proc/sys/vm/swappiness" "$T_SWAP"
+  w "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS"
   w "$R/proc/sys/vm/stat_interval" "15"
   w "$R/proc/sys/vm/page-cluster" "0"
 
-  for n in $(readahead_nodes); do w "$n" "128"; done
+  for n in $(readahead_nodes); do w "$n" "$T_RA"; done
   for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
     [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "0"
     [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"
@@ -401,6 +587,10 @@ resolve_mode() {
     echo "$_m"
   fi
 }
+
+# Teste offline: TUNE_SOURCE_ONLY=1 carrega só as funções (permite exercitar snap/w/verify com um
+# driver falso que clampa). Em produção a variável nunca existe.
+[ "${TUNE_SOURCE_ONLY:-0}" = "1" ] && return 0
 
 case "$MODE" in
   idle|restore)

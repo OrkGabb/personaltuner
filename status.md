@@ -704,3 +704,42 @@ pendente), tune/DND/downscale ✓ (valores conservadores, matriz afina).
   ramclean+dnd on, gos pausado); (e) gamelist intacta; (f) fusao status
   intros sem inicializar nada velho; (g) perfil lido com readback; (h) NTE: stamina
   Blackbird no ciclo loading+voo = prova central do fim de cgroup.procs.
+
+## CORREÇÃO 2026-10-18 (causa real do reboot, daemons pós-boot, tune.sh 2.9.7/1599)
+- Substitui o "Causa do reboot: DESCONHECIDA" da seção acima. O full reboot (~03:3x) foi
+  KERNEL PANIC, não `svc power reboot` nem remédio OneUI: `/proc/reset_reason=KPON`,
+  `/proc/auto_comment` = `UBSAN Trap: Out-of-bounds`, `PC is at multi_load_read+0x410/0x418 [ems]`,
+  processo `head`. Gatilho: varredura de leitura de OUTRA sessão em `/sys/devices/platform/ems/`
+  — o nó `multi_load` derruba o kernel ao ser lido. Regra: nunca ler esse diretório (nem `cat`/
+  `head`/varredura recursiva); nós só pela allowlist do `nodes-m54.md`.
+- Estado real pós-boot dos daemons (leitura ao vivo): só `watch.sh` e `gos_killer.sh` vivos;
+  `fusaod serve` e o observer MORTOS. O observer morre com `F linker: CANNOT LINK EXECUTABLE
+  "app_process": library "libnativeloader.so" not found` (logcat 03:38:12-14, 3 tentativas).
+  Causa AINDA NÃO investigada (não assumir que é o `observer.dex`/`observer.sh`; o erro é do
+  linker ao subir o `app_process`).
+- Bug das tabelas/clamp (tune.sh 2.9.6): os degraus hardcoded em `set_policy0`/`set_policy4`
+  (1512000, 1320000, 1104000, 999000, 889000, 400000...) são de OUTRO SoC e não existem no
+  Exynos 1380. Tabelas reais (ao vivo): P0 533000..2002000 (16 degraus), P4 533000..2400000
+  (20), GPU 221000 351000 455000 552000 650000 754000 845000 949000; `cpuinfo_min_freq`=533000.
+  O driver CLAMPA em silêncio (400000 em `policy0/scaling_min_freq` fica 533000, sem errno,
+  `echo` rc 0) e o `w()` devolvia 0 mentindo: o `profile.state` ao vivo mostrava
+  `profile_verify=9/10` + `profile_mismatch=p0_min:533000!=400000`. No fake sysfs o mesmo
+  alvo passava 10/10 (o arquivo falso engole qualquer número).
+- O que a 2.9.7 corrige (`fusao-v2.0/fusao/tune.sh`): tabela lida de `scaling_available_frequencies`
+  / `gpu_freq_table` (fallback = tabelas reais acima); todo alvo de min/max passa por snap
+  (min: menor degrau >= alvo; max: maior degrau <= alvo; limitado a cpuinfo_min/max; fora da
+  faixa vira o limite físico + `WARN tune: snap ...` no log, sem matar o fluxo); `w()` relê e,
+  se o nó não guardou o pedido, loga `WARN tune: clamp <nó> pedido=<x> lido=<y>` e devolve 1
+  (sem `chmod 444`); alvos dos perfis viraram degraus reais e ficam num SSOT (`profile_targets`)
+  que o apply escreve e o `verify_profile` confere. Mudanças: battery P0 piso 400000 -> 533000
+  (mínimo físico/stock; NÃO 672000), balanced GPU max 858000 -> 845000, game P0 piso 999000
+  -> 1056000 / P4 889000 -> 960000 (com jogo: 1104000 -> 1152000 / 999000 -> 1056000).
+  Harness 173/173 (inclui driver falso que clampa + controles negativos); no PC sem
+  `python3`/`strings` reais o dex e o elf-sym falham por ambiente (3 checks), não por código.
+- Tetos do battery DECAEM no Dozing, por ação da Samsung (ela reescreve os nós): P0 max 1728000
+  / P4 max 1440000 / GPU max 650000 presentes até uptime ~3194s e ausentes em ~3709s. NÃO é
+  bug do tune.sh e NÃO se resolve com loop de reescrita (nada disso foi adicionado). Se for
+  preciso reaplicar: por evento de tela-acesa, uma vez, com releitura (`w`/`verify_profile`).
+  Documentado em comentário no `apply_battery`; não implementado.
+- Pendente (aparelho NÃO foi tocado nesta sessão): flash do zip 2.9.7/1599 e prova ao vivo de
+  `fusao profile battery` com `profile_verify=10/10` e p0_min 533000.
