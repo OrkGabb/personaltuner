@@ -636,6 +636,15 @@ pendente), tune/DND/downscale ✓ (valores conservadores, matriz afina).
   com numero p/ fechar a matriz; (3) feel prolongado ramclean+preload; (4) DND
   em uso real; (5) evoluir APK (aba termica/zram? dono decide).
 
+## PROIBIDO: RELEASES DEBUG DO APK (2026-10-18, regra do dono)
+- **Proibido instalar `assembleDebug` no aparelho.** Debug Compose compila sem R8,
+  com checks de runtime e JIT cru = app laga/trava de fábrica. O dono recusa de cara.
+- **Instalar SEMPRE `assembleRelease`** (R8 minify + shrinkResources, assinatura debug
+  no build.gradle.kts — mesma chave, `install -r` substitui sem conflito). APK fica
+  ~10x menor (25MB → ~2.6MB) e fluido.
+- Debug só existe pra sessão ativa de desenvolvimento, nunca como entrega.
+- Prova: v1-release (R8, 2.6MB) era a build fluida anterior; debug 24-25MB.
+
 ## FECHAMENTO 2026-10-15 (auditoria externa sincronizada + flash, cabo)
 - Outra AI auditou modulo+app (4 commits via `git am fusao-m54-audit-fixes.patch`:
   `d84b9b6` ciclo de vida/gamelist/descida-degraus, `57e2fcd` perf/watch,
@@ -660,3 +669,18 @@ pendente), tune/DND/downscale ✓ (valores conservadores, matriz afina).
   preload replay 661 arqs/8.5GB/1192ms) + exit limpo 15:12.
 - Fica: (1) GPUWatch com numero; (2) feel ramclean+preload + stamina Blackbird
   em sessao real; (3) DND em uso real; (4) decidir bump 2.9.5/1597 no module.prop.
+
+## v2.9.6 IMPLEMENTADA (2026-10-18, patch externo aplicado + flash WiFi 192.168.1.75:39041)
+- Patch `fusao-m54-backend-fixes.patch` da outra AI aplicado sem conflitos (26 arqs,
+  +1661/-398): perfis com readback (tune.sh), preload gamelist sem jogo em foco
+  (CLI+UI), observer.dex patched (processName/:sub/onFg), fim do cgroup.procs no
+  perf.sh, fusaod .rodata corrigida, game_overlay float -> inteiro "0".
+- Validado offline ANTES do build: 122/122 PASS, sweep OK, dex OK, zip 716KB
+  (byte-identico ao da AI, comprovado por hash entrada-a-entrada). Bump
+  2.9.5/1597 -> 2.9.6/1598 feito aqui (zip da AI esqueceu o version).
+- ksud install 23/23 [OK], stageado em modules_update (ativa no soft-reboot do
+  dono; full reboot proibido). APK entregue: RELEASE R8 (ver regra acima).
+- Fica p/ pos-boot: (1) module.prop = 2.9.6/1598 e modules_update vazio; (2) PIDs
+  novos; (3) pill CONFIRMADO no perfil (readback); (4) preload sem jogo em foco
+  (seletor de alvos da gamelist); (5) stamina Blackbird no NTE (ciclo loading +
+  voo) = prova real do fim de cgroup.procs + observer.dex + game_overlay.
