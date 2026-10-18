@@ -743,3 +743,215 @@ pendente), tune/DND/downscale ✓ (valores conservadores, matriz afina).
   Documentado em comentário no `apply_battery`; não implementado.
 - Pendente (aparelho NÃO foi tocado nesta sessão): flash do zip 2.9.7/1599 e prova ao vivo de
   `fusao profile battery` com `profile_verify=10/10` e p0_min 533000.
+
+## KERNLAB + FECHAMENTO 2026-10-18 (~07:15, WiFi `192.168.1.75:40747`) — tuning MEDIDO dos nós do FKM/EMS
+Pedido do dono: tunar os nós que o FKM expõe e ninguém tocou (Stune & Uclamp, CPU Sets, Scheduler,
+Memory, I/O) com efeito MEDIDO, sem depender de teste manual. Resultado: ferramenta `tools/kernlab/`
+(manual completo em `tools/kernlab/README.md`), validada por controles, + achados abaixo.
+**Nada do kernlab está commitado** (`tools/kernlab/` untracked).
+
+### O que é
+- `tools/kernlab/kernlab.py` (CLI) + `kl/` (registro SSOT de nós `knobs.py` com domínio seguro e lista
+  negra, compilador de plano, análise, estatística pareada, relatório) + `device/agent.sh` (runtime no
+  aparelho: aplica, relê, mede, restaura; portão térmico e de piso; aborta e restaura sozinho) +
+  4 nativos NDK em `device/bin` (fontes em `native/`, build no WSL: `NDK=~/android-ndk-r28 bash
+  tools/kernlab/native/build.sh`): `kl_burst` (frame sintético UI->render: latência, perda, núcleo,
+  energia por `time_in_state`), `kl_touch` (gesto nativo por uinput, sem a JVM do `input swipe`),
+  `kl_io` (leitura O_DIRECT SÓ LEITURA na LUN de dados, sequencial, mista), `kl_sample` (telemetria
+  4 Hz sem fork + potência mA x uV + vigia do `cur_set` do emstune).
+- Experimentos = JSON em `tools/kernlab/experiments/` (20). Runs em `tools/kernlab/runs/<id>/` com
+  `report.md`; `runs/SUMMARY.md` = uma linha por run/braço (`kernlab.py summary`).
+- Comandos: `connect IP:PORTA` | `inventory` | `list` | `run exp.json` | `queue --wait-screen a.json b.json`
+  | `posse --preset amplo` | `attach <run>` | `stop [--clear]` | `report runs/<id>` | `summary`.
+  Suíte offline: `python -m unittest discover -s tools/kernlab/tests` (31 testes, fixtures reais do M54).
+- Método: blocos espelhados (A B | B A), estatística pareada por bloco (IC t + p por permutação de
+  sinal exata); veredito exige p<0,05 E IC fora de zero E |efeito| >= limiar; >=6 blocos (com 4 o p
+  mínimo possível é 0,125). Trial só conta se o nó segurou do início ao fim (relido antes e depois),
+  tela e modo do emstune iguais ao início, pisos de CPU no mínimo físico no início, portão térmico ok.
+
+### Validação (antes de qualquer resultado)
+- `controle-aa` (braços idênticos): EQUIVALENTE ±5%, 24/24. `controle-positivo` (top-app cpuset 0-3):
+  PIORA +24,0% lat_p95, IC [+21,6, +26,4], p=0,031. Restauração OK em todos os runs.
+- Bugs da PRÓPRIA ferramenta achados pelos controles/dados e corrigidos: bootstrap com 4 blocos deu
+  "MELHORA -8% potência" num A/A -> IC t + p + >=6 blocos + trial de aquecimento; tela apagou no meio
+  da fila (restaurar timeout de 30 min com último toque >30 min apaga na hora) -> `queue` mantém
+  "nunca" e trial com tela/emstune mudados é excluído; CRLF do `adb shell su` sumia com o cabeçalho
+  do `cur_set`; STOP era apagado pelo run seguinte da fila.
+
+### Achados (6 blocos, p=0,031 salvo indicação; tela acesa)
+| Achado | Run |
+|---|---|
+| **Fluidez = refresh.** 60->120 Hz no scroll: 2x frames (53->105 fps), p95 entre frames 16->8 ms, saltos >=33 ms 52->8 (~6x menos); custo **+34% de potência no scroll**. 120/60 = 120/120 durante o toque | `display-refresh` 36/36 |
+| O "agarrado / não é 120 fluido" do dono = perfil **battery do FUSAO trava peak=min=60.0** (`framework.sh`). Stock 120/60 tira 96% dos saltos >=33 ms; `swappiness 160 / vfs 150` do battery: sem efeito mensurável no scroll | `stock-vs-modulo-scroll` 48/48 |
+| `top-app cpu.uclamp.min` é **reescrito pela Samsung**: PowerHAL Hyper/EPIC, recurso `TABoost` em `/vendor/etc/hyper/config_vendor.json` (`CAMERA_UCLAMP`=1 permanente; hints de launch warm). 1.00 tela acesa, 0.00 em Dozing, volta a 1.00 após launch/toque. Valor posto no FKM some | `posse`; `scroll-uclamp` (6/6 trials u25 derivaram 25->1) |
+| **Posse: 18/20 nós seguram** espera/launch/scroll/home/troca de app (latency_sensitive, uclamp de foreground/background, shares, cpusets, rt_default, vm, read_ahead, nr_requests, display, **todo parâmetro do emstune**). Não seguram: top-app uclamp.min (revertido), `gpu_poweroff_delay` (não aceita escrita) | `posse --preset amplo` |
+| ego (`energy_aware`) escolhe f ~ 1,25 x ciclos/s POR THREAD: frame em 2 estágios pode ficar em 533 MHz. O burst padrão é **biestável** (ontime sobe >90, desce <61): estágio 1 preso nos A55 (~83% de perda) ou estável nos A78 (~1,5%). Só comparar DENTRO do run (o relatório mostra o regime) | todos os burst |
+| Mesmo run, equilíbrio A78, pisos quietos: `uclamp.min` 25 -> -19% lat_p95 (+12% energia/frame); **`freqboost ta` 30 -> -47% (+34%)**; 60 -> -69% (+123%, desperdício). No equilíbrio A55, uclamp 25 tira a perda de 83% para 0,5% | `alavancas-frame-burst` 48/48; `uclamp-topapp-min` |
+| **UI real a 120 Hz: clock quase não compra nada.** `freqboost ta` (níveis 0+1) 30: sem efeito; 60: -20% saltos de 1 frame por **+25% de potência**. O Hyper já dá piso no toque (`POWER_HINT_USER_INTERACTION` 1,1 GHz/500 ms; `LISTVIEW_SCROLL` 40%/10 s) | `ems-freqboost-ta-scroll120` 36/36 |
+| emstune troca de conjunto sozinho: **nível 1 ~metade do tempo durante toque**, nível 2 no launch (lá `support_uclamp=1`), `power-scenario` (modo 1) com tela apagada. Nó do EMS é por modo/nível; o kernlab prova o nível 1 pela cópia do `cur_set` que o `kl_sample` grava quando ele ativa | amostragem + `curset_seen_m0l1` |
+| **TimeStats FUNCIONA no OneUI 8.5** com `--timestats -clear` + `-enable` (corrige o §3.8 deste arquivo): por camada `averageFPS`, histograma present->present, jank, inclusive SurfaceView de jogo. gfxinfo também ok p/ HWUI | fixtures em `tools/kernlab/tests/fixtures` |
+| Fonte do kernel do M54 no WSL (`~/SM-M546B_src`, EMS em `kernel/sched/ems/`). `aio_tuner` (tune.c) aceita cpu==NR_CPUS, não limita group e IGNORA em silêncio valor fora do domínio: escrita no EMS só se prova pelo `cur_set` | leitura de código |
+
+### Estado do aparelho ao parar (~07:15, verificado)
+- Módulo ATIVO = 2.9.6/1598. `main` = `e0a6bc5` (2.9.7/1599, ver "CORREÇÃO 2026-10-18" acima; feito por
+  agente Sonnet em worktree e revisado aqui: harness 170 pass + 3 falhas de ambiente pré-existentes;
+  teste ao vivo SÓ LEITURA no mksh do aparelho: tabelas e snap corretos). Zip
+  `_releases/fusao-v2.9.7-M54.zip` (727828 bytes, 60 entries) **NÃO flashado**.
+- **Framework do FUSAO DESLIGADO** (`fusao framework off`, 06:27): refresh 120.0/60.0, swappiness 130,
+  vfs 100 (snapshots do próprio módulo). Volta com `fusao framework on`. `profile` no disco = battery
+  (sem efeito com framework off).
+- P4 `scaling_max_freq` escrito para 2400000 (= cpuinfo_max; o `tune.stock` tinha 1824000, um teto
+  Samsung capturado). P0 533000-2002000, GPU 221000-949000, MIF min 421000.
+- Daemons: `watch.sh` + `gos_killer.sh` vivos (desde 03:38); `fusaod` e observer MORTOS (CANNOT LINK).
+- `screen_off_timeout` = 1800000 (restaurado). `/data/local/tmp/kernlab/` = home do kernlab (bin,
+  agent.sh, runs); temporários `fkl_*` removidos; sem lock/STOP. Bateria ~59% às 06:28.
+
+### Próximos passos (ordem sugerida)
+1. **Teste in-situ do jogo (dono, novo chat):** jogo aberto numa cena ESTÁVEL (parado, câmera fixa,
+   sem menu), sem tocar, sem cabo. `python tools/kernlab/kernlab.py connect IP:PORTA` e
+   `python tools/kernlab/kernlab.py run tools/kernlab/experiments/game-freqboost.json` (~25 min).
+   Trocar `package` no JSON (com.roblox.client / com.hottagames.nte). Se o preflight recusar com
+   "conjunto ativo é modo X", o jogo pôs o emstune em outro modo: trocar `m0` -> `mX` nos ids.
+   `game-uclamp.json` também existe, mas o top-app uclamp.min é reescrito pela Samsung (provável deriva).
+2. Flash do 2.9.7 (`ksud module install` + soft-reboot pelo dono) e prova: `fusao profile battery`
+   -> `profile_verify=10/10` com p0_min 533000. Depois decidir se volta `fusao framework on`.
+3. Dívidas do módulo achadas hoje: mesma lista de degraus de OUTRO SoC em `system/bin/fusao:48`,
+   `cleanup.sh:73`, `uninstall.sh:77` (sem snap/readback); game/balanced ainda capam P4 em 1824000
+   (2400000 é alcançável hoje: medido p4_cur=2400000); `framework.stock` CONTAMINADO (triads
+   idênticas às do balanced); observer CANNOT LINK `libnativeloader.so`; perfil battery trava refresh
+   60/60 (a maior causa medida do "agarrado").
+4. kernlab, experimentos prontos e NÃO rodados (fila interrompida p/ o display): `ems-pelt-margin`,
+   `ems-support-uclamp`, `ems-rate-limit`, `uclamp-latency-sensitive`, `cpuset-background`,
+   `io-scheduler`, `io-readahead`; `vm-swappiness` precisa dos componentes dos apps
+   (`cmd package resolve-activity --brief <pkg>`). Rodar com `queue --wait-screen`.
+
+### Doutrinas novas (não repetir os erros de hoje)
+- NUNCA varrer sysfs/procfs às cegas: `ems/multi_load` dá kernel panic ao ser lido (o reboot de hoje).
+  Ler só nós já provados; nó novo = um por vez, com log antes. Lista negra em `kl/knobs.py`.
+- Escrever != controlar: antes de tunar um nó, `posse`. Nó revertido pela Samsung não se tuna por
+  escrita direta (mede-se o escritor dela); usar a alavanca que segura (emstune) ou configurar a fonte.
+  `chmod 444` / bind-mount seguem proibidos.
+- Medir só com tela acesa e destravada (tela apagada = outro regime). Fila longa = `queue`.
+- Hints do Hyper sobem `scaling_min_freq`: trial só começa com piso no mínimo físico (`gate_floor`).
+- Travadinha visível = intervalo >= 33 ms (`ts_p2p_ge33ms_pct`); `ts_hitch_pct` (>1,5 vsync) também
+  conta os saltos de 1 frame a 120 Hz, bem mais suaves.
+- Git Bash: o `adb` vazio em `C:\platform-tools` sombreia o `adb.exe` (chamar `adb.exe`), e
+  `MSYS_NO_PATHCONV=1` p/ caminhos `/data/...`. Saída do `adb shell su` vem com CRLF.
+
+## JOGO IN-SITU + MANUTENÇÃO 2026-10-18 (~13:35-14:35, WiFi `192.168.1.75:44869`)
+### Achados (aparelho sem reboot desde ~03:34; módulo ativo 2.9.6 durante os runs)
+- **Hook de jogo do FUSAO reaplica o battery em TODO jogo da gamelist**: `watch: enter <pkg>` -> `tune: apply
+  battery` em ~6 s (NTE 13:30:17, Roblox 14:20:02) -> GPU max 650000, P4 max 1440000, P0 max 1728000. Desfez
+  o P4 2400000 escrito de manhã. Com `profile=battery` no disco, jogar = jogar capado.
+- **NTE é limitado pela GPU em qualquer teto**: 12-13 fps a 650 MHz, 17,7 fps a 949 MHz (GPU ainda cravada no
+  máximo), nenhuma thread > 40%. Esquenta BIG 54->81 °C em 30 s. Lever real = gráfico do jogo, não kernel.
+- **O térmico da Samsung é dono dos tetos durante o jogo** (`game-tetos`, 12/36 válidos): com o calor
+  acumulado a GPU max desceu em degraus 949000->845000->754000->650000->552000 e o P4 2400000->1440000 nos
+  braços stock; no braço battery o teto 650000 da GPU foi SOBRESCRITO PARA CIMA (845000/949000/754000).
+  CPU max só é clampado para baixo (P4 do battery ficou 1440000 em 36/36). Inferência pelo padrão: CPU via
+  QoS (mínimo vence), GPU por sobrescrita (último escritor vence). Consequência p/ o módulo: o cap de GPU do
+  battery não segura em jogo; e o stock só vale nos ~8 primeiros minutos de NTE.
+- Trials válidos (frio): stock vs battery +36% fps (13,0 -> 17,7), p95 entre frames 86 -> 60 ms, potência
+  3,0 -> 4,6-5,1 W (+54..69%). Veredito oficial INCONCLUSIVO (2 blocos). `runs/20261018-134639-game-tetos`.
+- ~~Roblox é limitado pela CPU~~ **ERRADO, corrigido pelo run das 16:05 (ver CONSOLIDADO abaixo)**: a
+  thread `RBX Worker C` ~1 núcleo enganou; com tetos stock a GPU fica cravada em 949 MHz e o fps segue a
+  GPU, não a CPU. ~28-32 fps, p50 33 ms / p95 42 ms. Expulsa jogador parado em ~20 min -> run <= 15 min.
+- **AstralOpt** (módulo "Game Threads Optimization", instalado 03:09, não documentado) estava INERTE: o
+  monitor `app_process` dele morre com o mesmo `CANNOT LINK libnativeloader.so` do observer, `gameinfo`
+  nunca criado, 147/147 threads do NTE com afinidade 0-7.
+
+### kernlab (não commitado)
+- Bug corrigido: o portão de piso exigia `scaling_min` no mínimo físico; jogo segura P0 min 1152000 o run
+  inteiro -> TODO trial de jogo esperava 30 s e saía inválido (o dry-run não pega). Novo `gate.floor`:
+  `"min"` (padrão) | `"start"` (referência = piso lido no `kl_begin`; só hint acima dele segura).
+  Provado no aparelho no regime do jogo: start passa em 0 s; min espera 30 s + `gate_floor_timeout=1`.
+  Os 3 experimentos de jogo usam `start`. Suíte 32/32.
+- `experiments/game-tetos.json` (novo, NTE) e `game-freqboost.json` reescrito p/ Roblox (fb5 vs fb30 com
+  tetos stock fixos nos dois braços, 24 x 25 s ~ 15 min, `gate.floor=start`).
+
+### Manutenção feita (~14:30)
+- AstralOpt: daemon morto (pid 24697), `ksud module uninstall` (remove=true), `service.d/.astral_cleanup.sh`
+  órfão removido (só se apagava com flag `disable`).
+- **FUSAO 2.9.7/1599 instalado** via `ksud module install` (md5 `467d6cdf...` = zip local), `update=true`,
+  aguardando o soft-reboot do dono. Depois: `pgrep` dos daemons (soft-reboot não relança `service.sh`, §21).
+- **Soft-reboot 15:29 (WiFi `:39715`, mesmo boot_id, root mantido) — verificado:** 2.9.7 ativo; AstralOpt
+  sumiu (módulo, `ksu/bin`, `.config`). Desta vez o `service.sh` RODOU: watch/gos_killer novos (15:29:23)
+  e o **observer vivo** (`registrado pid 24792, tentativa 1`) — o laço `CANNOT LINK libnativeloader.so`
+  ia até 15:28:19 e acabou com o soft-reboot (estado do runtime, não do módulo). `fusaod` parado = esperado
+  (só sobe com `game-active`).
+- Apply do boot saiu `8/10 partial`: às 15:29:20 o boost de boot da Samsung segurava `scaling_min` no
+  máximo e o snap percorreu a tabela inteira (36 WARN `clamp ... lido=2002000/2208000+`). **Dívida do
+  módulo**: tune no boot corre contra o boost; reverificar uma vez depois que o piso solta, em vez de
+  marcar partial. Em 15:47 `fusao profile battery` -> **`profile_verify=10/10` applied**, P0 533000-1728000,
+  P4 533000-1440000, GPU 221000-650000 (prova do 2.9.7 feita). Entre 15:29 e 15:47, sem jogo, a GPU max
+  650000 já tinha virado 949000 (Samsung sobrescreve).
+
+### PENDENTE
+1. ~~Teste do Roblox~~ FEITO 16:05 (ver CONSOLIDADO abaixo).
+2. ~~Prova do 2.9.7~~ FEITA 15:47 (10/10). A dívida do apply no boot virou o fix do 2.9.8.
+3. Movido p/ CONSOLIDADO (decisões do dono).
+
+## CONSOLIDADO 2026-10-18 (~16:40) — conclusões das duas AIs + release 2.9.8/1600
+Junta o que a outra AI deixou (v2.9.6 backend-fixes, CORREÇÃO 2.9.7) com o que o kernlab mediu hoje.
+Fonte de cada linha entre parênteses. Fato medido != inferência (marcada).
+
+### O que está provado
+- **Reboot das 03:3x = kernel panic ao LER `ems/multi_load`** (`KPON`, UBSAN `multi_load_read [ems]`). Nós só
+  pela allowlist do `nodes-m54.md` (CORREÇÃO 2.9.7 + kernlab).
+- **Driver do Exynos 1380 clampa em silêncio** e as tabelas antigas eram de outro SoC; 2.9.7 lê a tabela do
+  nó, faz snap e relê (`profile_verify=10/10` ao vivo 15:47) (outra AI + prova ao vivo hoje).
+- **scaling_min/max leem o efetivo do QoS**: boost de boot (15:29) e hint de launch (16:03, entrada do Roblox)
+  seguram o piso acima do pedido; o nosso pedido fica gravado e vale quando soltam (15:47 = 533000 sem
+  reescrita). O 2.9.7 marcava isso como `partial` e logava 15-17 WARN por apply (kernlab, log do módulo).
+- **Fluidez de UI = refresh**: 60->120 Hz = 2x frames, ~6x menos travadas >=33 ms, +34% potência no scroll. O
+  "agarrado" era o battery do framework travando 60/60 (kernlab `display-refresh`, `stock-vs-modulo-scroll`).
+- **Clock de CPU não compra frames em nenhuma carga real medida**: scroll 120 Hz (`freqboost ta` 30 sem
+  efeito; 60 = -20% saltos de 1 frame por +25% potência); Roblox (`fb30`: P4 médio 1,40 -> 1,86 GHz, fps
+  27,6 = 27,6, p95 42 = 42 ms, +5..10% potência). Só o sintético (`kl_burst`) melhora com clock (kernlab).
+- **Os dois jogos medidos são limitados pela GPU**: NTE 12-13 fps a 650 MHz / 17,7 a 949 (cravada); Roblox
+  ~28 fps com a GPU cravada em 949 e o fps caindo junto com ela quando o térmico baixa (773-872 MHz -> 23-25
+  fps). Lever de jogo = GPU e configuração gráfica, não CPU (kernlab `game-tetos`, `game-freqboost`).
+- **Em jogo o térmico da Samsung é dono dos tetos depois de ~8 min**: GPU max sobrescrita (desce em degraus e
+  SOBE por cima do cap 650000 do battery), P4/P0 max só caem. 24/36 (NTE) e 15/24 (Roblox) trials excluídos
+  por isso — o kernlab exclui trial cujo nó derivou (kernlab).
+- **Hook de jogo aplica o perfil ESCOLHIDO** (`tune.sh auto` = respeita `/data/adb/fusao/profile`): com
+  battery, todo jogo roda com GPU 650000 / P4 1440000. É o desenho do watch.sh, não bug (código + log).
+- `top-app uclamp.min` é reescrito pelo Hyper/EPIC (TABoost); 18/20 nós seguram; emstune segura (kernlab posse).
+- **observer `CANNOT LINK libnativeloader.so`** sumiu com o soft-reboot das 15:29 (observer vivo, tentativa
+  1). Causa raiz desconhecida (outra AI: "não assumir que é o dex"); pode voltar.
+- AstralOpt (removido 14:30) estava inerte pelo mesmo `CANNOT LINK`.
+
+### Release 2.9.8/1600 (módulo + APK, instalados 16:36; ativo após o soft-reboot do dono)
+- `tune.sh`: (1) a descida do piso para no primeiro degrau que não pega (piso externo); (2) `verify_profile`
+  classifica piso de CPU lido ACIMA do alvo / teto de CPU lido ABAIXO como externo durante `EXT_WINDOW_S`
+  (180 s) após o apply -> estado novo **`pending`** + `profile_external=`; fora da janela volta a ser
+  `partial` (driver que clampa de verdade continua visível); GPU/MIF/VM nunca são "externos"; (3) apply
+  `pending` agenda reverificações SÓ DE LEITURA em +30/+90/+185 s (job obsoleto sai pelo `applied_at`);
+  nada reescreve. `applied_at=` no `profile.state`.
+- `system/bin/fusao`, `cleanup.sh`, `uninstall.sh`: restauração do P0 min desce pelos degraus REAIS do nó, só
+  abaixo do piso atual (a lista de outro SoC começava SUBINDO o piso p/ 1728000). CLI repassa `profile_external`.
+- APK (`FusaoApp-v2.9.8-release.apk`, R8, sha256 `dd92c61a...` = instalado): pílula/botão **AGUARDANDO** p/
+  `pending` (antes caía no ramo genérico e o botão dizia "APLICADO").
+- Validação: harness 192/192 no WSL (189 + 3 de ambiente no Git Bash); controle negativo = os testes novos
+  contra o código 2.9.7 dão 14 FAIL (inclui "15 escritas" = os 15 WARN do aparelho); sweep OK; self-check do
+  customize OK; zip `feb090fc...` (730292 bytes, 60 entradas) = o instalado.
+- kernlab: `gate.floor: "start"` (jogo segura P0 min 1152000; o portão antigo invalidava todo trial de jogo).
+
+### Pós-soft-reboot (check final, eu)
+module.prop 2.9.8/1600 + modules_update vazio; PIDs novos de watch/gos_killer/observer; `fusao status` ->
+estado do perfil (`applied` ou `pending` com reverify convergindo); log sem a enxurrada de WARN no boot.
+
+### Decisões do dono (medido, não decidido aqui)
+1. Perfil em jogo: com `profile=battery`, jogo = GPU 650000 / P4 1440000. No NTE frio isso custa ~27% de fps
+   (13,0 vs 17,7) e poupa ~35% de potência; depois de ~8 min o térmico converge p/ perto disso de qualquer
+   jeito. Opções: manter, ou hook aplicar `game` em jogo. O cap de GPU do battery não segura em jogo.
+2. Framework do FUSAO segue OFF (refresh stock 120/60). Religar = battery trava 60/60 = o "agarrado".
+3. `freqboost`/boost de CPU no módulo: os dados dizem que não compra frames; só gasta.
+
+### Dívidas ainda abertas
+- game/balanced capam P4 em 1824000 (2400000 é alcançável) — sem medida de benefício (os jogos medidos são
+  GPU-bound), por isso NÃO mexido. `framework.stock` contaminado (triads = balanced). Causa do `CANNOT LINK`.
+- Pós-boot da outra AI ainda sem prova: preload sem jogo em foco (seletor), stamina Blackbird no NTE
+  (fim do cgroup.procs + observer.dex + game_overlay).
+- kernlab: fila pronta e não rodada (`ems-pelt-margin`, `ems-support-uclamp`, `ems-rate-limit`,
+  `uclamp-latency-sensitive`, `cpuset-background`, `io-scheduler`, `io-readahead`).
