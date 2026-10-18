@@ -1,0 +1,16 @@
+{
+  "$comment": "Teste certo p/ read_ahead: abrir o app mais usado do dono (YouTube, 2,2 h/semana) FRIO DE DISCO (drop_caches antes de cada abertura). Hipótese do nó errado: a leitura de arquivo usa o read_ahead do dm do sistema de arquivos (/data = dm-60, / = dm-6), não o da sda que o FKM e o FUSAO (readahead_nodes = sd*) ajustam. sda2048 é o controle dessa hipótese. Conferir /proc/mounts antes: o número do dm pode mudar num boot completo.",
+  "name": "launch-readahead",
+  "hypothesis": "read_ahead maior no dm do /data e da raiz encurta a abertura fria de disco; o mesmo valor só na sda não muda nada.",
+  "workload": {"kind": "launch", "package": "app.morphe.android.youtube", "component": "app.morphe.android.youtube/.morphe_black_1", "reps": 3, "drop_caches": true},
+  "arms": {
+    "ra128": {"io.dm-60.read_ahead_kb": "@base", "io.dm-6.read_ahead_kb": "@base", "io.sda.read_ahead_kb": "@base"},
+    "dm512": {"io.dm-60.read_ahead_kb": "512", "io.dm-6.read_ahead_kb": "512", "io.sda.read_ahead_kb": "@base"},
+    "dm2048": {"io.dm-60.read_ahead_kb": "2048", "io.dm-6.read_ahead_kb": "2048", "io.sda.read_ahead_kb": "@base"},
+    "sda2048": {"io.dm-60.read_ahead_kb": "@base", "io.dm-6.read_ahead_kb": "@base", "io.sda.read_ahead_kb": "2048"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "launch_ms_median",
+  "min_effect_pct": 5
+}

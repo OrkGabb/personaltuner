@@ -163,17 +163,19 @@ class Scroll(Workload):
 
 
 class Launch(Workload):
-    """Abertura de app a frio (processo morto, cache de página quente) via `am start -W`."""
+    """Abertura de app a frio via `am start -W`: processo morto; cache de página quente, ou frio de disco com
+    `"drop_caches": true` (o único jeito de read_ahead / scheduler de I/O aparecerem numa abertura)."""
     kind = "launch"
     metrics = {"launch_ms_median": LOWER, "launch_ms_mean": LOWER, "launch_ms_max": LOWER,
                "launch_cold_n": HIGHER}
     default_primary = "launch_ms_median"
 
     def device_args(self, run_dir: str) -> list[str]:
-        return ["launch", self.spec["package"], self.spec["component"], str(self.spec.get("reps", 5))]
+        return ["launch", self.spec["package"], self.spec["component"], str(self.spec.get("reps", 5)),
+                "1" if self.spec.get("drop_caches") else "0"]
 
     def est_seconds(self) -> float:
-        return int(self.spec.get("reps", 5)) * 5.0
+        return int(self.spec.get("reps", 5)) * (7.0 if self.spec.get("drop_caches") else 5.0)
 
     def parse(self, tdir: Path, ctx: dict) -> dict[str, float]:
         kv = parse.read_kv(tdir / "metrics")

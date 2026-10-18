@@ -277,6 +277,12 @@ _f("io.sda.nomerges", "I/O", f"{_Q}/nomerges", "int", (0, 2), workloads=WL_IO)
 _f("io.sda.add_random", "I/O", f"{_Q}/add_random", "int", (0, 1), workloads=WL_IO)
 _f("io.sda.iostats", "I/O", f"{_Q}/iostats", "int", (0, 1), workloads=WL_IO)
 _f("io.sda.max_sectors_kb", "I/O", f"{_Q}/max_sectors_kb", "int", (64, 1024), workloads=WL_IO)
+# Leitura de ARQUIVO usa o read_ahead do dispositivo do sistema de arquivos, não o da LUN: no M54 o /data
+# (f2fs) é dm-60 sobre sda37 e a raiz / (erofs, framework/libs) é dm-6 sobre dm-0 (/proc/mounts, 2026-10-18).
+# O número do dm pode mudar num boot completo: conferir /proc/mounts antes de usar.
+for _dm, _role in (("dm-60", "/data f2fs"), ("dm-6", "/ erofs")):
+    _f(f"io.{_dm}.read_ahead_kb", "I/O", f"/sys/block/{_dm}/queue/read_ahead_kb", "int", (16, 4096),
+       workloads=WL_IO, note=f"read_ahead do {_role} (2026-10-18).")
 for _k, _dom in {"read_expire": (50, 2000), "write_expire": (500, 10000),
                  "max_write_starvation": (1, 16), "front_merges": (0, 1)}.items():
     _f(f"io.sda.ssg.{_k}", "I/O", f"{_Q}/iosched/{_k}", "int", _dom, workloads=WL_IO,

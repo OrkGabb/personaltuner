@@ -1,0 +1,15 @@
+{
+  "$comment": "Teste certo p/ o escalonador de I/O: abertura fria de disco do YouTube (drop_caches antes de cada abertura). O dm é bio-based (sem escalonador): as requisições chegam na fila da sda, então aqui o nó da sda É o certo. ssg = o da Samsung (stock).",
+  "name": "launch-iosched",
+  "hypothesis": "o escalonador da sda muda o tempo de abertura fria de disco.",
+  "workload": {"kind": "launch", "package": "app.morphe.android.youtube", "component": "app.morphe.android.youtube/.morphe_black_1", "reps": 3, "drop_caches": true},
+  "arms": {
+    "ssg": {"io.sda.scheduler": "@base"},
+    "mq-deadline": {"io.sda.scheduler": "mq-deadline"},
+    "kyber": {"io.sda.scheduler": "kyber"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "launch_ms_median",
+  "min_effect_pct": 5
+}

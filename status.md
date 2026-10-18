@@ -1001,3 +1001,20 @@ sintético, IO em MB/s sintético) e precisa ser refeita no workload certo (`lau
   proibido (nodes-m54.md §10). CPU/escalonador: as alavancas já são graváveis por sysfs e não compram frames.
 - Quando reabrir: só se uma medição achar regressão estável e reproduzível do lado do kernel que nenhum nó
   gravável resolve. Até lá: userspace + sysfs allowlist.
+
+## ENCERRAMENTO DOS TESTES 2026-10-18 (~18:10, WiFi `:35419`) — dono: "tá bom de teste"
+- **2.9.9 ativo** (soft-reboot 17:45): boot com 2 WARN por policy, `battery pending` + reverify em +33 s
+  (`partial 7/10` porque o teto da GPU 650000 virou 949000 = Samsung sobrescreve; pisos soltaram). Battery
+  vai mostrar PARCIAL 9/10 quase sempre por isso — decisão do dono: tirar o cap de GPU do battery (não segura).
+- **Memória no teste certo (troca de apps)**: 13 apps reais abertos em sequência (os mais usados + outros
+  instalados), 12/12 mensuráveis voltaram HOT com 3,7 GB livres. Sem pressão no uso normal -> swappiness não
+  tem o que decidir fora de jogo. Pressão real só com jogo (NTE: 114 MB livres, 2,4 GB swap); o teste certo
+  seria "NTE em fundo, abre YouTube/WhatsApp, volta" com o dono (login). Não rodado.
+- **read_ahead no teste certo** (`launch-readahead`, YouTube frio de disco com drop_caches, 6 blocos, 45/48
+  válidos): **dm do /data e da raiz 512 = PIORA +5,9%, 2048 = PIORA +9,2%** (p=0,031); **sda 2048 =
+  EQUIVALENTE +0,2%**. Prova do nó errado: o read_ahead da sda (o que FKM e FUSAO `readahead_nodes` ajustam)
+  não chega na leitura de arquivo; o nó certo (dm) só piora acima do stock 128. Abertura é limitada por CPU
+  (~1,5 s frio de disco = ~1,5 s com cache quente). Consequência p/ o módulo: o `T_RA` dos perfis é inócuo;
+  candidato a remoção (não removido: dono decide).
+- `launch-iosched` não rodou (parado a pedido). kernlab: `drop_caches` no workload launch; knobs
+  `io.dm-60/dm-6.read_ahead_kb` (conferir /proc/mounts: número do dm muda em boot completo).

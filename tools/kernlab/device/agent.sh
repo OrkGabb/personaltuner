@@ -403,13 +403,21 @@ wl_scroll() {
 }
 
 # wl_launch <pkg> <componente> <repetições>
+# wl_launch <pkg> <componente> <repetições> [drop 0|1]
+# drop=1: sync + drop_caches antes de cada abertura = abertura fria DE DISCO. Sem isso o force-stop só mata
+# o processo e o app relê tudo do cache de página: read_ahead / scheduler de I/O nunca aparecem.
 wl_launch() {
-  _pkg="$1"; _comp="$2"; _reps="$3"
+  _pkg="$1"; _comp="$2"; _reps="$3"; _drop="${4:-0}"
   kl_wake
   echo "launch=1"
+  echo "launch_drop=$_drop"
   _i=1
   while [ "$_i" -le "$_reps" ]; do
     am force-stop "$_pkg"
+    if [ "$_drop" = 1 ]; then
+      sync
+      echo 3 > /proc/sys/vm/drop_caches
+    fi
     sleep 1
     am start -W -n "$_comp" > "$KL_T/launch_$_i.txt" 2>&1
     awk -v i="$_i" '/^TotalTime:/{print "r"i"_total_ms="$2} /^WaitTime:/{print "r"i"_wait_ms="$2}

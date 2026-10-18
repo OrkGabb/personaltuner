@@ -19,6 +19,7 @@ sys.path.insert(0, str(HERE.parent))
 
 from kl import analysis, emstune, parse, plan, stats  # noqa: E402
 from kl import knobs as K  # noqa: E402
+from kl import workloads as W  # noqa: E402
 
 FIX = HERE / "fixtures"
 
@@ -341,6 +342,16 @@ class TestAnalysisValidity(unittest.TestCase):
         self.assertEqual([t.index for t in bad], [5])
         self.assertTrue(any("tela mudou" in p for p in bad[0].problems))
         self.assertTrue(any("emstune" in p for p in bad[0].problems))
+
+    def test_launch_drop_caches_reaches_device(self):
+        warm = W.make({"kind": "launch", "package": "p", "component": "p/.A", "reps": 3})
+        cold = W.make({"kind": "launch", "package": "p", "component": "p/.A", "reps": 3, "drop_caches": True})
+        self.assertEqual(warm.device_args("/x")[-1], "0")
+        self.assertEqual(cold.device_args("/x")[-1], "1")
+        e = _exp(workload={"kind": "launch", "package": "p", "component": "p/.A", "reps": 3, "drop_caches": True})
+        script, _, _ = plan.compile_plan(e, plan.baseline_from_preflight(
+            e, {"cpuctl.top-app.uclamp.min": "1.00", plan.SCREEN: "1800000"}, None), "rid", "/x")
+        self.assertIn("kl_measure launch p p/.A 3 1\n", script)
 
     def test_gate_floor_mode(self):
         raw = {"cpuctl.top-app.uclamp.min": "1.00", plan.SCREEN: "1800000"}
