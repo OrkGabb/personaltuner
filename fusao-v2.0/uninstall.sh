@@ -65,7 +65,8 @@ for z in /sys/class/thermal/thermal_zone*/mode; do
 done
 
 # 3. Stock snapshot: restaura min/max travados por perfil.
-#    Policy0 exige descida por degraus da tabela real do Exynos 1380.
+#    Policy0 exige descida por degraus da tabela REAL do nó (do piso atual p/ baixo; a lista antiga
+#    era de outro SoC e começava subindo o piso p/ 1728000). Fallback = tabela lida no aparelho.
 if [ -f "$MODULE_CONFIG/stock.snapshot" ]; then
 	while read -r p v; do
 		case "$p" in
@@ -73,13 +74,17 @@ if [ -f "$MODULE_CONFIG/stock.snapshot" ]; then
 		*)
 			if [ -f "$p" ]; then
 				chmod 644 "$p" 2>/dev/null
-				if [ "$p" = "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq" ]; then
-					for _step in 1728000 1512000 1320000 1104000 999000 889000 768000 672000 "$v"; do
-						echo "$_step" >"$p" 2>/dev/null
+				case "$p" in
+				*/cpufreq/policy0/scaling_min_freq)
+					_cur=$(cat "$p" 2>/dev/null)
+					_tab=$(cat "${p%/*}/scaling_available_frequencies" 2>/dev/null)
+					[ -n "$_tab" ] || _tab="533000 672000 768000 864000 960000 1056000 1152000 1248000 1344000 1440000 1536000 1632000 1728000 1824000 1920000 2002000"
+					for _step in $(printf '%s\n' $_tab | sort -rn); do
+						[ "$_step" -lt "${_cur:-0}" ] 2>/dev/null && [ "$_step" -gt "$v" ] 2>/dev/null && echo "$_step" >"$p" 2>/dev/null
 					done
-				else
-					echo "$v" >"$p" 2>/dev/null
-				fi
+					;;
+				esac
+				echo "$v" >"$p" 2>/dev/null
 			fi
 			;;
 		esac

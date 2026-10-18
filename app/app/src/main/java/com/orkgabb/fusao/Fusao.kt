@@ -79,17 +79,20 @@ object FusaoBridge {
         var pState = ""
         var pVerify = ""
         var pMis = ""
+        var pExt = ""
         for (line in r.output) {
             val t = line.trim()
             when {
                 t.startsWith("profile_state=") -> pState = t.removePrefix("profile_state=")
                 t.startsWith("profile_verify=") -> pVerify = t.removePrefix("profile_verify=")
                 t.startsWith("profile_mismatch=") -> pMis = t.removePrefix("profile_mismatch=")
+                t.startsWith("profile_external=") -> pExt = t.removePrefix("profile_external=")
             }
         }
         return when (pState) {
             "failed" -> "FALHOU: perfil $safe não pôde ser confirmado ($pVerify) ${pMis.takeIf { it.isNotEmpty() } ?: ""}".trim()
             "partial" -> "profile=$safe [PARCIAL $pVerify] ${pMis.takeIf { it.isNotEmpty() } ?: ""}".trim()
+            "pending" -> "profile=$safe [AGUARDANDO $pVerify] piso/teto externo: $pExt".trim()
             "applied" -> "profile=$safe [APLICADO $pVerify]"
             else -> r.output.firstOrNull()?.trim().orEmpty().ifEmpty { "profile=$safe" }
         }

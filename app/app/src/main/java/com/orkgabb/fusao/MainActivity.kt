@@ -756,6 +756,7 @@ class MainActivity : ComponentActivity() {
                                             color = when (st.profileState) {
                                                 "failed" -> FusaoPalette.CrimsonCore
                                                 "partial" -> FusaoPalette.IgnisAmber
+                                                "pending" -> FusaoPalette.CryoCyan
                                                 else -> FusaoPalette.BioEmerald
                                             },
                                             maxLines = 1,
@@ -790,6 +791,8 @@ class MainActivity : ComponentActivity() {
                                             text = when (st.profileState) {
                                                 "applied" -> "CONFIRMADO ${st.profileVerify}".trim()
                                                 "partial" -> "PARCIAL ${st.profileVerify}".trim()
+                                                // piso/teto de CPU segurado pelo QoS da Samsung (boost/hint/térmico): pedido gravado
+                                                "pending" -> "AGUARDANDO ${st.profileVerify}".trim()
                                                 "failed" -> "FALHA DE READBACK"
                                                 else -> st.profileState.uppercase()
                                             },
@@ -820,6 +823,7 @@ class MainActivity : ComponentActivity() {
                                             !selected -> pLabel
                                             st.profileState == "failed" -> "FALHOU"
                                             st.profileState == "partial" -> "PARCIAL"
+                                            st.profileState == "pending" -> "AGUARDANDO"
                                             else -> "APLICADO"
                                         }
                                         TacticalButton(

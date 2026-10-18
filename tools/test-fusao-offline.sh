@@ -9,6 +9,8 @@ rm -rf "$FAKE"; mkdir -p "$FAKE/fusao" "$FAKE/settings" "$FAKE/sys"
 trap 'rm -rf "$FAKE" 2>/dev/null || true' EXIT
 export M54_DIR="$FAKE/fusao"
 export FAKE_SETTINGS_DIR="$FAKE/settings"
+# 2.9.8: apply pending agenda reverificação em background (sleep 30..185 s); no harness ela é chamada à mão
+export TUNE_NO_DEFER=1
 for _s in lib.sh framework.sh perf.sh watch.sh bugreport.sh tune.sh dnd.sh display.sh gos_killer.sh thermal_guard.sh thermal_guard_stop.sh; do
   cp "$STAGE/fusao/$_s" "$FAKE/fusao/" 2>/dev/null
 done
@@ -342,11 +344,17 @@ grep -v '^[[:space:]]*#' "$STAGE/fusao/tune.sh" | grep -Eq 'chmod[[:space:]]+0*4
 echo 2002000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
 echo 533000 > "$PNODE"
 rm -f "$FAKE/fusao/profile.state"; : > "$FLOG"
-probe_at "$FAKE" 672000 - apply_battery
+# 2.9.8: piso de CPU lido ACIMA do alvo é indistinguível de QoS externo (hint/boost da Samsung) logo após o
+# apply => pending dentro da janela; o veredito final (fora da janela) continua partial apontando o nó.
+TUNE_NOW=1000 probe_at "$FAKE" 672000 - apply_battery
 grep -q "^profile_verify=9/10$" "$FAKE/fusao/profile.state" && ok "driver clampa: verify 9/10" || bad "driver clampa: verify 9/10"
-grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "driver clampa: state partial" || bad "driver clampa: state partial"
-grep -q "^profile_mismatch=p0_min:672000!=533000$" "$FAKE/fusao/profile.state" && ok "driver clampa: mismatch aponta p0_min" || bad "driver clampa: mismatch aponta p0_min"
+grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "driver clampa: pending na janela" || bad "driver clampa: pending na janela"
+grep -q "^profile_external=p0_min:672000!=533000$" "$FAKE/fusao/profile.state" && ok "driver clampa: external aponta p0_min" || bad "driver clampa: external aponta p0_min"
 grep -q "WARN tune: clamp .*policy0/scaling_min_freq pedido=533000 lido=672000" "$FLOG" && ok "driver clampa: WARN clamp no apply" || bad "driver clampa: WARN clamp no apply"
+TUNE_NOW=1181 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "driver clampa: partial fora da janela" || bad "driver clampa: partial fora da janela"
+grep -q "^profile_mismatch=p0_min:672000!=533000$" "$FAKE/fusao/profile.state" && ok "driver clampa: mismatch aponta p0_min" || bad "driver clampa: mismatch aponta p0_min"
+grep -q "^applied_at=1000$" "$FAKE/fusao/profile.state" && ok "verify herda applied_at do apply" || bad "verify herda applied_at do apply"
 # mesmo apply num driver honesto fecha 10/10
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" battery >/dev/null 2>&1
 grep -q "^profile_verify=10/10$" "$FAKE/fusao/profile.state" && ok "driver honesto: verify 10/10" || bad "driver honesto: verify 10/10"
@@ -368,6 +376,69 @@ grep -q "WARN tune: snap p0/min pedido=533000 abaixo do mínimo físico 700000, 
 _n0=$(grep -c "WARN tune: snap" "$FLOG")
 M54_DIR="$FAKE/fusao" FS_ROOT="$ALT" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
 [ "$_n0" -ge 1 ] && [ "$(grep -c "WARN tune: snap" "$FLOG")" = "$_n0" ] && ok "verify nao repete WARN do snap" || bad "verify nao repete WARN do snap"
+
+# 9e-7) 2.9.8 piso EXTERNO (boost de boot / hint de launch, medido 2026-10-18 15:29 e 16:03): o QoS da
+# Samsung segura scaling_min no alto e todo degrau "pega" o valor dela. A descida para no primeiro degrau
+# (2.9.7: 15 WARN seguidos) e o pedido final ainda é gravado.
+P0D="$FAKE/sys/devices/system/cpu/cpufreq/policy0"
+echo 2002000 > "$P0D/scaling_max_freq"; echo 2002000 > "$P0D/scaling_min_freq"
+rm -f "$FAKE/trace.txt"; : > "$FLOG"
+probe_at "$FAKE" 2002000 "$FAKE/trace.txt" set_policy0 533000 1728000
+[ "$(grep -c "policy0/scaling_min_freq" "$FAKE/trace.txt")" = "2" ] && ok "piso externo: descida para no 1o degrau (2 escritas)" || bad "piso externo: descida para no 1o degrau ($(grep -c "policy0/scaling_min_freq" "$FAKE/trace.txt") escritas)"
+[ "$(grep -c "WARN tune: clamp .*policy0/scaling_min_freq" "$FLOG")" = "2" ] && ok "piso externo: 2 WARN, nao 15" || bad "piso externo: 2 WARN, nao 15"
+# controle: driver honesto do mesmo ponto desce TODOS os degraus reais entre 2002000 e 533000 (14) + o final
+echo 2002000 > "$P0D/scaling_min_freq"; rm -f "$FAKE/trace.txt"
+probe_at "$FAKE" - "$FAKE/trace.txt" set_policy0 533000 1728000
+[ "$(grep -c "policy0/scaling_min_freq" "$FAKE/trace.txt")" = "15" ] && [ "$(cat "$P0D/scaling_min_freq")" = "533000" ] && ok "controle: honesto desce 14 degraus + final" || bad "controle: honesto desce 14 degraus + final"
+
+# 9e-8) janela do pending: hint segura P0 min 1152000 no apply do battery (como na entrada do Roblox)
+echo 1728000 > "$P0D/scaling_max_freq"; echo 533000 > "$P0D/scaling_min_freq"
+rm -f "$FAKE/fusao/profile.state"; : > "$FLOG"
+TUNE_NOW=5000 probe_at "$FAKE" 1152000 - apply_battery
+grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "hint no apply: pending" || bad "hint no apply: pending"
+grep -q "^profile_mismatch=" "$FAKE/fusao/profile.state" && bad "hint no apply: sem mismatch real" || ok "hint no apply: sem mismatch real"
+grep -q "tune: battery pending (piso/teto de CPU externo: p0_min:1152000!=533000)" "$FLOG" && ok "hint no apply: loga pending" || bad "hint no apply: loga pending"
+# o hint solta (o nó guarda o NOSSO pedido): verify do status dentro da janela fecha 10/10 applied
+echo 533000 > "$P0D/scaling_min_freq"
+TUNE_NOW=5040 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && grep -q "^profile_verify=10/10$" "$FAKE/fusao/profile.state" && ok "hint soltou: applied 10/10" || bad "hint soltou: applied 10/10"
+# teto de CPU clampado ABAIXO pelo térmico dentro da janela = pending; ACIMA do alvo nunca é externo
+echo 1344000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+TUNE_NOW=5050 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+grep -q "^profile_external=p4_max:1344000!=1440000$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "teto termico: pending" || bad "teto termico: pending"
+echo 2400000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+TUNE_NOW=5050 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+grep -q "^profile_mismatch=p4_max:2400000!=1440000$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "teto acima do alvo: partial" || bad "teto acima do alvo: partial"
+echo 1440000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+
+# 9e-9) reverify (só leitura): converge p/ applied quando o hint solta; job obsoleto não toca no state
+echo 1152000 > "$P0D/scaling_min_freq"
+TUNE_NOW=6000 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+sed -i 's/^applied_at=.*/applied_at=6000/' "$FAKE/fusao/profile.state"
+TUNE_NOW=6000 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "reverify: parte de pending" || bad "reverify: parte de pending"
+echo 533000 > "$P0D/scaling_min_freq"
+: > "$FLOG"
+TUNE_NOW=6030 REVERIFY_STEPS=0 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" reverify battery 6000 >/dev/null 2>&1
+grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && grep -q "tune: reverify battery -> applied 10/10" "$FLOG" && ok "reverify: converge p/ applied" || bad "reverify: converge p/ applied"
+echo 1152000 > "$P0D/scaling_min_freq"
+cp "$FAKE/fusao/profile.state" "$FAKE/state.before"
+TUNE_NOW=6030 REVERIFY_STEPS=0 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" reverify battery 4242 >/dev/null 2>&1
+cmp -s "$FAKE/fusao/profile.state" "$FAKE/state.before" && ok "reverify obsoleto nao toca no state" || bad "reverify obsoleto nao toca no state"
+echo 533000 > "$P0D/scaling_min_freq"
+
+# 9e-10) restauração do stock (CLI/cleanup/uninstall): degraus REAIS do nó, só abaixo do piso atual.
+# A função do CLI é extraída e rodada contra um nó falso; a lista antiga (outro SoC, começando em 1728000) sumiu.
+for _f in "$STAGE/system/bin/fusao" "$STAGE/cleanup.sh" "$STAGE/uninstall.sh"; do
+  grep -q "1728000 1512000 1320000" "$_f" && bad "lista de outro SoC fora de $(basename "$_f")" || ok "lista de outro SoC fora de $(basename "$_f")"
+done
+sed -n '/^restore_snapshot_nodes() {/,/^}/p' "$STAGE/system/bin/fusao" > "$FAKE/restore_fn.sh"
+echo 1152000 > "$P0D/scaling_min_freq"
+printf '# stock\n%s 533000\n' "$P0D/scaling_min_freq" > "$FAKE/fusao/stock.snapshot"
+( . "$FAKE/restore_fn.sh"; M54_DIR="$FAKE/fusao" restore_snapshot_nodes )
+[ "$(cat "$P0D/scaling_min_freq")" = "533000" ] && ok "restore snapshot: p0 min volta ao stock" || bad "restore snapshot: p0 min volta ao stock"
+rm -f "$FAKE/fusao/stock.snapshot"
+
 # restaura o fake principal p/ as seções seguintes
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" idle
 

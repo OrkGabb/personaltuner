@@ -7,6 +7,9 @@
 # 2.9.7: tabelas de degraus LIDAS do próprio aparelho (scaling_available_frequencies / gpu_freq_table),
 # todo alvo de min/max passa por snap p/ um degrau que existe, w() relê e não mente rc 0 quando o
 # driver clampa em silêncio, e verify_profile confere exatamente o que o perfil pede depois do snap.
+# 2.9.8: piso/teto de CPU segurado pelo QoS da Samsung (boost de boot, hint de launch, térmico) logo
+# após um apply vira "pending" (não "partial"), a descida para no primeiro degrau que não pega, e
+# reverificações só de leitura dão o veredito final fora da janela (EXT_WINDOW_S).
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -254,11 +257,14 @@ set_cpu_domain() {
     w "$n_max" "$t_max"
   fi
   if [ "$t_min" -lt "$c_min" ]; then
-    # degraus da tabela do aparelho, do maior p/ o menor, estritamente entre o alvo e o piso atual
+    # degraus da tabela do aparelho, do maior p/ o menor, estritamente entre o alvo e o piso atual.
+    # Degrau que não pega = piso EXTERNO (boost de boot / hint de launch da Samsung segura o QoS de min):
+    # os degraus abaixo falhariam igual, então para no primeiro (no aparelho, 2026-10-18 15:29: 15 WARN
+    # seguidos com lido=2002000). O pedido final abaixo ainda é gravado e vale quando o piso externo solta.
     for _s in $D_TBL; do rev="$_s $rev"; done
     for _s in $rev; do
       if [ "$_s" -lt "$c_min" ] && [ "$_s" -gt "$t_min" ]; then
-        w "$n_min" "$_s"
+        w "$n_min" "$_s" || break
       fi
     done
   fi
@@ -386,10 +392,30 @@ profile_targets() {
   T_GMAX=$(snap_domain max gpu "$r_gmax")
 }
 
+# Janela após um apply em que piso/teto de CPU EXTERNO conta como "pending" e não "partial".
+# No Exynos 1380 scaling_min/max_freq leem o efetivo do QoS: o boost de boot e os hints de launch da
+# Samsung seguram o min acima do pedido (e o térmico, o max abaixo) por segundos a minutos, com o nosso
+# pedido gravado — vale quando eles soltam (aparelho 2026-10-18: apply 15:29 8/10, mesmo nó 533000 em
+# 15:47 sem reescrita). Passada a janela, divergência volta a ser falha real (driver que clampa de verdade).
+EXT_WINDOW_S=180
+# Reverificações SÓ DE LEITURA depois de um apply pending (s, cumulativo 30/90/185: a última cai fora da
+# janela e dá o veredito final). Nunca reescreve: loop de reescrita contra a ROM é proibido (ver apply_battery).
+REVERIFY_STEPS="${REVERIFY_STEPS:-30 60 95}"
+
+now_s() {
+  if [ -n "${TUNE_NOW:-}" ]; then echo "$TUNE_NOW"; else cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; fi
+}
+
+# state_field <campo> — valor do campo no profile.state atual (vazio se não houver).
+state_field() {
+  grep -E "^$1=" "$STATE_F" 2>/dev/null | tail -n 1 | cut -d= -f2-
+}
+
 # Verifica por readback se os nós presentes no sistema refletem o perfil alvo
-# (alvo = profile_targets, já com snap).
+# (alvo = profile_targets, já com snap). APPLIED_AT (uptime do apply) marca a janela EXT_WINDOW_S;
+# sem ele (verify do status, reverify) herda o applied_at do state se o perfil for o mesmo.
 verify_profile() {
-  local target="$1" ok_cnt=0 tot_cnt=0 mis=""
+  local target="$1" ok_cnt=0 tot_cnt=0 mis="" ext="" applied_at in_win=0
   case "$target" in
     game|battery) ;;
     *) target="balanced";;
@@ -399,16 +425,35 @@ verify_profile() {
   profile_targets "$target"
   SNAP_QUIET=""
 
+  applied_at="${APPLIED_AT:-}"
+  if [ -z "$applied_at" ] && [ "$(state_field profile)" = "$target" ]; then
+    applied_at=$(state_field applied_at)
+  fi
+  case "$applied_at" in
+    ''|*[!0-9]*) applied_at="";;
+    *) [ $(( $(now_s) - applied_at )) -lt "$EXT_WINDOW_S" ] && in_win=1;;
+  esac
+
+  # dir: floor = só nó de piso de CPU (lido ACIMA do alvo é QoS externo); ceil = só teto de CPU (lido
+  # ABAIXO é QoS externo). GPU/MIF/VM não entram: a GPU é sobrescrita pela Samsung (não é QoS).
   check_eq() {
-    local path="$1" expected="$2" label="$3" cur
+    local path="$1" expected="$2" label="$3" dir="${4:-}" cur
     [ -f "$path" ] || return 0
     tot_cnt=$((tot_cnt + 1))
     cur=$(rval "$path")
     if [ "$cur" = "$expected" ]; then
       ok_cnt=$((ok_cnt + 1))
-    else
-      mis="${mis}${mis:+,}${label}:${cur}!=${expected}"
+      return 0
     fi
+    if [ "$in_win" = 1 ] && [ -n "$dir" ]; then
+      case "$cur" in ''|*[!0-9]*) ;; *)
+        if { [ "$dir" = floor ] && [ "$cur" -gt "$expected" ]; } || { [ "$dir" = ceil ] && [ "$cur" -lt "$expected" ]; }; then
+          ext="${ext}${ext:+,}${label}:${cur}!=${expected}"
+          return 0
+        fi;;
+      esac
+    fi
+    mis="${mis}${mis:+,}${label}:${cur}!=${expected}"
   }
 
   check_ge() {
@@ -425,8 +470,8 @@ verify_profile() {
   }
 
   if [ "$target" = "battery" ]; then
-    check_eq "$P0_MIN" "$T_P0_MIN" "p0_min"
-    check_eq "$P4_MIN" "$T_P4_MIN" "p4_min"
+    check_eq "$P0_MIN" "$T_P0_MIN" "p0_min" floor
+    check_eq "$P4_MIN" "$T_P4_MIN" "p4_min" floor
     check_eq "$GPU_MIN" "$T_GMIN" "gpu_min"
     check_eq "$MIF_MIN" "$T_MIF_MIN" "mif_min"
   else
@@ -435,8 +480,8 @@ verify_profile() {
     check_ge "$GPU_MIN" "$T_GMIN" "gpu_min"
     check_ge "$MIF_MIN" "$T_MIF_MIN" "mif_min"
   fi
-  check_eq "$P0_MAX" "$T_P0_MAX" "p0_max"
-  check_eq "$P4_MAX" "$T_P4_MAX" "p4_max"
+  check_eq "$P0_MAX" "$T_P0_MAX" "p0_max" ceil
+  check_eq "$P4_MAX" "$T_P4_MAX" "p4_max" ceil
   check_eq "$GPU_MAX" "$T_GMAX" "gpu_max"
   check_eq "$R/proc/sys/vm/swappiness" "$T_SWAP" "swappiness"
   check_eq "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS" "vfs_pressure"
@@ -455,6 +500,9 @@ verify_profile() {
     fi
   elif [ "$ok_cnt" -eq "$tot_cnt" ]; then
     state="applied"
+  elif [ -z "$mis" ]; then
+    # só piso/teto de CPU externo dentro da janela: pedido gravado, aguardando o QoS da Samsung soltar
+    state="pending"
   elif [ "$ok_cnt" -gt 0 ]; then
     state="partial"
   else
@@ -476,9 +524,36 @@ verify_profile() {
     echo "profile_verify=${ok_cnt}/${tot_cnt}"
     echo "sysfs_summary=$summary"
     [ -n "$mis" ] && echo "profile_mismatch=$mis"
+    [ -n "$ext" ] && echo "profile_external=$ext"
+    [ -n "$applied_at" ] && echo "applied_at=$applied_at"
   } | atomic_write "$STATE_F" 0644
 
+  VERIFY_STATE="$state"
   [ "$state" != "failed" ]
+}
+
+# verify_after_apply <perfil> — o verify do fim de um apply_*. Se deu pending, agenda as reverificações
+# só de leitura (TUNE_NO_DEFER=1 desliga: teste offline). Cada job confere o applied_at: um apply novo
+# (outro perfil ou o mesmo de novo) torna o job antigo obsoleto e ele sai sem tocar no state.
+verify_after_apply() {
+  APPLIED_AT=$(now_s)
+  verify_profile "$1"
+  if [ "$VERIFY_STATE" = "pending" ]; then
+    log "tune: $1 pending (piso/teto de CPU externo: $(state_field profile_external)); reverifica em +30/+90/+185 s"
+    [ "${TUNE_NO_DEFER:-0}" = "1" ] || nohup sh "$DIR/tune.sh" reverify "$1" "$APPLIED_AT" >/dev/null 2>&1 &
+  fi
+}
+
+# reverify_loop <perfil> <applied_at> — só leitura; sai assim que o state deixa de ser pending.
+reverify_loop() {
+  local _d
+  for _d in $REVERIFY_STEPS; do
+    sleep "$_d"
+    [ "$(state_field applied_at)" = "$2" ] || return 0
+    [ "$(state_field profile_state)" = "pending" ] || return 0
+    verify_profile "$1"
+    [ "$VERIFY_STATE" = "pending" ] || { log "tune: reverify $1 -> $VERIFY_STATE $(state_field profile_verify)"; return 0; }
+  done
 }
 
 apply_game() {
@@ -508,7 +583,7 @@ apply_game() {
   [ -n "$b" ] && w "$R/proc/sys/net/ipv4/tcp_congestion_control" "$b"
   w "$R/proc/sys/net/ipv4/tcp_fastopen" "3"
 
-  verify_profile game
+  verify_after_apply game
   log "tune: apply game"
 }
 
@@ -537,7 +612,7 @@ apply_balanced() {
   restore_one "$R/proc/sys/net/ipv4/tcp_congestion_control"
   w "$R/proc/sys/net/ipv4/tcp_fastopen" "3"
 
-  verify_profile balanced
+  verify_after_apply balanced
   log "tune: apply balanced"
 }
 
@@ -546,6 +621,9 @@ apply_balanced() {
 # (presentes até uptime ~3194s, ausentes em ~3709s). Isso NÃO se resolve com loop de reescrita
 # (briga com o framework da ROM, gasta bateria e esconde o sintoma). Se um dia for preciso reaplicar,
 # que seja por EVENTO de tela-acesa, UMA vez, com releitura (w/verify_profile) — não implementado.
+# Em jogo (kernlab game-tetos, NTE): o térmico da Samsung é dono dos tetos — o gpu_max_clock 650000 foi
+# SOBRESCRITO para cima (845000/949000/754000) ao liberar e os tetos de CPU só caem (QoS). O cap de GPU do
+# battery não segura em jogo; o de CPU segura enquanto o térmico não pedir menos.
 apply_battery() {
   snapshot_stock
   profile_targets battery
@@ -571,7 +649,7 @@ apply_battery() {
   restore_one "$R/proc/sys/net/ipv4/tcp_congestion_control"
   restore_one "$R/proc/sys/net/ipv4/tcp_fastopen"
 
-  verify_profile battery
+  verify_after_apply battery
   log "tune: apply battery"
 }
 
@@ -616,6 +694,10 @@ case "$MODE" in
     cat "$STATE_F" 2>/dev/null
     exit 0
     ;;
+  reverify)
+    reverify_loop "$2" "$3"
+    exit 0
+    ;;
   auto)
     M=$(resolve_mode)
     case "$M" in
@@ -626,7 +708,7 @@ case "$MODE" in
     exit 0
     ;;
   *)
-    echo "uso: tune.sh [game|balanced|battery|idle|verify|auto]" >&2
+    echo "uso: tune.sh [game|balanced|battery|idle|verify|reverify|auto]" >&2
     exit 1
     ;;
 esac
