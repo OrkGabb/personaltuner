@@ -21,10 +21,7 @@ MODULE_DIR="/data/adb/modules/encore"
 THIS_SCRIPT="/data/adb/service.d/.fusao_cleanup.sh"
 MODULE_CONFIG="/data/adb/fusao"
 
-# FUSAO-M54: roda quando o módulo sumiu (uninstall) ou foi desabilitado.
-# (O teste antigo checava [ ! -d .../disable ] mas disable é ARQUIVO — nunca casava.)
 if [ ! -d "$MODULE_DIR" ] || [ -f "$MODULE_DIR/disable" ]; then
-	# FUSAO: framework de volta ao stock + processos parados.
 	if [ -x /data/adb/fusao/framework.sh ]; then
 		M54_DIR=/data/adb/fusao sh /data/adb/fusao/framework.sh idle 2>/dev/null
 	fi
@@ -52,7 +49,6 @@ if [ ! -d "$MODULE_DIR" ] || [ -f "$MODULE_DIR/disable" ]; then
 	if [ -x /data/adb/fusao/tune.sh ]; then
 		M54_DIR=/data/adb/fusao sh /data/adb/fusao/tune.sh idle 2>/dev/null
 	fi
-	# governor de volta
 	if [ -f "$MODULE_CONFIG/default_cpu_gov" ]; then
 		read -r revert_gov <"$MODULE_CONFIG/default_cpu_gov"
 		for _g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
@@ -62,12 +58,10 @@ if [ ! -d "$MODULE_DIR" ] || [ -f "$MODULE_DIR/disable" ]; then
 			}
 		done
 	fi
-	# thermal de volta
 	for z in /sys/class/thermal/thermal_zone*/mode; do
 		[ -f "$z" ] && echo enabled >"$z" 2>/dev/null
 	done
-	# floors/maxes de volta ao snapshot (disable não apaga o config).
-	# Policy0 exige descida por degraus de tabela no Exynos 1380.
+	# Policy0 exige descida por degraus da tabela real do Exynos 1380.
 	if [ -f "$MODULE_CONFIG/stock.snapshot" ]; then
 		while read -r p v; do
 			case "$p" in
@@ -76,7 +70,7 @@ if [ ! -d "$MODULE_DIR" ] || [ -f "$MODULE_DIR/disable" ]; then
 				if [ -f "$p" ]; then
 					chmod 644 "$p" 2>/dev/null
 					if [ "$p" = "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq" ]; then
-						for _step in 1152000 960000 768000 672000 "$v"; do
+						for _step in 1728000 1512000 1320000 1104000 999000 889000 768000 672000 "$v"; do
 							echo "$_step" >"$p" 2>/dev/null
 						done
 					else

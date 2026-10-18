@@ -19,14 +19,10 @@ MODULE_CONFIG="/data/adb/fusao"
 CLEANUP_SCRIPT="/data/adb/service.d/.fusao_cleanup.sh"
 CPUFREQ="/sys/devices/system/cpu/cpu0/cpufreq"
 
-# Restore original module.prop
 [ -f "$MODDIR/module.prop.orig" ] && {
   cp "$MODDIR/module.prop.orig" "$MODDIR/module.prop"
 }
 
-# Rotação de logs no boot: fusaod.log não tem rotação própria (Rust só
-# escreve) — sem isso, 1 dia de briga com driver externo gera MBs.
-# Guarda a cauda (últimas 2000 linhas) em vez de apagar tudo.
 if [ -f "$MODULE_CONFIG/fusaod.log" ]; then
   _sz=$(wc -c <"$MODULE_CONFIG/fusaod.log" 2>/dev/null)
   _sz=$(echo "$_sz" | tr -d '[:space:]')
@@ -37,25 +33,20 @@ if [ -f "$MODULE_CONFIG/fusaod.log" ]; then
   fi
 fi
 
-# Parse Governor to use
 chmod 644 "$CPUFREQ/scaling_governor" 2>/dev/null
 default_gov=$(cat "$CPUFREQ/scaling_governor" 2>/dev/null)
 echo "$default_gov" >"$MODULE_CONFIG/default_cpu_gov"
 
-# Create cleanup script
 [ ! -f "$CLEANUP_SCRIPT" ] && {
   mkdir -p "$(dirname "$CLEANUP_SCRIPT")"
   cp "$MODDIR/cleanup.sh" "$CLEANUP_SCRIPT"
   chmod +x "$CLEANUP_SCRIPT"
 }
 
-# Wait until boot completed ("1")
 while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
 	sleep 5
 done
 
-# Handle case when 'default_gov' is performance
-# FUSAO-M54: energy_aware primeiro — é o stock do M54 (provado no aparelho).
 default_gov_preferred_array="
 energy_aware
 scx
@@ -82,13 +73,10 @@ if [ "$default_gov" = "performance" ]; then
 	done
 fi
 
-# Revert to normal CPU governor
 for _g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
 	[ -f "$_g" ] && echo "$default_gov" >"$_g" 2>/dev/null
 done
 
-# FUSAO-M54: snapshot de stock no primeiro boot (o uninstall consome).
-# Só captura UMA vez — boot com estado tunado contaminaria o default.
 if [ ! -s "$MODULE_CONFIG/stock.snapshot" ]; then
 	{
 		echo "# stock.snapshot $(date)"
@@ -105,9 +93,7 @@ if [ ! -s "$MODULE_CONFIG/stock.snapshot" ]; then
 		echo "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor $default_gov"
 	} >"$MODULE_CONFIG/stock.snapshot" 2>/dev/null
 fi
-# Guarda contra snapshot contaminado: se os floors/maxes não batem com o
-# stock canônico (boot anterior com jogo/driver tunado), regrava o canônico.
-# Sem isso, uninstall e idle-restore restaurariam valores tunados como stock.
+
 _stock_bad=0
 grep -Fq "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 533000" "$MODULE_CONFIG/stock.snapshot" 2>/dev/null || _stock_bad=1
 grep -Fq "/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq 533000" "$MODULE_CONFIG/stock.snapshot" 2>/dev/null || _stock_bad=1
@@ -133,15 +119,10 @@ if [ "$_stock_bad" = 1 ]; then
 	echo "$(date '+%H:%M:%S') service: stock.snapshot reseeded (canonico)" >>"$MODULE_CONFIG/fusao.log" 2>/dev/null
 fi
 
-# FUSAO-M54 single-module: UM writer (fusaod via cache), UM detector
-# (observer event-driven + watch fallback). Governor intocado (stock governa, floors guiam).
-# Kill-switch: toque /data/adb/fusao/disable e nada sobe no próximo boot.
 FUSAO_DIR="/data/adb/fusao"
 mkdir -p "$FUSAO_DIR" 2>/dev/null
 chmod 0700 "$FUSAO_DIR" 2>/dev/null
-# Temp-root: soft-reboot NÃO mata loops nohup — sem isso, código VELHO
-# sobrevive embaixo do novo. Mata por PID (nunca pkill inline suicida:
-# $$ excluído, padrões nunca casam este script).
+
 kill_stale() {
 	for _p in $(pgrep -f "$1" 2>/dev/null); do
 		[ "$_p" = "$$" ] || kill -9 "$_p" 2>/dev/null
@@ -150,14 +131,13 @@ kill_stale() {
 for _pat in "fusaod serve" "fusao.observer" "watch.sh" "thermal_guard.sh" "gos_killer.sh"; do
 	kill_stale "$_pat"
 done
-# Self-heal (lição temp-root): boot recopia scripts e dex a partir do módulo.
-# NOTA: gamelist.txt NÃO entra no cp -f incondicional para preservar adições/remoções
-# feitas pelo usuário via app/CLI (só semeia se ausente).
+
 for f in thermal_guard.sh thermal_guard_stop.sh lib.sh gos_killer.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh dnd.sh display.sh observer.sh observer.dex; do
 	[ -f "$MODDIR/fusao/$f" ] && cp -f "$MODDIR/fusao/$f" "$FUSAO_DIR/$f" 2>/dev/null
 done
 [ -s "$FUSAO_DIR/gamelist.txt" ] || cp -f "$MODDIR/fusao/gamelist.txt" "$FUSAO_DIR/gamelist.txt" 2>/dev/null
 chmod 0755 "$FUSAO_DIR/thermal_guard.sh" "$FUSAO_DIR/thermal_guard_stop.sh" "$FUSAO_DIR/gos_killer.sh" "$FUSAO_DIR/watch.sh" "$FUSAO_DIR/framework.sh" "$FUSAO_DIR/perf.sh" "$FUSAO_DIR/bugreport.sh" "$FUSAO_DIR/tune.sh" "$FUSAO_DIR/dnd.sh" "$FUSAO_DIR/display.sh" "$FUSAO_DIR/observer.sh" 2>/dev/null
+
 [ -f "$FUSAO_DIR/config" ] || {
 	echo "thermal=moderate" >"$FUSAO_DIR/config"
 	echo "profile=balanced" >>"$FUSAO_DIR/config"
@@ -167,7 +147,12 @@ chmod 0755 "$FUSAO_DIR/thermal_guard.sh" "$FUSAO_DIR/thermal_guard_stop.sh" "$FU
 	echo "thermal_guard_timeout=900" >>"$FUSAO_DIR/config"
 	chmod 0600 "$FUSAO_DIR/config" 2>/dev/null
 }
-# Guard: só com thermal=aggressive; reverte sozinho (HIGH/BATT/timeout).
+
+# Inicializa flags essenciais na 1ª instalação se ainda não inicializado
+if [ ! -f "$FUSAO_DIR/.flags_seeded" ]; then
+	touch "$FUSAO_DIR/framework.enabled" "$FUSAO_DIR/perf.enabled" "$FUSAO_DIR/.flags_seeded" 2>/dev/null
+fi
+
 if [ ! -f "$FUSAO_DIR/disable" ] && grep -q "^thermal=aggressive" "$FUSAO_DIR/config" 2>/dev/null; then
 	M54_DIR="$FUSAO_DIR" nohup sh "$FUSAO_DIR/thermal_guard.sh" >>"$FUSAO_DIR/fusao.log" 2>&1 &
 fi
@@ -178,6 +163,16 @@ fi
 	chmod 0600 "$FUSAO_DIR/profile" 2>/dev/null
 }
 : >"$FUSAO_DIR/game-active.txt" 2>/dev/null
+
+# Aplica o perfil salvo no boot para garantir que o estado inicial corresponda ao perfil ativo
+if [ ! -f "$FUSAO_DIR/disable" ]; then
+	if [ -f "$FUSAO_DIR/framework.enabled" ] && [ -x "$FUSAO_DIR/framework.sh" ]; then
+		M54_DIR="$FUSAO_DIR" sh "$FUSAO_DIR/framework.sh" auto >/dev/null 2>&1
+	elif [ -x "$FUSAO_DIR/tune.sh" ]; then
+		M54_DIR="$FUSAO_DIR" sh "$FUSAO_DIR/tune.sh" auto >/dev/null 2>&1
+	fi
+fi
+
 # Observer event-driven (primário): app_process como root.
 if [ ! -f "$FUSAO_DIR/disable" ] && [ -x "$FUSAO_DIR/observer.sh" ] && [ -f "$FUSAO_DIR/observer.dex" ]; then
 	if ! pgrep -f "[f]usao.observer" >/dev/null 2>&1; then
@@ -191,15 +186,14 @@ if [ ! -f "$FUSAO_DIR/disable" ] && [ -x "$FUSAO_DIR/watch.sh" ]; then
 	fi
 fi
 # GOS killer: Samsung ressuscita o GOS; mata por schedule e loga.
-# Padrão pgrep com colchetes: não casa a própria shell.
 if [ ! -f "$FUSAO_DIR/disable" ] && [ -x "$FUSAO_DIR/gos_killer.sh" ]; then
 	if ! pgrep -f "[g]os_killer" >/dev/null 2>&1; then
 		M54_DIR="$FUSAO_DIR" nohup sh "$FUSAO_DIR/gos_killer.sh" >>"$FUSAO_DIR/fusao.log" 2>&1 &
 	fi
 fi
-# Cérebro (CPU floors + GPU/MIF/INT/DISP via cache): só com fusaod.enabled.
-# Descida de policy0 por degraus (tabela real). Sem o arquivo, zero writer.
-if [ ! -f "$FUSAO_DIR/disable" ] && [ -f "$FUSAO_DIR/fusaod.enabled" ] && [ -x "$MODDIR/system/bin/fusaod" ]; then
+# fusaod serve é gerenciado por sessão pelo watch.sh/fusao CLI (quando fusaod.enabled
+# e há jogo ativo nos perfis game/balanced), evitando sobrescrever o perfil em idle.
+if [ ! -f "$FUSAO_DIR/disable" ] && [ -f "$FUSAO_DIR/fusaod.enabled" ] && [ -s "$FUSAO_DIR/game-active.txt" ] && [ -x "$MODDIR/system/bin/fusaod" ]; then
 	if ! pgrep -f "[f]usaod serve" >/dev/null 2>&1; then
 		nohup "$MODDIR/system/bin/fusaod" serve >>"$FUSAO_DIR/fusaod.log" 2>&1 &
 	fi

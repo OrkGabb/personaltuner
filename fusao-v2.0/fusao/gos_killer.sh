@@ -1,10 +1,8 @@
 #!/system/bin/sh
-# fusao gos_killer v0.3 — GOS (com.samsung.android.game.gos) ressuscita no boot
-# e nasce no game-launch (fora das marcas esparsas: foi pego vivo com o NTE
-# aberto). Mata por schedule + guarda de game-enter (poll 5s, só age com jogo
-# na lista) e loga cada abate em fusao.log. Exceção deliberada ao single-writer
-# (processo, não sysfs), mesmo padrão do thermal_guard.sh. Sem pm disable
-# (a Samsung reverte; kill é transitório e seguro).
+# fusao gos_killer v0.4 — GOS (com.samsung.android.game.gos) ressuscita no boot
+# e nasce no game-launch. Mata por schedule + guarda de game-enter, mas NUNCA
+# dispara `cmd activity force-stop` durante jogo ativo se o GOS não estiver vivo
+# (evita contenção de lock global no ActivityManager durante loading de jogos).
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -36,11 +34,10 @@ kill_gos() {
 START=$(uptime_s)
 case "$START" in ''|*[!0-9]*) START=0;; esac
 M30=0; M300=0; M600=0; M3600=0; LASTH=$START; LASTGAME=""; PAUSED_LOGGED=0
-log "gos killer v0.3: inicio"
+log "gos killer v0.4: inicio"
 [ -f "$M54_DIR/gos_killer.paused" ] && { log "gos killer: pausado (fusao gos on p/ retomar)"; PAUSED_LOGGED=1; } || kill_gos boot 1
 while true; do
   sleep 5
-  # Pausa explícita: dorme sem matar (retoma ao remover o marker).
   if [ -f "$M54_DIR/gos_killer.paused" ]; then
     if [ "$PAUSED_LOGGED" = 0 ]; then PAUSED_LOGGED=1; log "gos killer: pausado (fusao gos on p/ retomar)"; fi
     sleep 30
@@ -50,23 +47,22 @@ while true; do
   NOW=$(uptime_s)
   case "$NOW" in ''|*[!0-9]*) NOW=$START;; esac
   ELAPSED=$((NOW - START))
-  # Guarda de game-enter: GOS nasce no launch, fora das marcas (leitura sem fork).
   G=""
   [ -r "$GAMEFILE" ] && IFS= read -r G < "$GAMEFILE" 2>/dev/null
   G="${G%%[[:space:]]*}"
   if [ -n "$G" ]; then
-    if [ "$G" != "$LASTGAME" ]; then
-      kill_gos "game-enter:$G" 1
-    elif pidof "$PKG" >/dev/null 2>&1; then
-      kill_gos "game-guard" 1
+    # Durante o jogo, só executa kill/force-stop se o processo do GOS realmente existir
+    if pidof "$PKG" >/dev/null 2>&1; then
+      if [ "$G" != "$LASTGAME" ]; then
+        kill_gos "game-enter:$G" 0
+      else
+        kill_gos "game-guard" 0
+      fi
     fi
   fi
   LASTGAME="$G"
-  # Em jogo ativo, as marcas de tempo só disparam force-stop se o GOS realmente
-  # estiver vivo (evita transação binder/AM desnecessária durante a partida).
   _force_idle=1
   [ -n "$G" ] && _force_idle=0
-  # Marcas do dono (uma vez cada).
   if [ "$ELAPSED" -ge 30 ] && [ "$M30" = 0 ]; then M30=1; kill_gos 30s "$_force_idle"; fi
   if [ "$ELAPSED" -ge 300 ] && [ "$M300" = 0 ]; then M300=1; kill_gos 5min "$_force_idle"; fi
   if [ "$ELAPSED" -ge 600 ] && [ "$M600" = 0 ]; then M600=1; kill_gos 10min "$_force_idle"; fi

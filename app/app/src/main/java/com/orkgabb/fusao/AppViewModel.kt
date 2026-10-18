@@ -89,6 +89,7 @@ data class FusaoUiState(
     val recordRemainingSec: Int = 0,
     val notice: String = "",
     val preloadInfo: List<String> = emptyList(),
+    val selectedPreloadPkg: String = "",
     val ramcleanInfo: List<String> = emptyList(),
     val games: List<String> = emptyList(),
     val logLines: List<String> = emptyList(),
@@ -164,7 +165,6 @@ class FusaoViewModel : ViewModel() {
 
     /**
      * Revalida root e atualiza status, versão, lista de jogos e abas já inicializadas.
-     * Se o usuário acabou de conceder temp-root e tocou em Atualizar, o app detecta na hora.
      */
     fun refresh() {
         viewModelScope.launch {
@@ -227,7 +227,7 @@ class FusaoViewModel : ViewModel() {
             val out = FusaoBridge.setFlag(cmd, on)
             val st = FusaoBridge.status()
             val cur = _state.value
-            val pInfo = if (cmd == "preload" && cur.preloadInfo.isNotEmpty()) {
+            val pInfo = if (cmd == "preload") {
                 FusaoBridge.preloadStatus()
             } else {
                 cur.preloadInfo
@@ -277,7 +277,11 @@ class FusaoViewModel : ViewModel() {
         }
     }
 
-    /** Carrega estado de Preload e RAM clean de forma coordenada sem disputa de estado Busy. */
+    fun selectPreloadTarget(pkg: String) {
+        _state.update { it.copy(selectedPreloadPkg = pkg) }
+    }
+
+    /** Carrega estado de Preload, gamelist e RAM clean de forma coordenada sem disputa de estado Busy. */
     fun loadPreloadAndRamcleanIfEmpty() {
         if (!guardRoot()) return
         val cur = _state.value
@@ -287,10 +291,12 @@ class FusaoViewModel : ViewModel() {
             _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_init") }
             val pInfo = if (cur.preloadInfo.isEmpty()) FusaoBridge.preloadStatus() else cur.preloadInfo
             val rInfo = if (cur.ramcleanInfo.isEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
+            val games = if (cur.games.isEmpty()) FusaoBridge.gamelist() else cur.games
             _state.update {
                 it.copy(
                     preloadInfo = pInfo,
                     ramcleanInfo = rInfo,
+                    games = games,
                     busy = Busy.NONE,
                     activeTarget = "",
                 )
@@ -307,11 +313,11 @@ class FusaoViewModel : ViewModel() {
         }
     }
 
-    fun preloadNow() {
+    fun preloadPrepare(targetPkg: String = _state.value.selectedPreloadPkg) {
         if (!guardRoot()) return
         viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_now") }
-            val out = FusaoBridge.preloadNow()
+            _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_prepare") }
+            val out = FusaoBridge.preloadPrepare(targetPkg)
             val info = FusaoBridge.preloadStatus()
             val st = FusaoBridge.status()
             _state.update {
@@ -326,31 +332,60 @@ class FusaoViewModel : ViewModel() {
         }
     }
 
-    fun preloadRecord() {
+    fun preloadNow(targetPkg: String = _state.value.selectedPreloadPkg) {
         if (!guardRoot()) return
         viewModelScope.launch {
+            _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_now") }
+            val out = FusaoBridge.preloadNow(targetPkg)
+            val info = FusaoBridge.preloadStatus()
+            val st = FusaoBridge.status()
+            _state.update {
+                it.copy(
+                    preloadInfo = info + listOf("---") + out,
+                    status = st,
+                    busy = Busy.NONE,
+                    activeTarget = "",
+                    notice = out.lastOrNull().orEmpty(),
+                )
+            }
+        }
+    }
+
+    fun preloadRecord(targetPkg: String = _state.value.selectedPreloadPkg) {
+        if (!guardRoot()) return
+        val inGameNow = _state.value.status.inGame
+        viewModelScope.launch {
             recordCountdownJob?.cancel()
+            val secs = if (inGameNow) 20 else 5
             _state.update {
                 it.copy(
                     busy = Busy.RECORD,
                     activeTarget = "preload_record",
-                    recordRemainingSec = 20,
-                    notice = "Observando o jogo aberto (~20s)...",
+                    recordRemainingSec = secs,
+                    notice = if (inGameNow) {
+                        "Observando o jogo ativo (~20s)..."
+                    } else {
+                        "Mapeando diretórios dos pacotes elegíveis da gamelist..."
+                    },
                 )
             }
-            recordCountdownJob = launch {
-                for (rem in 20 downTo 1) {
-                    _state.update { it.copy(recordRemainingSec = rem) }
-                    delay(1000L)
+            if (inGameNow) {
+                recordCountdownJob = launch {
+                    for (rem in secs downTo 1) {
+                        _state.update { it.copy(recordRemainingSec = rem) }
+                        delay(1000L)
+                    }
+                    _state.update { it.copy(recordRemainingSec = 0) }
                 }
-                _state.update { it.copy(recordRemainingSec = 0) }
             }
-            val out = FusaoBridge.preloadRecord(20)
+            val out = FusaoBridge.preloadRecord(targetPkg, secs)
             recordCountdownJob?.cancel()
             val info = FusaoBridge.preloadStatus()
+            val st = FusaoBridge.status()
             _state.update {
                 it.copy(
                     preloadInfo = info + listOf("---") + out,
+                    status = st,
                     busy = Busy.NONE,
                     activeTarget = "",
                     recordRemainingSec = 0,

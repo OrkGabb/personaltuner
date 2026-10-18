@@ -15,7 +15,6 @@
 #
 
 # FUSAO-M54: para cérebro + guard ANTES de reverter sysfs.
-# Guard: stop oficial (restaura zones enabled) ou kill + enabled manual.
 if [ -x /data/adb/fusao/framework.sh ]; then
 	M54_DIR=/data/adb/fusao sh /data/adb/fusao/framework.sh idle 2>/dev/null
 fi
@@ -47,13 +46,8 @@ for z in /sys/class/thermal/thermal_zone*/mode; do
 	[ -f "$z" ] && echo enabled >"$z" 2>/dev/null
 done
 
-# FUSAO-M54: reversão total de sysfs ANTES de apagar o config.
-# Regra: tudo que o módulo escreve, o uninstall desfaz. O rm -rf do config
-# vem POR ÚLTIMO — o restore abaixo lê snapshot/governor dele.
 MODULE_CONFIG="/data/adb/fusao"
 
-# 1. Governor: volta ao default capturado no boot; fallback energy_aware
-#    (stock do aparelho) -> schedutil.
 if [ -f "$MODULE_CONFIG/default_cpu_gov" ]; then
 	read -r revert_gov <"$MODULE_CONFIG/default_cpu_gov"
 else
@@ -66,13 +60,12 @@ for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
 	echo "$revert_gov" >"$g" 2>/dev/null
 done
 
-# 2. Thermal zones: reabilita (modo stock = enabled).
 for z in /sys/class/thermal/thermal_zone*/mode; do
 	[ -f "$z" ] && echo enabled >"$z" 2>/dev/null
 done
 
-# 3. Stock snapshot (se existir): restaura min/max travados por perfil.
-#    Policy0 exige descida por degraus de tabela no Exynos 1380.
+# 3. Stock snapshot: restaura min/max travados por perfil.
+#    Policy0 exige descida por degraus da tabela real do Exynos 1380.
 if [ -f "$MODULE_CONFIG/stock.snapshot" ]; then
 	while read -r p v; do
 		case "$p" in
@@ -81,7 +74,7 @@ if [ -f "$MODULE_CONFIG/stock.snapshot" ]; then
 			if [ -f "$p" ]; then
 				chmod 644 "$p" 2>/dev/null
 				if [ "$p" = "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq" ]; then
-					for _step in 1152000 960000 768000 672000 "$v"; do
+					for _step in 1728000 1512000 1320000 1104000 999000 889000 768000 672000 "$v"; do
 						echo "$_step" >"$p" 2>/dev/null
 					done
 				else
@@ -93,16 +86,15 @@ if [ -f "$MODULE_CONFIG/stock.snapshot" ]; then
 	done <"$MODULE_CONFIG/stock.snapshot"
 fi
 
-# IO scheduler e fila de volta ao stock (ssg neste aparelho).
-for b in sda sdb sdc sdd sde sdf; do
+# IO scheduler e fila de volta ao stock (ssg + add_random=0 no M54).
+for b in sda sdb sdc sdd sde sdf mmcblk0; do
 	[ -f /sys/block/$b/queue/scheduler ] && echo "ssg" >/sys/block/$b/queue/scheduler 2>/dev/null
 	[ -f /sys/block/$b/queue/nomerges ] && echo "0" >/sys/block/$b/queue/nomerges 2>/dev/null
-	[ -f /sys/block/$b/queue/add_random ] && echo "1" >/sys/block/$b/queue/add_random 2>/dev/null
+	[ -f /sys/block/$b/queue/add_random ] && echo "0" >/sys/block/$b/queue/add_random 2>/dev/null
+	[ -f /sys/block/$b/queue/read_ahead_kb ] && echo "128" >/sys/block/$b/queue/read_ahead_kb 2>/dev/null
 done
 
-# Config por último: o restore acima leu daqui.
 rm -rf /data/adb/fusao
-
 rm -f /data/adb/service.d/.fusao_cleanup.sh
 
 need_gone="fusaod fusao"

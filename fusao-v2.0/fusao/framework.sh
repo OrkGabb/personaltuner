@@ -1,8 +1,9 @@
 #!/system/bin/sh
-# fusao-framework.sh — triads activity/job/standby × GameActive/Balanced/Battery
-# + display Samsung-safe.
-# Display: settings peak/min/user_refresh_rate (provado OneUI) + device_config
-# game_overlay. SEM service call SF 1035 (código AOSP, falha mudo na OneUI).
+# fusao-framework.sh — triads activity/job/standby × Game/Balanced/Battery
+# + display Samsung-safe (One UI 8.5 / Android 16).
+# Display: settings peak/min/user_refresh_rate.
+# Sem game_default_frame_rate=1.0 (float inválido no GameManagerService do Android 16
+# que causava dessincronização de estado durante o loading do NTE).
 # Reversível: idle restaura ROM default (valores capturados no 1º apply).
 # Lojas fake p/ teste offline: FAKE_SETTINGS_DIR (arquivos namespace__key).
 DIR=$(dirname "$0")
@@ -15,7 +16,6 @@ MODE="${1:-auto}"
 
 # --- backend settings/device_config (real ou fake) ---
 sget() {
-  # sget <namespace> <key>
   if [ -n "$FAKE_SETTINGS_DIR" ]; then
     cat "$FAKE_SETTINGS_DIR/${1}__${2}" 2>/dev/null
   else
@@ -23,7 +23,6 @@ sget() {
   fi
 }
 sput() {
-  # sput <namespace> <key> <value>
   if [ -n "$FAKE_SETTINGS_DIR" ]; then
     mkdir -p "$FAKE_SETTINGS_DIR" 2>/dev/null
     printf "%s" "$3" > "$FAKE_SETTINGS_DIR/${1}__${2}" 2>/dev/null
@@ -39,7 +38,6 @@ sdel() {
   fi
 }
 dput() {
-  # dput <namespace> <key> <value>  (device_config)
   if [ -n "$FAKE_SETTINGS_DIR" ]; then
     mkdir -p "$FAKE_SETTINGS_DIR" 2>/dev/null
     printf "%s" "$3" > "$FAKE_SETTINGS_DIR/dc__${1}__${2}" 2>/dev/null
@@ -55,7 +53,6 @@ ddel() {
   fi
 }
 dget() {
-  # dget <namespace> <key>
   if [ -n "$FAKE_SETTINGS_DIR" ]; then
     cat "$FAKE_SETTINGS_DIR/dc__${1}__${2}" 2>/dev/null
   else
@@ -99,12 +96,13 @@ apply_triad() {
   # apply_triad <game|balanced|battery>
   case "$1" in
     game)
-      sput global activity_manager_constants "service_restart_duration=86400000,service_reset_run_duration=120000,background_settle_time=10000,power_check_max_cpu_1=5,power_check_max_cpu_2=15,content_provider_retain_time=5000"
+      sput global activity_manager_constants "service_restart_duration=86400000,service_reset_run_duration=120000,background_settle_time=10000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
       sput global job_scheduler_constants "max_job_count_active=1,min_ready_jobs_count=32,bg_normal_job_count=0,bg_moderate_job_count=0,bg_low_job_count=0,enable_adaptive_scheduling=false,min_ready_cpu_only_jobs_count=32,min_ready_non_active_jobs_count=32,heavy_use_factor=0.95,moderate_use_factor=0.8"
       sput global app_standby_constants "strong_usage_duration=10000,system_interaction_duration=5000,initial_foreground_service_start_duration=60000,prediction_timeout=60000,sync_adapter_duration=10000"
       sput system peak_refresh_rate "120.0"
       sput system min_refresh_rate "120.0"
-      dput game_overlay "game_default_frame_rate" "1.0"
+      # Inteiro válido '0' (sem override forçado de FPS no GameManagerService)
+      dput game_overlay "game_default_frame_rate" "0"
       ;;
     battery)
       sput global activity_manager_constants "service_restart_duration=1800000,service_reset_run_duration=60000,background_settle_time=15000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
@@ -123,7 +121,7 @@ apply_triad() {
       dput game_overlay "game_default_frame_rate" "0"
       ;;
   esac
-  if [ -x "$DIR/tune.sh" ]; then
+  if [ -f "$DIR/tune.sh" ]; then
     M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$DIR/tune.sh" "$1" 2>/dev/null
   fi
   log "framework: apply $1"
@@ -132,15 +130,12 @@ apply_triad() {
 resolve_mode() {
   _m="$MODE"
   if [ "$_m" = "auto" ]; then
-    if [ -s "$GAME_ACTIVE" ]; then
-      _prof="game"
-      [ -f "$PROFILE_F" ] && _prof=$(cat "$PROFILE_F" 2>/dev/null | tr -d '[:space:]')
-      case "$_prof" in battery|balanced|game) echo "$_prof";; *) echo "game";; esac
-    else
-      _prof="balanced"
-      [ -f "$PROFILE_F" ] && _prof=$(cat "$PROFILE_F" 2>/dev/null | tr -d '[:space:]')
-      case "$_prof" in battery|balanced|game) echo "$_prof";; *) echo "balanced";; esac
-    fi
+    _prof="balanced"
+    [ -f "$PROFILE_F" ] && _prof=$(cat "$PROFILE_F" 2>/dev/null | tr -d '[:space:]')
+    case "$_prof" in
+      battery|balanced|game) echo "$_prof";;
+      *) [ -s "$GAME_ACTIVE" ] && echo "game" || echo "balanced";;
+    esac
   else
     echo "$_m"
   fi
@@ -149,7 +144,7 @@ resolve_mode() {
 case "$MODE" in
   idle|restore)
     restore_stock
-    if [ -x "$DIR/tune.sh" ]; then
+    if [ -f "$DIR/tune.sh" ]; then
       M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$DIR/tune.sh" idle 2>/dev/null
     fi
     exit 0;;

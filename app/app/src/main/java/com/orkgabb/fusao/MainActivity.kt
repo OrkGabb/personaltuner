@@ -737,14 +737,31 @@ class MainActivity : ComponentActivity() {
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = when (st.profile) {
-                                            "game" -> "Teto GPU 949 MHz · P0/P4 degraus · Triads de jogo"
-                                            "battery" -> "Contenção energética · Piso conservador · Eco VM"
-                                            "balanced" -> "Equilíbrio dinâmico Exynos 1380 · Stock assistido"
+                                            "game" -> "GPU 351–949 MHz · P0 999k / P4 889k · MIF 845k · 120Hz"
+                                            "battery" -> "P0 400–1728k · P4 533–1440k · GPU máx 650 MHz · 60Hz"
+                                            "balanced" -> "P0/P4 533k · GPU máx 858 MHz · VM/IO equilibrados · 60–120Hz"
                                             else -> "Aguardando leitura do perfil em /data/adb/fusao/profile"
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = FusaoPalette.TextSecondary,
                                     )
+                                    if (st.sysfsSummary.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "READBACK // ${st.sysfsSummary}",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 10.sp,
+                                            ),
+                                            color = when (st.profileState) {
+                                                "failed" -> FusaoPalette.CrimsonCore
+                                                "partial" -> FusaoPalette.IgnisAmber
+                                                else -> FusaoPalette.BioEmerald
+                                            },
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
                                 }
                                 Spacer(modifier = Modifier.width(10.dp))
                                 ReactorCoreEmblem(
@@ -754,15 +771,38 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // Seletor de Perfil (game, balanced, battery)
+                            // Seletor de Perfil (game, balanced, battery) com confirmação real de readback
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(
-                                    text = "SELECIONAR PERFIL DE OPERAÇÃO",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = FusaoPalette.TextSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "SELECIONAR PERFIL DE OPERAÇÃO",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = FusaoPalette.TextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (st.profileState.isNotEmpty()) {
+                                        TelemetryPill(
+                                            text = when (st.profileState) {
+                                                "applied" -> "CONFIRMADO ${st.profileVerify}".trim()
+                                                "partial" -> "PARCIAL ${st.profileVerify}".trim()
+                                                "failed" -> "FALHA DE READBACK"
+                                                else -> st.profileState.uppercase()
+                                            },
+                                            color = when (st.profileState) {
+                                                "applied" -> FusaoPalette.BioEmerald
+                                                "partial" -> FusaoPalette.IgnisAmber
+                                                "failed" -> FusaoPalette.CrimsonCore
+                                                else -> FusaoPalette.CryoCyan
+                                            },
+                                            filled = st.profileState == "applied",
+                                        )
+                                    }
+                                }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -774,15 +814,22 @@ class MainActivity : ComponentActivity() {
                                     )
                                     profiles.forEach { (pKey, pLabel, pColor) ->
                                         val selected = st.profile == pKey
+                                        val confirmed = selected && st.profileState != "failed"
                                         val isTargetBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "profile:$pKey"
+                                        val subLabel = when {
+                                            !selected -> pLabel
+                                            st.profileState == "failed" -> "FALHOU"
+                                            st.profileState == "partial" -> "PARCIAL"
+                                            else -> "APLICADO"
+                                        }
                                         TacticalButton(
                                             text = pKey,
-                                            subtitle = if (selected) "ATIVO" else pLabel,
-                                            onClick = { if (!selected) vm.setProfile(pKey) },
-                                            enabled = state.rooted && !busy && !selected,
-                                            filled = selected,
+                                            subtitle = subLabel,
+                                            onClick = { vm.setProfile(pKey) },
+                                            enabled = state.rooted && !busy && (!selected || st.profileState != "applied"),
+                                            filled = confirmed,
                                             isLoading = isTargetBusy,
-                                            accentColor = pColor,
+                                            accentColor = if (selected && st.profileState == "failed") FusaoPalette.CrimsonCore else pColor,
                                             modifier = Modifier.weight(1f),
                                         )
                                     }
@@ -1351,6 +1398,18 @@ class MainActivity : ComponentActivity() {
                             )
                     )
 
+                    val eligibleGames = remember(preloadTelemetry.eligiblePkgs, state.games, state.appLabelsMap) {
+                        val base = (preloadTelemetry.eligiblePkgs + state.games.filter { it in state.appLabelsMap }).distinct()
+                        base
+                    }
+                    val preloadBadgeColor = when (preloadTelemetry.preloadState) {
+                        "executed" -> FusaoPalette.BioEmerald
+                        "prepared" -> FusaoPalette.CryoCyan
+                        "armed" -> FusaoPalette.ElectricOrchid
+                        "failed" -> FusaoPalette.CrimsonCore
+                        else -> if (state.status.preload) FusaoPalette.ElectricOrchid else FusaoPalette.TextMuted
+                    }
+
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1359,16 +1418,52 @@ class MainActivity : ComponentActivity() {
                     ) {
                         HudSectionHeader(
                             title = "Preload (WILLNEED)",
-                            subtitle = "posix_fadvise inteligente com seleção record→replay por jogo (cap 2000 arqs / 512 MB/arq)",
+                            subtitle = "Política global baseada em gamelist.txt (aquecimento de pagecache com orçamento de RAM)",
                             accentColor = FusaoPalette.ElectricOrchid,
                             trailing = {
                                 TelemetryPill(
-                                    text = if (state.status.preload) "HOOK ON" else "HOOK OFF",
-                                    color = if (state.status.preload) FusaoPalette.ElectricOrchid else FusaoPalette.TextMuted,
-                                    filled = state.status.preload,
+                                    text = preloadTelemetry.statusBadgeLabel,
+                                    color = preloadBadgeColor,
+                                    filled = preloadTelemetry.preloadState in setOf("executed", "prepared", "armed") || state.status.preload,
                                 )
                             },
                         )
+
+                        // Chave de habilitação global da política automática de Preload direto na aba
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(FusaoPalette.VoidBlack.copy(alpha = 0.68f))
+                                .border(1.dp, FusaoPalette.BorderSubtle, RoundedCornerShape(8.dp))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                Text(
+                                    text = "POLÍTICA GLOBAL DE PRELOAD",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = FusaoPalette.TextPrimary,
+                                )
+                                Text(
+                                    text = if (preloadTelemetry.lastResult.isNotEmpty()) {
+                                        "Último resultado: ${preloadTelemetry.lastResult}"
+                                    } else {
+                                        "Aplica a todos os pacotes elegíveis instalados de gamelist.txt"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FusaoPalette.TextSecondary,
+                                )
+                            }
+                            CyberSwitch(
+                                checked = state.status.preload,
+                                onCheckedChange = { vm.toggleFlag("preload", it) },
+                                enabled = state.rooted && !busy,
+                                isProcessing = state.isBusy(Busy.FLAG) && state.activeTarget == "preload",
+                                accentColor = FusaoPalette.ElectricOrchid,
+                            )
+                        }
 
                         // Resumo estruturado extraído das linhas reais do CLI
                         Row(
@@ -1376,48 +1471,99 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             MetricMiniCard(
-                                label = "ESTADO CLI",
-                                value = preloadTelemetry.stateLabel.substringBefore(" ").ifEmpty { "—" },
-                                accent = FusaoPalette.ElectricOrchid,
+                                label = "ESTADO REAL",
+                                value = preloadTelemetry.preloadState.uppercase(),
+                                accent = preloadBadgeColor,
                                 modifier = Modifier.weight(1f),
                             )
                             MetricMiniCard(
-                                label = "PACKS GRAVADOS",
-                                value = preloadTelemetry.packCount,
+                                label = "ELEGÍVEIS / PACKS",
+                                value = "${maxOf(preloadTelemetry.eligibleCount, eligibleGames.size)} / ${preloadTelemetry.packCount}",
                                 accent = FusaoPalette.CryoCyan,
                                 modifier = Modifier.weight(1f),
                             )
                             MetricMiniCard(
-                                label = "ALVO ATIVO",
-                                value = if (state.status.inGame) state.labelFor(state.status.gameActive) else "IDLE",
-                                accent = if (state.status.inGame) FusaoPalette.IgnisAmber else FusaoPalette.TextMuted,
+                                label = "ALVO SELECIONADO",
+                                value = when {
+                                    state.selectedPreloadPkg.isNotEmpty() -> state.labelFor(state.selectedPreloadPkg)
+                                    state.status.inGame -> state.labelFor(state.status.gameActive)
+                                    else -> "TODOS (${maxOf(preloadTelemetry.eligibleCount, eligibleGames.size)})"
+                                },
+                                accent = if (state.status.inGame) FusaoPalette.IgnisAmber else FusaoPalette.ElectricOrchid,
                                 modifier = Modifier.weight(1f),
                             )
                         }
 
-                        // Aviso contextual quando não há jogo em execução para Preload agora / Record 20s
-                        if (!state.status.inGame) {
+                        // Seletor de pacote alvo a partir da gamelist (funciona sem jogo em primeiro plano)
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "ALVO DA POLÍTICA (GAMELIST.TXT — INDEPENDENTE DE FOCO)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FusaoPalette.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(FusaoPalette.VoidBlack.copy(alpha = 0.65f))
-                                    .border(1.dp, FusaoPalette.BorderSubtle, RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                StatusPulseDot(color = FusaoPalette.IgnisAmber, active = false)
-                                Text(
-                                    text = "Abra um jogo da lista para habilitar \"Preload agora\" e \"Record 20s (jogo aberto)\".",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = FusaoPalette.TextSecondary,
-                                    modifier = Modifier.weight(1f),
-                                )
+                                val allSelected = state.selectedPreloadPkg.isEmpty()
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(
+                                            if (allSelected) FusaoPalette.ElectricOrchid.copy(alpha = 0.22f)
+                                            else FusaoPalette.VoidBlack.copy(alpha = 0.55f)
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (allSelected) FusaoPalette.ElectricOrchid else FusaoPalette.BorderSubtle,
+                                            RoundedCornerShape(6.dp),
+                                        )
+                                        .clickable { vm.selectPreloadTarget("") }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = "Todos elegíveis",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (allSelected) FusaoPalette.ElectricOrchid else FusaoPalette.TextSecondary,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                }
+                                eligibleGames.forEach { pkg ->
+                                    val sel = state.selectedPreloadPkg == pkg
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(
+                                                if (sel) FusaoPalette.CryoCyan.copy(alpha = 0.22f)
+                                                else FusaoPalette.VoidBlack.copy(alpha = 0.55f)
+                                            )
+                                            .border(
+                                                1.dp,
+                                                if (sel) FusaoPalette.CryoCyan else FusaoPalette.BorderSubtle,
+                                                RoundedCornerShape(6.dp),
+                                            )
+                                            .clickable { vm.selectPreloadTarget(pkg) }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = state.labelFor(pkg),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (sel) FusaoPalette.CryoCyan else FusaoPalette.TextSecondary,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                        )
+                                    }
+                                }
                             }
                         }
 
-                        // Medidor ao vivo durante a gravação de 20 segundos
+                        // Medidor ao vivo durante gravação/mapeamento
                         AnimatedVisibility(
                             visible = state.isBusy(Busy.RECORD),
                             enter = fadeIn() + expandVertically(),
@@ -1442,12 +1588,12 @@ class MainActivity : ComponentActivity() {
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     Text(
-                                        text = "OBSERVANDO JOGO ABERTO (~20S)",
+                                        text = "MAPEANDO PACK DE PRELOAD",
                                         style = MaterialTheme.typography.titleSmall,
                                         color = FusaoPalette.IgnisAmber,
                                     )
                                     Text(
-                                        text = "fusaod preload-record está mapeando os assets abertos para gerar o pack em /data/adb/fusao/preload/.",
+                                        text = "Gerando manifesto .pack em /data/adb/fusao/preload/ para os pacotes elegíveis.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = FusaoPalette.TextPrimary,
                                     )
@@ -1465,7 +1611,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        // Botões de comando do Preload preservados integralmente
+                        // Botões de comando do Preload habilitados independentemente de qual app está em foco
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1479,31 +1625,44 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.weight(1f),
                             )
                             TacticalButton(
+                                text = "Preparar Packs",
+                                onClick = { vm.preloadPrepare() },
+                                enabled = state.rooted && !busy,
+                                isLoading = state.isBusy(Busy.PRELOAD) && state.activeTarget == "preload_prepare",
+                                accentColor = FusaoPalette.CryoTurquoise,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            TacticalButton(
                                 text = "Preload agora",
                                 onClick = { vm.preloadNow() },
-                                enabled = state.rooted && !busy && state.status.inGame,
+                                enabled = state.rooted && !busy,
                                 filled = true,
                                 isLoading = state.isBusy(Busy.PRELOAD) && state.activeTarget == "preload_now",
                                 accentColor = FusaoPalette.ElectricOrchid,
                                 modifier = Modifier.weight(1f),
                             )
+                            TacticalButton(
+                                text = if (state.isBusy(Busy.RECORD)) {
+                                    "Mapeando... (${state.recordRemainingSec}s)"
+                                } else {
+                                    "Record Pack"
+                                },
+                                onClick = { vm.preloadRecord() },
+                                enabled = state.rooted && !busy,
+                                filled = state.isBusy(Busy.RECORD),
+                                isLoading = state.isBusy(Busy.RECORD),
+                                accentColor = FusaoPalette.IgnisAmber,
+                                modifier = Modifier.weight(1f),
+                            )
                         }
 
-                        TacticalButton(
-                            text = if (state.isBusy(Busy.RECORD)) {
-                                "Observando... (${state.recordRemainingSec}s)"
-                            } else {
-                                "Record 20s (jogo aberto)"
-                            },
-                            onClick = { vm.preloadRecord() },
-                            enabled = state.rooted && !busy && state.status.inGame,
-                            filled = state.isBusy(Busy.RECORD),
-                            isLoading = state.isBusy(Busy.RECORD),
-                            accentColor = FusaoPalette.IgnisAmber,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-
-                        // Console de saída real do CLI `fusao preload status` / `now` / `record`
+                        // Console de saída real do CLI `fusao preload status` / `prepare` / `now` / `record`
                         TerminalOutputConsole(
                             title = "SAÍDA CLI // FUSAO PRELOAD",
                             lines = state.preloadInfo,
