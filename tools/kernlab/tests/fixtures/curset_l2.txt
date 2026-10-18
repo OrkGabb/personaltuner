@@ -1,0 +1,140 @@
+normal mode : level2 [mode=0 level=2]
+
+[sched-policy]
+root  fg  bg  ta  rt  sy syb n-h c-d  mg
+   0   0   0   0   0   0   0   0   0   0
+
+[active-weight]
+     root  fg  bg  ta  rt  sy syb n-h c-d  mg
+cpu0: 100 100 100 100 100 100 100 100 100 100
+cpu1: 100 100 100 100 100 100 100 100 100 100
+cpu2: 100 100 100 100 100 100 100 100 100 100
+cpu3: 100 100 100 100 100 100 100 100 100 100
+cpu4: 100 100 100 100 100 100 100 100 100 100
+cpu5: 100 100 100 100 100 100 100 100 100 100
+cpu6: 100 100 100 100 100 100 100 100 100 100
+cpu7: 100 100 100 100 100 100 100 100 100 100
+
+[idle-weight]
+     root  fg  bg  ta  rt  sy syb n-h c-d  mg
+cpu0: 100 100 100 100 100 100 100 100 100 100
+cpu1: 100 100 100 100 100 100 100 100 100 100
+cpu2: 100 100 100 100 100 100 100 100 100 100
+cpu3: 100 100 100 100 100 100 100 100 100 100
+cpu4: 100 100 100 100 100 100 100 100 100 100
+cpu5: 100 100 100 100 100 100 100 100 100 100
+cpu6: 100 100 100 100 100 100 100 100 100 100
+cpu7: 100 100 100 100 100 100 100 100 100 100
+
+[freq-boost]
+     root  fg  bg  ta  rt  sy syb n-h c-d  mg
+cpu0:   0   0   0   5   0   0   0   0   0   0
+cpu1:   0   0   0   5   0   0   0   0   0   0
+cpu2:   0   0   0   5   0   0   0   0   0   0
+cpu3:   0   0   0   5   0   0   0   0   0   0
+cpu4:   0   0   0   5   0   0   0   0   0   0
+cpu5:   0   0   0   5   0   0   0   0   0   0
+cpu6:   0   0   0   5   0   0   0   0   0   0
+cpu7:   0   0   0   5   0   0   0   0   0   0
+
+[cpufreq gov]
+                    |-pelt margin--||-rate limit--|
+       pb   hb  dbs  margin    freq   rate    freq
+cpu0:   0  150    0      25     INF      4     INF
+cpu1:   0  150    0      25     INF      4     INF
+cpu2:   0  150    0      25     INF      4     INF
+cpu3:   0  150    0      25     INF      4     INF
+cpu4:   0  150    0      25     INF      4     INF
+cpu5:   0  150    0      25     INF      4     INF
+cpu6:   0  150    0      25     INF      4     INF
+cpu7:   0  150    0      25     INF      4     INF
+
+[cpuidle gov]
+expired ratio
+cpu0:   50
+cpu4:   50
+
+[ontime]
+root  fg  bg  ta  rt  sy syb n-h c-d  mg
+   0   0   0   0   0   0   0   0   0   0
+
+-----------------------------
+ cpus           :  0-3
+ upper boundary :   52 ( 21%)
+ lower boundary :    0 (  0%)
+-----------------------------
+ cpus           :  4-7
+ upper boundary : 1024 ( 66%)
+ lower boundary :   81 (  8%)
+-----------------------------
+
+[cpus binding]
+ STOP   DL   RT FAIR IDLE
+    0    0    0    0    0
+
+root  fg  bg  ta  rt  sy syb n-h c-d  mg
+  ff  ff  ff  ff  ff  ff  ff  ff  ff  ff
+
+[tex]
+prio : 110
+
+root  fg  bg  ta  rt  sy syb n-h c-d  mg
+   0   0   0   1   0   0   0   0   0   0
+
+[frt]
+     active
+cpu0:   25%
+cpu1:   25%
+cpu2:   25%
+cpu3:   25%
+cpu4:    5%
+cpu5:    5%
+cpu6:    5%
+cpu7:    5%
+
+[ecs]
+-------------------------
+list empty!
+-------------------------
+     busy_ratio
+cpu0:    0%
+cpu1:    0%
+cpu2:    0%
+cpu3:    0%
+cpu4:    0%
+cpu5:    0%
+cpu6:    0%
+cpu7:    0%
+
+[new task util ratio]
+root  fg  bg  ta  rt  sy syb n-h c-d  mg
+   0   0   0   0   0   0   0   0   0 100
+
+[fclamp]
+root  fg  bg  ta  rt  sy syb n-h c-d  mg
+   0   0   0   1   0   0   0   0   0   0
+
+     |-------- min -------||-------- max -------|
+        freq  period ratio    freq  period ratio
+cpu0:       0      0     0        0      0     0
+cpu1:       0      0     0        0      0     0
+cpu2:       0      0     0        0      0     0
+cpu3:       0      0     0        0      0     0
+cpu4:       0      0     0        0      0     0
+cpu5:       0      0     0        0      0     0
+cpu6:       0      0     0        0      0     0
+cpu7:       0      0     0        0      0     0
+
+[support uclamp]
+enabled : 1
+
+[gsc]
+up_threshold : 0
+down_threshold : 1024
+
+root  fg  bg  ta  rt  sy syb n-h c-d  mg
+   0   1   0   1   0   0   0   0   0   0
+
+[should spread]
+enabled : 0
+

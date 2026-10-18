@@ -1,0 +1,17 @@
+{
+  "$comment": "As duas alavancas de CPU para o frame encadeado no MESMO run e no mesmo regime (portão de piso: cada trial só começa com scaling_min no mínimo físico, sem hint da Samsung ativo). uclamp.min do top-app funciona mas o Hyper/EPIC o regrava em launch/toque; freqboost do ta no emstune segura (posse). Pergunta: com custo de energia igual, qual entrega mais?",
+  "name": "alavancas-frame-burst",
+  "hypothesis": "freqboost ta (que segura) consegue o mesmo efeito do uclamp.min 25 (que a Samsung reverte) por energia comparável.",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2},
+  "arms": {
+    "base": {"cpuctl.top-app.uclamp.min": "@base", "ems.freqboost.m0l0.cg0.ta": "@base", "ems.freqboost.m0l0.cg4.ta": "@base"},
+    "uclamp25": {"cpuctl.top-app.uclamp.min": "25", "ems.freqboost.m0l0.cg0.ta": "@base", "ems.freqboost.m0l0.cg4.ta": "@base"},
+    "fb30": {"cpuctl.top-app.uclamp.min": "@base", "ems.freqboost.m0l0.cg0.ta": "30", "ems.freqboost.m0l0.cg4.ta": "30"},
+    "fb60": {"cpuctl.top-app.uclamp.min": "@base", "ems.freqboost.m0l0.cg0.ta": "60", "ems.freqboost.m0l0.cg4.ta": "60"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "lat_p95_us",
+  "min_effect_pct": 5,
+  "allow_medium": true
+}

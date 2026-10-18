@@ -1,0 +1,7 @@
+Starting: Intent { act=android.settings.APPLICATION_SETTINGS }
+Status: ok
+LaunchState: COLD
+Activity: com.android.settings/.Settings$ManageApplicationsActivity
+TotalTime: 808
+WaitTime: 816
+Complete

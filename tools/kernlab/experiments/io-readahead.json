@@ -1,0 +1,16 @@
+{
+  "$comment": "I/O do FKM: read_ahead_kb da LUN de dados. Leitura sequencial bufferizada de um arquivo de 256 MB após DONTNEED (cache frio só desse arquivo). Mede vazão; o custo do readahead alto (memória e leituras desperdiçadas em acesso aleatório) não aparece aqui — ver launch/appswitch.",
+  "name": "io-readahead",
+  "hypothesis": "read_ahead_kb maior aumenta a vazão sequencial com cache frio; satura em algum ponto.",
+  "workload": {"kind": "io", "mode": "seq", "bs": 131072, "file_mb": 256},
+  "arms": {
+    "ra128": {"io.sda.read_ahead_kb": "@base"},
+    "ra32": {"io.sda.read_ahead_kb": "32"},
+    "ra512": {"io.sda.read_ahead_kb": "512"},
+    "ra2048": {"io.sda.read_ahead_kb": "2048"}
+  },
+  "rounds": 6,
+  "settle_s": 2,
+  "primary": "seq_mbps",
+  "min_effect_pct": 5
+}

@@ -1,0 +1,23 @@
+{
+  "$comment": "Scroll real a 120 Hz (refresh fixo nos 3 braços). No toque o emstune passa ~metade do tempo no nível 1 (medido 2026-10-18: 19x m0l1 / 21x m0l0 durante um scroll), então o boost vai nos níveis 0 e 1. O nível 1 é provado pela cópia do cur_set que o kl_sample grava quando ele aparece. Alvo: os saltos de 1 frame (16 ms) que sobram a 120 Hz.",
+  "name": "ems-freqboost-ta-scroll120",
+  "hypothesis": "freqboost ta nos níveis 0 e 1 reduz os saltos de 1 frame (ts_hitch_pct) no scroll a 120 Hz; o custo aparece em pbat_mw.",
+  "workload": {"kind": "scroll", "package": "com.android.settings", "am": ["-a", "android.settings.APPLICATION_SETTINGS"],
+               "flings": 6, "swipe_ms": 120, "gap_ms": 900, "settle_s": 2, "relaunch": false},
+  "arms": {
+    "fb5": {"display.peak_refresh_rate": "120.0", "display.min_refresh_rate": "60.0",
+            "ems.freqboost.m0l0.cg0.ta": "@base", "ems.freqboost.m0l0.cg4.ta": "@base",
+            "ems.freqboost.m0l1.cg0.ta": "@base", "ems.freqboost.m0l1.cg4.ta": "@base"},
+    "fb30": {"display.peak_refresh_rate": "120.0", "display.min_refresh_rate": "60.0",
+             "ems.freqboost.m0l0.cg0.ta": "30", "ems.freqboost.m0l0.cg4.ta": "30",
+             "ems.freqboost.m0l1.cg0.ta": "30", "ems.freqboost.m0l1.cg4.ta": "30"},
+    "fb60": {"display.peak_refresh_rate": "120.0", "display.min_refresh_rate": "60.0",
+             "ems.freqboost.m0l0.cg0.ta": "60", "ems.freqboost.m0l0.cg4.ta": "60",
+             "ems.freqboost.m0l1.cg0.ta": "60", "ems.freqboost.m0l1.cg4.ta": "60"}
+  },
+  "rounds": 6,
+  "settle_s": 2,
+  "primary": "ts_hitch_pct",
+  "min_effect_pct": 10,
+  "allow_medium": true
+}

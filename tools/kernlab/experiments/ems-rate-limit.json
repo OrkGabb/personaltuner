@@ -1,0 +1,16 @@
+{
+  "$comment": "EMS (não exposto no FKM). Limite de subida de frequência do ego em ms (fábrica 4). Em carga periódica estável o ego converge e o limite pouco importa; ele aparece em rampa (launch, início de scroll).",
+  "name": "ems-rate-limit",
+  "hypothesis": "rate_limit menor (1 ms) acelera a rampa e reduz lat_p99; maior (8 ms) piora.",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2},
+  "arms": {
+    "r4": {"ems.rate_limit.m0l0.cg0": "@base", "ems.rate_limit.m0l0.cg4": "@base"},
+    "r1": {"ems.rate_limit.m0l0.cg0": "1", "ems.rate_limit.m0l0.cg4": "1"},
+    "r8": {"ems.rate_limit.m0l0.cg0": "8", "ems.rate_limit.m0l0.cg4": "8"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "lat_p99_us",
+  "min_effect_pct": 5,
+  "allow_medium": true
+}

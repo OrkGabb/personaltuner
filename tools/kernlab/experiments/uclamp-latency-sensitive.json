@@ -1,0 +1,14 @@
+{
+  "$comment": "Stune & Uclamp do FKM: cpu.uclamp.latency_sensitive. Pelo código do EMS (core.c can_sync_to_this_cpu) a única ação é proibir o sync-wakeup para a CPU de quem acorda; não há placement 'big idle' como no ACK. Hipótese nula esperada: efeito pequeno na latência de wakeup do estágio 2.",
+  "name": "uclamp-latency-sensitive",
+  "hypothesis": "latency_sensitive=1 no top-app altera wake2 (wakeup do estágio de render) e, por consequência, lat_p95.",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2},
+  "arms": {
+    "base": {"cpuctl.top-app.uclamp.latency_sensitive": "@base"},
+    "ls1": {"cpuctl.top-app.uclamp.latency_sensitive": "1"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "wake2_p99_us",
+  "min_effect_pct": 5
+}

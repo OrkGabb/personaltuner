@@ -1,0 +1,14 @@
+{
+  "$comment": "Controle POSITIVO: tirar os A78 do top-app (cpuset 0-3) força o estágio de render, que hoje roda 100% nos A78, para os A55 (~1,6x mais lentos por clock). A piora é certa por mecanismo; a ferramenta tem de detectá-la como PIORA com IC longe de zero. Se não detectar, ela é cega para o tamanho de efeito que importa.",
+  "name": "controle-positivo",
+  "hypothesis": "cpuset top-app 0-3 -> lat_p95 do frame piora (render sai dos A78).",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2},
+  "arms": {
+    "base": {"cpuset.top-app.cpus": "@base"},
+    "so-A55": {"cpuset.top-app.cpus": "0-3"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "lat_p95_us",
+  "min_effect_pct": 5
+}

@@ -1,0 +1,14 @@
+{
+  "$comment": "Controle NEGATIVO: os dois braços aplicam exatamente o mesmo estado. A ferramenta tem de responder 'sem efeito' (EQUIVALENTE ou INCONCLUSIVO com IC cobrindo zero). Se der MELHORA/PIORA aqui, o desenho está medindo ruído e nenhum outro resultado vale.",
+  "name": "controle-aa",
+  "hypothesis": "A/A: mesmo estado nos dois braços -> nenhum efeito detectável.",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2},
+  "arms": {
+    "A": {"cpuctl.top-app.uclamp.min": "@base"},
+    "A2": {"cpuctl.top-app.uclamp.min": "@base"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "lat_p95_us",
+  "min_effect_pct": 5
+}

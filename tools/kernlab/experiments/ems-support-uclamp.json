@@ -1,0 +1,15 @@
+{
+  "$comment": "EMS (não exposto no FKM). No nível 0 do modo normal support_uclamp=0: tarefas com uclamp.min alto NÃO entram na classe 'boosted' (core.c is_boosted_task). No nível 2 (boost de launch) a própria Samsung liga =1. Com top-app uclamp.min=25 nos dois braços, isola o efeito de ligar a classe boosted fora do boost.",
+  "name": "ems-support-uclamp",
+  "hypothesis": "support_uclamp=1 (m0l0) com uclamp.min=25 muda posicionamento/latência além do que o uclamp.min sozinho já faz.",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2},
+  "arms": {
+    "u25": {"cpuctl.top-app.uclamp.min": "25", "ems.support_uclamp.m0l0": "@base"},
+    "u25+su": {"cpuctl.top-app.uclamp.min": "25", "ems.support_uclamp.m0l0": "1"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "lat_p95_us",
+  "min_effect_pct": 5,
+  "allow_medium": true
+}

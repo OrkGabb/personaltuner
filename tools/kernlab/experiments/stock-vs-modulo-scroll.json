@@ -1,0 +1,21 @@
+{
+  "$comment": "Pergunta do dono: 'o scroll revela lags que em stock não acontecem'. Diferenças medidas entre o estado atual (perfil battery do FUSAO) e o snapshot de fábrica do próprio módulo: refresh 60/60 (fábrica 120/60), vm.swappiness 160 (130), vm.vfs_cache_pressure 150 (100). Fatorial 2x2 separa refresh de reclaim. Sem relaunch do app (o launch reescreve nós da Samsung e não é o que se mede aqui).",
+  "name": "stock-vs-modulo-scroll",
+  "hypothesis": "as travadinhas do scroll (ts_hitch_pct) vêm do refresh 60/60 e/ou do reclaim agressivo (swappiness 160 / vfs 150) do perfil battery.",
+  "workload": {"kind": "scroll", "package": "com.android.settings", "am": ["-a", "android.settings.APPLICATION_SETTINGS"],
+               "flings": 6, "swipe_ms": 120, "gap_ms": 900, "settle_s": 2, "relaunch": false},
+  "arms": {
+    "modulo": {"display.peak_refresh_rate": "@base", "display.min_refresh_rate": "@base",
+               "vm.swappiness": "@base", "vm.vfs_cache_pressure": "@base"},
+    "vm-stock": {"display.peak_refresh_rate": "@base", "display.min_refresh_rate": "@base",
+                 "vm.swappiness": "130", "vm.vfs_cache_pressure": "100"},
+    "hz-stock": {"display.peak_refresh_rate": "120.0", "display.min_refresh_rate": "60.0",
+                 "vm.swappiness": "@base", "vm.vfs_cache_pressure": "@base"},
+    "stock": {"display.peak_refresh_rate": "120.0", "display.min_refresh_rate": "60.0",
+              "vm.swappiness": "130", "vm.vfs_cache_pressure": "100"}
+  },
+  "rounds": 6,
+  "settle_s": 2,
+  "primary": "ts_hitch_pct",
+  "min_effect_pct": 10
+}

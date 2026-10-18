@@ -1,0 +1,15 @@
+{
+  "$comment": "I/O do FKM. Leitura aleatória 4K QD1 (O_DIRECT, só leitura, direto na LUN de dados) medida ENQUANTO um escritor faz 40 MB/s com fdatasync: o caso 'jogo carregando asset + download em segundo plano'. ssg é o escalonador da Samsung (fábrica).",
+  "name": "io-scheduler",
+  "hypothesis": "a cauda da latência de leitura sob pressão de escrita depende do escalonador (ssg vs mq-deadline vs kyber).",
+  "workload": {"kind": "io", "mode": "mixed", "duration_s": 10, "wmb": 64, "wrate_mbs": 40},
+  "arms": {
+    "ssg": {"io.sda.scheduler": "@base"},
+    "mq-deadline": {"io.sda.scheduler": "mq-deadline"},
+    "kyber": {"io.sda.scheduler": "kyber"}
+  },
+  "rounds": 6,
+  "settle_s": 2,
+  "primary": "rd_p99_us",
+  "min_effect_pct": 10
+}

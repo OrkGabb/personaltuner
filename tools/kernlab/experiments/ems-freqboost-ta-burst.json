@@ -1,0 +1,16 @@
+{
+  "$comment": "Alavanca que SEGURA (posse 2026-10-18): freqboost do grupo top-app (ta) dentro do emstune, ao contrário do top-app uclamp.min que o Hyper/EPIC regrava. ego.c: util do top-app x (1 + boost%) antes de virar frequência. Fábrica 5%. Só nível 0 (o burst não tem toque).",
+  "name": "ems-freqboost-ta-burst",
+  "hypothesis": "freqboost ta maior tira o frame encadeado da frequência mínima sem mexer em uclamp (que a Samsung reverte).",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2},
+  "arms": {
+    "fb5": {"ems.freqboost.m0l0.cg0.ta": "@base", "ems.freqboost.m0l0.cg4.ta": "@base"},
+    "fb30": {"ems.freqboost.m0l0.cg0.ta": "30", "ems.freqboost.m0l0.cg4.ta": "30"},
+    "fb60": {"ems.freqboost.m0l0.cg0.ta": "60", "ems.freqboost.m0l0.cg4.ta": "60"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "lat_p95_us",
+  "min_effect_pct": 5,
+  "allow_medium": true
+}

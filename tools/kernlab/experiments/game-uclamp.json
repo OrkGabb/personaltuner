@@ -1,0 +1,15 @@
+{
+  "$comment": "In-situ: o dono abre o jogo e deixa numa cena ESTÁVEL (personagem parado, câmera fixa, sem menu). O kernlab só alterna o nó e mede a SurfaceView pelo TimeStats (fps, intervalo entre frames, jank) + potência. Blocos espelhados cancelam a deriva térmica do jogo. Trocar 'package' para com.hottagames.nte etc.",
+  "name": "game-uclamp",
+  "hypothesis": "top-app uclamp.min estático muda a cauda do intervalo entre frames do jogo e o consumo.",
+  "workload": {"kind": "game", "package": "com.roblox.client", "duration_s": 40},
+  "arms": {
+    "base": {"cpuctl.top-app.uclamp.min": "@base"},
+    "u25": {"cpuctl.top-app.uclamp.min": "25"}
+  },
+  "rounds": 4,
+  "settle_s": 5,
+  "primary": "ts_p2p_p95_ms",
+  "min_effect_pct": 5,
+  "gate": {"soc_c": 70, "batt_c": 40, "timeout_s": 120, "floor": "start"}
+}

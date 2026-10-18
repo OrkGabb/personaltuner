@@ -1,0 +1,15 @@
+{
+  "$comment": "Memory do FKM. Abre 10 apps em sequência e revisita todos; revisita que volta COLD = o app foi expulso da RAM (LMK/reclaim). swappiness de fábrica 130 (zram 4 GB). Apps escolhidos sem efeito colateral (sem câmera, sem autoplay, sem chats). Os componentes são os resolvidos no aparelho com `cmd package resolve-activity --brief`.",
+  "name": "vm-swappiness",
+  "hypothesis": "swappiness muda quantos apps sobrevivem em segundo plano (revisit_cold_n) e o tempo de volta.",
+  "workload": {"kind": "appswitch", "components": []},
+  "arms": {
+    "s130": {"vm.swappiness": "@base"},
+    "s60": {"vm.swappiness": "60"},
+    "s190": {"vm.swappiness": "190"}
+  },
+  "rounds": 6,
+  "settle_s": 5,
+  "primary": "revisit_cold_n",
+  "min_effect_pct": 10
+}

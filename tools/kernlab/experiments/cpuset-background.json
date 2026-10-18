@@ -1,0 +1,16 @@
+{
+  "$comment": "CPU Sets do FKM. O frame do top-app compete com 4 processos de fundo (60% de ocupação cada) no cgroup background, que de fábrica fica em 0-2. Abrir o fundo para 0-7 deixa o ruído disputar os A78 com o render; apertar para 0-1 libera a cpu2.",
+  "name": "cpuset-background",
+  "hypothesis": "o cpuset do background protege o frame do top-app: 0-7 piora lat_p95, 0-1 melhora ou empata.",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2,
+               "noise": 4, "noise_cgroup": "background", "noise_duty": 60},
+  "arms": {
+    "bg0-2": {"cpuset.background.cpus": "@base"},
+    "bg0-7": {"cpuset.background.cpus": "0-7"},
+    "bg0-1": {"cpuset.background.cpus": "0-1"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "lat_p95_us",
+  "min_effect_pct": 5
+}

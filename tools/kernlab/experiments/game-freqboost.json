@@ -1,0 +1,18 @@
+{
+  "$comment": "In-situ no Roblox (jogo preso na thread principal / CPU) com a alavanca que SEGURA (posse 2026-10-18): freqboost do grupo top-app (ta) no emstune. Os dois braços fixam os tetos stock (P0 2002000, P4 2400000, GPU 949000): o hook do FUSAO reaplica o battery ao entrar no jogo (P4 1440000), e o boost bateria nesse teto. O dono abre um servidor movimentado, deixa o personagem parado e não toca na tela. Roblox expulsa quem fica parado ~20 min: o run tem de caber em ~15 min (24 trials x 25 s). Se o preflight recusar com 'conjunto ativo é modo X', troque m0 -> mX nos ids.",
+  "name": "game-freqboost",
+  "hypothesis": "freqboost ta no Roblox reduz a cauda do intervalo entre frames (ts_p2p_p95_ms) e os saltos ≥33 ms; o custo aparece em pbat_mw e temperatura.",
+  "workload": {"kind": "game", "package": "com.roblox.client", "duration_s": 25},
+  "arms": {
+    "fb5": {"gpu.max_clock": "949000", "cpufreq.policy0.max": "2002000", "cpufreq.policy4.max": "2400000",
+            "ems.freqboost.m0l0.cg0.ta": "@base", "ems.freqboost.m0l0.cg4.ta": "@base"},
+    "fb30": {"gpu.max_clock": "949000", "cpufreq.policy0.max": "2002000", "cpufreq.policy4.max": "2400000",
+             "ems.freqboost.m0l0.cg0.ta": "30", "ems.freqboost.m0l0.cg4.ta": "30"}
+  },
+  "rounds": 6,
+  "settle_s": 5,
+  "primary": "ts_p2p_p95_ms",
+  "min_effect_pct": 5,
+  "allow_medium": true,
+  "gate": {"soc_c": 70, "batt_c": 40, "timeout_s": 120, "floor": "start"}
+}

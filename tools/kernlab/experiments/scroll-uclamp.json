@@ -1,0 +1,15 @@
+{
+  "$comment": "Cenário real do uclamp: scroll na lista de apps do Configurações, com gesto nativo (uinput) idêntico em todo trial e o app reaberto do zero (mesma posição inicial). No toque a Samsung já sobe o emstune para o nível de boost; este experimento responde se o uclamp.min ESTÁTICO ainda ajuda por cima disso ou só gasta bateria.",
+  "name": "scroll-uclamp",
+  "hypothesis": "top-app uclamp.min estático reduz jank/cauda do frame no scroll real; o custo aparece em pbat_mw.",
+  "workload": {"kind": "scroll", "package": "com.android.settings", "am": ["-a", "android.settings.APPLICATION_SETTINGS"],
+               "flings": 6, "swipe_ms": 120, "gap_ms": 900, "settle_s": 2},
+  "arms": {
+    "base": {"cpuctl.top-app.uclamp.min": "@base"},
+    "u25": {"cpuctl.top-app.uclamp.min": "25"}
+  },
+  "rounds": 6,
+  "settle_s": 2,
+  "primary": "ft_p90_ms",
+  "min_effect_pct": 5
+}

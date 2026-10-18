@@ -1,0 +1,16 @@
+{
+  "$comment": "Stune & Uclamp do FKM. Achado de 2026-10-18: o ego (governor energy_aware) escolhe f ~ 1,25 x ciclos/s POR THREAD; num frame em 2 estágios cada thread 'cabe' sozinha e a cadeia não, então a CPU fica no mínimo e os frames caem. uclamp.min do top-app levanta o piso de utilização (frequência + fit do ontime para os A78). Mede a curva dose-resposta E o custo em energia por frame.",
+  "name": "uclamp-topapp-min",
+  "hypothesis": "top-app uclamp.min > 0 reduz lat_p95 do frame encadeado; existe um ponto a partir do qual só custa energia.",
+  "workload": {"kind": "burst", "period_us": 8333, "work1": 600000, "work2": 900000, "duration_s": 12, "warmup_s": 2},
+  "arms": {
+    "base": {"cpuctl.top-app.uclamp.min": "@base"},
+    "u10": {"cpuctl.top-app.uclamp.min": "10"},
+    "u25": {"cpuctl.top-app.uclamp.min": "25"},
+    "u40": {"cpuctl.top-app.uclamp.min": "40"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "lat_p95_us",
+  "min_effect_pct": 5
+}
