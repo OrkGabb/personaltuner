@@ -10,6 +10,8 @@
 # 2.9.8: piso/teto de CPU segurado pelo QoS da Samsung (boost de boot, hint de launch, térmico) logo
 # após um apply vira "pending" (não "partial"), a descida para no primeiro degrau que não pega, e
 # reverificações só de leitura dão o veredito final fora da janela (EXT_WINDOW_S).
+# 2.9.9: auto/verify usam o perfil EM VIGOR (lib.sh effective_profile: battery + jogo da gamelist = game,
+# balanced fica balanced); piso da GPU também é trava externa.
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -18,7 +20,6 @@ STOCK="$M54_DIR/tune.stock"
 STATE_F="$M54_DIR/profile.state"
 MODE="${1:-auto}"
 GAME_ACTIVE="$M54_DIR/game-active.txt"
-PROFILE_F="$M54_DIR/profile"
 
 # Nós de CPU / GPU / Devfreq do Exynos 1380 (validados em nodes-m54.md)
 P0_MIN="$R/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"
@@ -434,8 +435,10 @@ verify_profile() {
     *) [ $(( $(now_s) - applied_at )) -lt "$EXT_WINDOW_S" ] && in_win=1;;
   esac
 
-  # dir: floor = só nó de piso de CPU (lido ACIMA do alvo é QoS externo); ceil = só teto de CPU (lido
-  # ABAIXO é QoS externo). GPU/MIF/VM não entram: a GPU é sobrescrita pela Samsung (não é QoS).
+  # dir: floor = piso de CPU ou da GPU (lido ACIMA do alvo é trava externa); ceil = só teto de CPU (lido
+  # ABAIXO é QoS externo). Piso da GPU medido 2026-10-18: boot 16:50 lido 455000 com alvo 221000, 221000
+  # depois sem reescrita (trava, como o da CPU). Teto da GPU NÃO entra: é sobrescrito (650000 virou 949000
+  # e ficou). MIF/VM sem medida, não entram.
   check_eq() {
     local path="$1" expected="$2" label="$3" dir="${4:-}" cur
     [ -f "$path" ] || return 0
@@ -472,7 +475,7 @@ verify_profile() {
   if [ "$target" = "battery" ]; then
     check_eq "$P0_MIN" "$T_P0_MIN" "p0_min" floor
     check_eq "$P4_MIN" "$T_P4_MIN" "p4_min" floor
-    check_eq "$GPU_MIN" "$T_GMIN" "gpu_min"
+    check_eq "$GPU_MIN" "$T_GMIN" "gpu_min" floor
     check_eq "$MIF_MIN" "$T_MIF_MIN" "mif_min"
   else
     check_ge "$P0_MIN" "$T_P0_MIN" "p0_min"
@@ -492,8 +495,8 @@ verify_profile() {
 
   local state="applied"
   if [ "$tot_cnt" -eq 0 ]; then
-    # Ambiente sem sysfs/procfs mapeado: valida se o arquivo de perfil foi gravado
-    if [ "$(cat "$PROFILE_F" 2>/dev/null | tr -d '[:space:]')" = "$target" ]; then
+    # Ambiente sem sysfs/procfs mapeado: valida se o perfil em vigor é o conferido
+    if [ "$(effective_profile)" = "$target" ]; then
       state="applied"
     else
       state="failed"
@@ -654,13 +657,9 @@ apply_battery() {
 }
 
 resolve_mode() {
-  local _m="$MODE" _prof="balanced"
-  if [ "$_m" = "auto" ]; then
-    [ -f "$PROFILE_F" ] && _prof=$(cat "$PROFILE_F" 2>/dev/null | tr -d '[:space:]')
-    case "$_prof" in
-      battery|balanced|game) echo "$_prof";;
-      *) [ -s "$GAME_ACTIVE" ] && echo "game" || echo "balanced";;
-    esac
+  local _m="$MODE"
+  if [ "$_m" = "auto" ] || [ "$_m" = "verify" ] || [ "$_m" = "effective" ]; then
+    effective_profile
   else
     echo "$_m"
   fi
@@ -696,6 +695,10 @@ case "$MODE" in
     ;;
   reverify)
     reverify_loop "$2" "$3"
+    exit 0
+    ;;
+  effective)
+    effective_profile
     exit 0
     ;;
   auto)

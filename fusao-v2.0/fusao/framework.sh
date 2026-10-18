@@ -9,8 +9,6 @@
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
-GAME_ACTIVE="$M54_DIR/game-active.txt"
-PROFILE_F="$M54_DIR/profile"
 STOCK_F="$M54_DIR/framework.stock"
 MODE="${1:-auto}"
 
@@ -130,12 +128,7 @@ apply_triad() {
 resolve_mode() {
   _m="$MODE"
   if [ "$_m" = "auto" ]; then
-    _prof="balanced"
-    [ -f "$PROFILE_F" ] && _prof=$(cat "$PROFILE_F" 2>/dev/null | tr -d '[:space:]')
-    case "$_prof" in
-      battery|balanced|game) echo "$_prof";;
-      *) [ -s "$GAME_ACTIVE" ] && echo "game" || echo "balanced";;
-    esac
+    effective_profile
   else
     echo "$_m"
   fi

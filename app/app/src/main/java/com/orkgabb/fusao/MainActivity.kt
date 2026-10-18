@@ -821,6 +821,9 @@ class MainActivity : ComponentActivity() {
                                         val isTargetBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "profile:$pKey"
                                         val subLabel = when {
                                             !selected -> pLabel
+                                            // battery escolhido com jogo da gamelist em foco: o módulo aplica game
+                                            st.profileEffective.isNotEmpty() && st.profileEffective != pKey ->
+                                                "EM JOGO: ${st.profileEffective.uppercase()}"
                                             st.profileState == "failed" -> "FALHOU"
                                             st.profileState == "partial" -> "PARCIAL"
                                             st.profileState == "pending" -> "AGUARDANDO"

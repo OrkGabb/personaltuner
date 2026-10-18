@@ -210,6 +210,47 @@ grep -q "profile_verify=10/10" "$FAKE/prof_bat.out" && ok "profile battery verif
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")" = "1728000" ] && ok "tune battery p0_max" || bad "tune battery p0_max"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1440000" ] && ok "tune battery p4_max" || bad "tune battery p4_max"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "650000" ] && ok "tune battery gpu_max" || bad "tune battery gpu_max"
+
+# 9c-2) 2.9.9, regra do dono: battery + jogo da gamelist em foco = game (fora do jogo volta a battery);
+# balanced fica balanced em jogo (jogos casuais). O hook do watch chama `tune.sh auto` depois de gravar o
+# game-active; o app chama `fusao status`/`fusao profile`. Prova pelo NÓ (tetos do game), não pela string.
+GA="$FAKE/fusao/game-active.txt"
+GMAXN="$FAKE/sys/kernel/gpu/gpu_max_clock"
+P4MAXN="$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+echo "com.roblox.client" > "$GA"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" auto >/dev/null 2>&1
+if [ "$(cat "$GMAXN")" = "949000" ] && [ "$(cat "$P4MAXN")" = "1824000" ] && \
+   [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "1152000" ]; then
+  ok "battery+jogo: hook aplica os tetos do game"
+else
+  bad "battery+jogo: hook aplica os tetos do game"
+fi
+grep -q "^profile=game$" "$FAKE/fusao/profile.state" && ok "battery+jogo: state confere game" || bad "battery+jogo: state confere game"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" status > "$FAKE/st_bat_game.out" 2>&1
+grep -q "^profile=battery$" "$FAKE/st_bat_game.out" && grep -q "^profile_effective=game$" "$FAKE/st_bat_game.out" && \
+  ok "status: escolhido battery, em vigor game" || bad "status: escolhido battery, em vigor game"
+grep -q "^profile_state=applied$" "$FAKE/st_bat_game.out" && ok "status em jogo confere o em vigor (applied, nao partial)" || bad "status em jogo confere o em vigor (applied, nao partial)"
+# escolher battery COM o jogo aberto aplica game (o CLI aplicava "$arg" direto = battery)
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced >/dev/null 2>&1
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile battery > "$FAKE/prof_bat_game.out" 2>&1
+grep -q "^profile_effective=game$" "$FAKE/prof_bat_game.out" && [ "$(cat "$GMAXN")" = "949000" ] && \
+  ok "CLI battery em jogo aplica game" || bad "CLI battery em jogo aplica game"
+# balanced + jogo = balanced (GPU max 845000)
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced > "$FAKE/prof_bal_game.out" 2>&1
+grep -q "^profile_effective=balanced$" "$FAKE/prof_bal_game.out" && [ "$(cat "$GMAXN")" = "845000" ] && \
+  ok "balanced em jogo fica balanced" || bad "balanced em jogo fica balanced"
+# app fora da gamelist no game-active não conta como jogo
+echo "com.android.settings" > "$GA"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile battery > "$FAKE/prof_bat_app.out" 2>&1
+grep -q "^profile_effective=battery$" "$FAKE/prof_bat_app.out" && [ "$(cat "$GMAXN")" = "650000" ] && \
+  ok "app fora da gamelist: battery" || bad "app fora da gamelist: battery"
+# saída do jogo (game-active zerado antes do fire_exit): o hook volta a battery
+echo "com.roblox.client" > "$GA"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" auto >/dev/null 2>&1
+: > "$GA"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" auto >/dev/null 2>&1
+[ "$(cat "$GMAXN")" = "650000" ] && [ "$(cat "$P4MAXN")" = "1440000" ] && grep -q "^profile=battery$" "$FAKE/fusao/profile.state" && \
+  ok "saiu do jogo: volta a battery" || bad "saiu do jogo: volta a battery"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "150" ] && ok "tune battery" || bad "tune battery"
 [ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "128" ] && ok "tune battery readahead" || bad "tune battery readahead"
 
@@ -402,6 +443,15 @@ grep -q "tune: battery pending (piso/teto de CPU externo: p0_min:1152000!=533000
 echo 533000 > "$P0D/scaling_min_freq"
 TUNE_NOW=5040 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
 grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && grep -q "^profile_verify=10/10$" "$FAKE/fusao/profile.state" && ok "hint soltou: applied 10/10" || bad "hint soltou: applied 10/10"
+# piso da GPU segurado no boot (aparelho 16:50: 455000 com alvo 221000, depois 221000 sem reescrita) = pending;
+# teto da GPU sobrescrito p/ cima (650000 -> 949000, ficou) continua falha real = partial
+echo 455000 > "$FAKE/sys/kernel/gpu/gpu_min_clock"
+TUNE_NOW=5045 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+grep -q "^profile_external=gpu_min:455000!=221000$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "piso gpu segurado: pending" || bad "piso gpu segurado: pending"
+echo 221000 > "$FAKE/sys/kernel/gpu/gpu_min_clock"; echo 949000 > "$FAKE/sys/kernel/gpu/gpu_max_clock"
+TUNE_NOW=5045 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+grep -q "^profile_mismatch=gpu_max:949000!=650000$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "teto gpu sobrescrito: partial" || bad "teto gpu sobrescrito: partial"
+echo 650000 > "$FAKE/sys/kernel/gpu/gpu_max_clock"
 # teto de CPU clampado ABAIXO pelo térmico dentro da janela = pending; ACIMA do alvo nunca é externo
 echo 1344000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
 TUNE_NOW=5050 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1

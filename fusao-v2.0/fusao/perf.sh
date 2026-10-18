@@ -15,7 +15,6 @@ DIR=$(dirname "$0")
 
 R="${FS_ROOT:-}"
 GAMEFILE="$M54_DIR/game-active.txt"
-PROFILE_F="$M54_DIR/profile"
 IO_STOCK="$M54_DIR/perf.io.stock"
 MODE="${1:-enter}"
 PKG="${2:-}"
@@ -23,12 +22,6 @@ PKG="${2:-}"
 pick_pkg() {
   if [ -n "$PKG" ]; then echo "$PKG"; return; fi
   tr -d '[:space:]' < "$GAMEFILE" 2>/dev/null
-}
-
-read_profile() {
-  local _p="balanced"
-  [ -f "$PROFILE_F" ] && _p=$(cat "$PROFILE_F" 2>/dev/null | tr -d '[:space:]')
-  case "$_p" in battery|balanced|game) echo "$_p";; *) echo "balanced";; esac
 }
 
 snapshot_io() {
@@ -44,7 +37,7 @@ snapshot_io() {
 
 optimize_io() {
   local prof
-  prof=$(read_profile)
+  prof=$(effective_profile)
   snapshot_io
   local target_nomerges="1"
   [ "$prof" != "game" ] && target_nomerges="0"
@@ -136,7 +129,7 @@ apply_threads_once() {
 optimize_proc() {
   local _pkg="$1" _prof _rc
   [ -z "$_pkg" ] && return 1
-  _prof=$(read_profile)
+  _prof=$(effective_profile)
   apply_threads_once "$_pkg" "$_prof"
   _rc=$?
   # Se a GameThread/UnityMain ainda não nasceu no t=0s do launch (caso típico de UE5/NTE),

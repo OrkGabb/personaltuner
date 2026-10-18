@@ -97,3 +97,24 @@ boot_id() {
   local _b
   read -r _b < /proc/sys/kernel/random/boot_id 2>/dev/null && echo "$_b"
 }
+
+# selected_profile — o perfil escolhido no app/CLI (/data/adb/fusao/profile); inválido = balanced.
+selected_profile() {
+  local _p="balanced"
+  [ -f "$M54_DIR/profile" ] && _p=$(tr -d '[:space:]' < "$M54_DIR/profile" 2>/dev/null)
+  case "$_p" in battery|balanced|game) echo "$_p";; *) echo "balanced";; esac
+}
+
+# effective_profile — o perfil EM VIGOR, SSOT p/ tune/framework/perf/watch/CLI (regra do dono, 2026-10-18):
+#   battery + jogo da gamelist em foco -> game (fora do jogo volta a battery);
+#   balanced fica balanced mesmo em jogo (jogos casuais); game é game.
+# "Em foco" = game-active.txt, que o observer/watch grava ANTES do fire_enter e zera antes do fire_exit.
+effective_profile() {
+  local _p _g
+  _p=$(selected_profile)
+  if [ "$_p" = "battery" ]; then
+    _g=$(tr -d '[:space:]' < "$M54_DIR/game-active.txt" 2>/dev/null)
+    [ -n "$_g" ] && grep -Fxq "$_g" "$M54_DIR/gamelist.txt" 2>/dev/null && _p="game"
+  fi
+  echo "$_p"
+}

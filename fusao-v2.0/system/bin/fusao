@@ -62,6 +62,12 @@ restore_snapshot_nodes() {
   done < "$M54_DIR/stock.snapshot"
 }
 
+# Perfil EM VIGOR = effective_profile do lib.sh (SSOT: battery + jogo da gamelist = game; balanced fica
+# balanced). Subshell: o CLI não carrega a lib, só pergunta a regra a ela.
+effective_profile() {
+  ( . "$M54_DIR/lib.sh" 2>/dev/null && effective_profile ) || { tr -d '[:space:]' < "$M54_DIR/profile" 2>/dev/null || echo balanced; }
+}
+
 sync_fusaod_for_profile() {
   local _prof="$1" _ga _b _p
   [ -n "$FAKE_SETTINGS_DIR" ] && return 0
@@ -292,13 +298,16 @@ case "$cmd" in
         }
         echo "profile=$arg" >> "$M54_DIR/config" 2>/dev/null
 
-        # Coordena fusaod ANTES de aplicar tune.sh para evitar disputa de escrita
+        # Perfil em vigor: escolher battery com jogo da gamelist em foco aplica game (volta a battery no exit)
+        _eff=$(effective_profile)
+        # Coordena fusaod ANTES de aplicar tune.sh para evitar disputa de escrita. Gate pelo ESCOLHIDO: o
+        # fusaod lê o arquivo de perfil sozinho e com battery aplicaria os tetos de battery dele em jogo.
         sync_fusaod_for_profile "$arg"
 
         if [ -f "$M54_DIR/framework.enabled" ] && [ -f "$M54_DIR/framework.sh" ]; then
-          M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/framework.sh" "$arg" >/dev/null 2>&1
+          M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/framework.sh" auto >/dev/null 2>&1
         elif [ -f "$M54_DIR/tune.sh" ]; then
-          M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/tune.sh" "$arg" >/dev/null 2>&1
+          M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/tune.sh" auto >/dev/null 2>&1
         fi
 
         if [ -s "$M54_DIR/game-active.txt" ] && [ -f "$M54_DIR/perf.enabled" ] && [ -f "$M54_DIR/perf.sh" ]; then
@@ -306,6 +315,7 @@ case "$cmd" in
         fi
 
         echo "profile=$arg"
+        echo "profile_effective=$_eff"
         if [ -f "$M54_DIR/profile.state" ]; then
           grep -E "^(profile_state|profile_verify|sysfs_summary|profile_mismatch|profile_external)=" "$M54_DIR/profile.state" 2>/dev/null
         fi
@@ -359,7 +369,7 @@ case "$cmd" in
     case "$arg" in
       on)
         touch "$M54_DIR/fusaod.enabled"
-        _prof=$(cat "$M54_DIR/profile" 2>/dev/null | tr -d '[:space:]')
+        _prof=$(tr -d '[:space:]' < "$M54_DIR/profile" 2>/dev/null)
         sync_fusaod_for_profile "${_prof:-balanced}"
         echo "fusaod=on"
         ;;
@@ -622,10 +632,12 @@ case "$cmd" in
   status)
     _cur_prof=$(cat "$M54_DIR/profile" 2>/dev/null | tr -d '[:space:]')
     [ -z "$_cur_prof" ] && _cur_prof="balanced"
+    # confere o perfil EM VIGOR (battery em jogo = game), não o escolhido: senão em jogo daria partial falso
     if [ -f "$M54_DIR/tune.sh" ]; then
-      M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/tune.sh" verify "$_cur_prof" >/dev/null 2>&1
+      M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/tune.sh" verify >/dev/null 2>&1
     fi
     echo "profile=$_cur_prof"
+    echo "profile_effective=$(effective_profile)"
     if [ -f "$M54_DIR/profile.state" ]; then
       grep -E "^(profile_state|profile_verify|sysfs_summary|profile_mismatch|profile_external)=" "$M54_DIR/profile.state" 2>/dev/null
     else

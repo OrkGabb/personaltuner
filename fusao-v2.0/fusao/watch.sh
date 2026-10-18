@@ -38,10 +38,12 @@ read_gamefile() {
   echo "$_g"
 }
 
-read_profile() {
-  local _p="balanced"
-  [ -f "$M54_DIR/profile" ] && _p=$(cat "$M54_DIR/profile" 2>/dev/null | tr -d '[:space:]')
-  case "$_p" in battery|balanced|game) echo "$_p";; *) echo "balanced";; esac
+# Perfil ESCOLHIDO (selected_profile do lib.sh, SSOT). Subshell: o watch não carrega a lib (umask/log
+# próprios), só pergunta a ela. O gate do fusaod usa o escolhido, NÃO o em vigor: o fusaod lê
+# /data/adb/fusao/profile por conta própria e com "battery" aplicaria os tetos dele de battery (GPU 552000,
+# P0/P4 1056000) dentro do jogo — o oposto da regra battery+jogo=game, que fica a cargo do tune.sh.
+selected_profile() {
+  ( . "$(dirname "$0")/lib.sh" 2>/dev/null && selected_profile ) || echo "balanced"
 }
 
 find_fusaod() {
@@ -65,7 +67,7 @@ find_fusao_cli() {
 sync_fusaod_session() {
   local _in_game="$1" _prof _b _p
   [ -n "$FAKE_SETTINGS_DIR" ] && return 0
-  _prof=$(read_profile)
+  _prof=$(selected_profile)
   if [ "$_in_game" = "1" ] && [ -f "$M54_DIR/fusaod.enabled" ] && [ ! -f "$M54_DIR/disable" ] && [ "$_prof" != "battery" ]; then
     if ! pgrep -f "[f]usaod serve" >/dev/null 2>&1; then
       _b=$(find_fusaod)
@@ -224,7 +226,7 @@ fire_enter() {
     LAST_HEAVY_PKG="$_pkg"
     LAST_HEAVY_TS="$_now_h"
   fi
-  # Aplica o perfil selecionado pelo usuário (auto = respeita /data/adb/fusao/profile)
+  # Aplica o perfil EM VIGOR (auto = effective_profile: battery + jogo da gamelist = game; balanced fica)
   if [ -f "$M54_DIR/framework.enabled" ] && [ -x "$(dirname "$0")/framework.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/framework.sh" auto 2>/dev/null && HOOKS="$HOOKS framework"
   elif [ -x "$(dirname "$0")/tune.sh" ]; then
@@ -246,7 +248,7 @@ fire_exit() {
   if [ -f "$M54_DIR/perf.enabled" ] && [ -x "$(dirname "$0")/perf.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/perf.sh" exit "$_exited_pkg" 2>/dev/null
   fi
-  # Mantém o perfil selecionado pelo usuário ativo ao sair do jogo (não apaga para stock idle)
+  # Ao sair do jogo volta ao perfil escolhido (auto com game-active vazio; não apaga p/ stock idle)
   if [ -f "$M54_DIR/framework.enabled" ] && [ -x "$(dirname "$0")/framework.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/framework.sh" auto 2>/dev/null
   elif [ -x "$(dirname "$0")/tune.sh" ]; then

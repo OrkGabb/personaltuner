@@ -200,6 +200,8 @@ object FusaoBridge {
 data class FusaoStatus(
     val moduleInstalled: Boolean = false,
     val profile: String = "",
+    /** Perfil em vigor: battery escolhido + jogo da gamelist em foco = game (regra do módulo 2.9.9). */
+    val profileEffective: String = "",
     val profileState: String = "",
     val profileVerify: String = "",
     val sysfsSummary: String = "",
@@ -246,6 +248,7 @@ data class FusaoStatus(
 
         fun parse(lines: List<String>, moduleInstalled: Boolean): FusaoStatus {
             var profile = ""
+            var profileEffective = ""
             var profileState = ""
             var profileVerify = ""
             var sysfsSummary = ""
@@ -277,6 +280,7 @@ data class FusaoStatus(
                     }
                     when (k) {
                         "profile" -> profile = v
+                        "profile_effective" -> profileEffective = v
                         "profile_state" -> profileState = v
                         "profile_verify" -> profileVerify = v
                         "sysfs_summary" -> sysfsSummary = v
@@ -294,6 +298,7 @@ data class FusaoStatus(
             return FusaoStatus(
                 moduleInstalled = moduleInstalled,
                 profile = profile,
+                profileEffective = profileEffective,
                 profileState = profileState,
                 profileVerify = profileVerify,
                 sysfsSummary = sysfsSummary,
