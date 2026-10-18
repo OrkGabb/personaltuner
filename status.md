@@ -905,7 +905,8 @@ Fonte de cada linha entre parênteses. Fato medido != inferência (marcada).
   reescrita). O 2.9.7 marcava isso como `partial` e logava 15-17 WARN por apply (kernlab, log do módulo).
 - **Fluidez de UI = refresh**: 60->120 Hz = 2x frames, ~6x menos travadas >=33 ms, +34% potência no scroll. O
   "agarrado" era o battery do framework travando 60/60 (kernlab `display-refresh`, `stock-vs-modulo-scroll`).
-- **Clock de CPU não compra frames em nenhuma carga real medida**: scroll 120 Hz (`freqboost ta` 30 sem
+- **Clock de CPU não compra frames no scroll leve nem nos dois jogos (GPU-bound) medidos** — NÃO testado
+  onde a CPU manda (launch, troca de app, loading): scroll 120 Hz (`freqboost ta` 30 sem
   efeito; 60 = -20% saltos de 1 frame por +25% potência); Roblox (`fb30`: P4 médio 1,40 -> 1,86 GHz, fps
   27,6 = 27,6, p95 42 = 42 ms, +5..10% potência). Só o sintético (`kl_burst`) melhora com clock (kernlab).
 - **Os dois jogos medidos são limitados pela GPU**: NTE 12-13 fps a 650 MHz / 17,7 a 949 (cravada); Roblox
@@ -982,12 +983,14 @@ estado do perfil (`applied` ou `pending` com reverify convergindo); log sem a en
 | Stune & Uclamp | `top-app uclamp.min` 10/25/40 (frame sintético) | -28/-46/-65% latência, mas o Hyper/EPIC da Samsung REESCREVE o nó em launch/toque: não dá p/ fixar. `latency_sensitive` não rodado |
 | CPU Sets | top-app só nos A55 (controle positivo) | PIORA +24%: o cpuset stock está certo. `cpuset-background` não rodado |
 | Scheduler (EMS `energy_aware`) | `freqboost ta` 30/60 | sintético -47/-69%; REAL: scroll 120 Hz sem efeito (30) / -20% saltos de 1 frame por +25% potência (60); NTE/Roblox 0 fps a mais, +5..10% potência. `pelt_margin`, `rate_limit`, `support_uclamp` não rodados |
-| Memory | swappiness 160 / vfs 150 (battery) | sem efeito mensurável no scroll. `vm-swappiness` (launch/troca de app) não rodado |
+| Memory | swappiness 160 / vfs 150 (battery) | **NÃO MEDIDO de verdade**: só num scroll de um app sem pressão de RAM (teste errado — swappiness decide quem fica na RAM na troca de apps). `vm-swappiness` (troca de apps) não rodado |
 | I/O | — | `io-scheduler`, `io-readahead` não rodados |
 | (fora do FKM) Display | refresh 60 -> 120 Hz | **a maior alavanca medida**: 2x frames, ~6x menos travadas, +34% potência |
-Conclusão até aqui: nenhum nó do FKM medido melhora carga real a custo aceitável; quem manda na fluidez é o
-refresh (UI) e a GPU + gráfico do jogo (jogos), e em jogo o térmico da Samsung é dono dos tetos após ~8 min.
-Falta a fila de 7 experimentos (~2-3 h, tela acesa, SEM cabo).
+Conclusão até aqui (CORRIGIDA 17:30, apontada pelo dono: "tuning certo no teste errado"): no scroll leve e nos
+dois jogos GPU-bound, nenhum nó do FKM medido ajuda; refresh (UI) e GPU + gráfico (jogo) mandam. Isso NÃO vale
+p/ os momentos em que CPU/memória/IO mandam e que não foram testados: abrir app (frio/quente), trocar de app,
+carregar jogo, toque->1º frame. A fila pendente nasceu com o mesmo defeito (EMS/uclamp/cpuset no frame
+sintético, IO em MB/s sintético) e precisa ser refeita no workload certo (`launch`/`appswitch`).
 
 ## Driver: decisão (2026-10-18) — NÃO mexer/substituir driver neste aparelho
 - Risco: temp-root + bootloader travado. Kernel panic = full reboot = root perdido (já aconteceu hoje por uma
