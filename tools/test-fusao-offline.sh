@@ -171,7 +171,7 @@ rm -f "$FAKE/fusao/tune.stock"
 rm -f "$FAKE/fusao/framework.enabled"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile game > "$FAKE/prof_game.out"
 grep -q "profile_state=applied" "$FAKE/prof_game.out" && ok "profile game verified" || bad "profile game verified"
-grep -q "profile_verify=10/10" "$FAKE/prof_game.out" && ok "profile game verify 10/10" || bad "profile game verify 10/10"
+grep -q "profile_verify=9/9" "$FAKE/prof_game.out" && ok "profile game verify 9/9" || bad "profile game verify 9/9"
 # alvos do game = degraus REAIS da tabela (999000/889000 eram de outro SoC; 1056000/960000 existem no 1380)
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "1056000" ] && ok "tune game p0_min" || bad "tune game p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "960000" ] && ok "tune game p4_min" || bad "tune game p4_min"
@@ -182,14 +182,15 @@ grep -q "profile_verify=10/10" "$FAKE/prof_game.out" && ok "profile game verify 
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "845000" ] && ok "tune game mif_min" || bad "tune game mif_min"
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "60" ] && ok "tune game swap" || bad "tune game swap"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "50" ] && ok "tune game pressure" || bad "tune game pressure"
-[ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "512" ] && ok "tune game readahead" || bad "tune game readahead"
+# 2.10.0: read_ahead saiu dos perfis (o da sda não chega na leitura de arquivo; no dm subir piora): fica no stock
+[ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "128" ] && ok "tune game readahead fica no stock" || bad "tune game readahead fica no stock"
 [ "$(cat "$FAKE/sys/block/sda/queue/nomerges")" = "1" ] && ok "tune game nomerges" || bad "tune game nomerges"
 [ "$(cat "$FAKE/proc/sys/net/ipv4/tcp_congestion_control")" = "bbr" ] && ok "tune game bbr" || bad "tune game bbr"
 
 # 9b) Transição GAME -> BALANCED (sem resíduos do modo Game)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced > "$FAKE/prof_bal.out"
 grep -q "profile_state=applied" "$FAKE/prof_bal.out" && ok "profile balanced verified" || bad "profile balanced verified"
-grep -q "profile_verify=10/10" "$FAKE/prof_bal.out" && ok "profile balanced verify 10/10" || bad "profile balanced verify 10/10"
+grep -q "profile_verify=9/9" "$FAKE/prof_bal.out" && ok "profile balanced verify 9/9" || bad "profile balanced verify 9/9"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "533000" ] && ok "tune balanced p0_min" || bad "tune balanced p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "533000" ] && ok "tune balanced p4_min" || bad "tune balanced p4_min"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_min_clock")" = "221000" ] && ok "tune balanced gpu_min" || bad "tune balanced gpu_min"
@@ -198,18 +199,19 @@ grep -q "profile_verify=10/10" "$FAKE/prof_bal.out" && ok "profile balanced veri
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "421000" ] && ok "tune balanced mif_min" || bad "tune balanced mif_min"
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "120" ] && ok "tune balanced swap" || bad "tune balanced swap"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "100" ] && ok "tune balanced pressure" || bad "tune balanced pressure"
-[ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "256" ] && ok "tune balanced readahead" || bad "tune balanced readahead"
+[ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "128" ] && ok "tune balanced readahead fica no stock" || bad "tune balanced readahead fica no stock"
 [ "$(cat "$FAKE/sys/block/sda/queue/nomerges")" = "0" ] && ok "tune balanced nomerges-clean" || bad "tune balanced nomerges-clean"
 
 # 9c) Transição BALANCED -> BATTERY / PowerSaving (tetos reduzidos; piso do P0 = 533000, o mínimo físico e o stock)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile battery > "$FAKE/prof_bat.out"
 grep -q "profile_state=applied" "$FAKE/prof_bat.out" && ok "profile battery verified" || bad "profile battery verified"
-grep -q "profile_verify=10/10" "$FAKE/prof_bat.out" && ok "profile battery verify 10/10" || bad "profile battery verify 10/10"
+grep -q "profile_verify=9/9" "$FAKE/prof_bat.out" && ok "profile battery verify 9/9" || bad "profile battery verify 9/9"
 # 400000 não existe no 1380: o driver clampa p/ 533000 em silêncio. O alvo agora É 533000 (e não 672000: subir o piso gasta mais em ocioso)
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "533000" ] && ok "tune battery p0_min" || bad "tune battery p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")" = "1728000" ] && ok "tune battery p0_max" || bad "tune battery p0_max"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1440000" ] && ok "tune battery p4_max" || bad "tune battery p4_max"
-[ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "650000" ] && ok "tune battery gpu_max" || bad "tune battery gpu_max"
+# 2.10.0: battery não capa a GPU (o 650000 era sobrescrito pela Samsung e o verify vivia 9/10)
+[ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "949000" ] && ok "tune battery gpu_max sem cap" || bad "tune battery gpu_max sem cap"
 
 # 9c-2) 2.9.9, regra do dono: battery + jogo da gamelist em foco = game (fora do jogo volta a battery);
 # balanced fica balanced em jogo (jogos casuais). O hook do watch chama `tune.sh auto` depois de gravar o
@@ -233,7 +235,7 @@ grep -q "^profile_state=applied$" "$FAKE/st_bat_game.out" && ok "status em jogo 
 # escolher battery COM o jogo aberto aplica game (o CLI aplicava "$arg" direto = battery)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced >/dev/null 2>&1
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile battery > "$FAKE/prof_bat_game.out" 2>&1
-grep -q "^profile_effective=game$" "$FAKE/prof_bat_game.out" && [ "$(cat "$GMAXN")" = "949000" ] && \
+grep -q "^profile_effective=game$" "$FAKE/prof_bat_game.out" && [ "$(cat "$P4MAXN")" = "1824000" ] && \
   ok "CLI battery em jogo aplica game" || bad "CLI battery em jogo aplica game"
 # balanced + jogo = balanced (GPU max 845000)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced > "$FAKE/prof_bal_game.out" 2>&1
@@ -242,14 +244,14 @@ grep -q "^profile_effective=balanced$" "$FAKE/prof_bal_game.out" && [ "$(cat "$G
 # app fora da gamelist no game-active não conta como jogo
 echo "com.android.settings" > "$GA"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile battery > "$FAKE/prof_bat_app.out" 2>&1
-grep -q "^profile_effective=battery$" "$FAKE/prof_bat_app.out" && [ "$(cat "$GMAXN")" = "650000" ] && \
+grep -q "^profile_effective=battery$" "$FAKE/prof_bat_app.out" && [ "$(cat "$P4MAXN")" = "1440000" ] && \
   ok "app fora da gamelist: battery" || bad "app fora da gamelist: battery"
 # saída do jogo (game-active zerado antes do fire_exit): o hook volta a battery
 echo "com.roblox.client" > "$GA"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" auto >/dev/null 2>&1
 : > "$GA"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" auto >/dev/null 2>&1
-[ "$(cat "$GMAXN")" = "650000" ] && [ "$(cat "$P4MAXN")" = "1440000" ] && grep -q "^profile=battery$" "$FAKE/fusao/profile.state" && \
+[ "$(cat "$P4MAXN")" = "1440000" ] && grep -q "^profile=battery$" "$FAKE/fusao/profile.state" && \
   ok "saiu do jogo: volta a battery" || bad "saiu do jogo: volta a battery"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "150" ] && ok "tune battery" || bad "tune battery"
 [ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "128" ] && ok "tune battery readahead" || bad "tune battery readahead"
@@ -260,11 +262,11 @@ echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" game >/dev/null 2>&1
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "1152000" ] && ok "tune game+jogo p0_min" || bad "tune game+jogo p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "1056000" ] && ok "tune game+jogo p4_min" || bad "tune game+jogo p4_min"
-M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify game | grep -q "profile_verify=10/10" && ok "tune game+jogo verify 10/10" || bad "tune game+jogo verify 10/10"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify game | grep -q "profile_verify=9/9" && ok "tune game+jogo verify 9/9" || bad "tune game+jogo verify 9/9"
 : > "$FAKE/fusao/game-active.txt"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" battery >/dev/null 2>&1
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "533000" ] && ok "tune game->battery p0_min desce a 533000" || bad "tune game->battery p0_min desce a 533000"
-M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery | grep -q "profile_verify=10/10" && ok "tune game->battery verify 10/10" || bad "tune game->battery verify 10/10"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery | grep -q "profile_verify=9/9" && ok "tune game->battery verify 9/9" || bad "tune game->battery verify 9/9"
 
 # 9d) Restauração completa ao stock via idle
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" idle
@@ -381,14 +383,14 @@ probe_at "$FAKE" - - w "$FAKE/nao/existe" 1 && ok "w nó ausente = no-op rc 0" |
 grep -v '^[[:space:]]*#' "$STAGE/fusao/tune.sh" | grep -Eq 'chmod[[:space:]]+0*444' && bad "tune sem chmod 444" || ok "tune sem chmod 444"
 
 # 9e-5) driver que clampa o P0 min p/ 672000 (o aparelho em 2026-10-18: profile_verify=9/10 e p0_min:533000!=400000):
-# o battery pede 533000 e o nó guarda 672000 => o verify NÃO fecha 10/10 e aponta o nó
+# o battery pede 533000 e o nó guarda 672000 => o verify NÃO fecha 9/9 e aponta o nó
 echo 2002000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
 echo 533000 > "$PNODE"
 rm -f "$FAKE/fusao/profile.state"; : > "$FLOG"
 # 2.9.8: piso de CPU lido ACIMA do alvo é indistinguível de QoS externo (hint/boost da Samsung) logo após o
 # apply => pending dentro da janela; o veredito final (fora da janela) continua partial apontando o nó.
 TUNE_NOW=1000 probe_at "$FAKE" 672000 - apply_battery
-grep -q "^profile_verify=9/10$" "$FAKE/fusao/profile.state" && ok "driver clampa: verify 9/10" || bad "driver clampa: verify 9/10"
+grep -q "^profile_verify=8/9$" "$FAKE/fusao/profile.state" && ok "driver clampa: verify 8/9" || bad "driver clampa: verify 8/9"
 grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "driver clampa: pending na janela" || bad "driver clampa: pending na janela"
 grep -q "^profile_external=p0_min:672000!=533000$" "$FAKE/fusao/profile.state" && ok "driver clampa: external aponta p0_min" || bad "driver clampa: external aponta p0_min"
 grep -q "WARN tune: clamp .*policy0/scaling_min_freq pedido=533000 lido=672000" "$FLOG" && ok "driver clampa: WARN clamp no apply" || bad "driver clampa: WARN clamp no apply"
@@ -396,9 +398,9 @@ TUNE_NOW=1181 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" ver
 grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "driver clampa: partial fora da janela" || bad "driver clampa: partial fora da janela"
 grep -q "^profile_mismatch=p0_min:672000!=533000$" "$FAKE/fusao/profile.state" && ok "driver clampa: mismatch aponta p0_min" || bad "driver clampa: mismatch aponta p0_min"
 grep -q "^applied_at=1000$" "$FAKE/fusao/profile.state" && ok "verify herda applied_at do apply" || bad "verify herda applied_at do apply"
-# mesmo apply num driver honesto fecha 10/10
+# mesmo apply num driver honesto fecha 9/9
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" battery >/dev/null 2>&1
-grep -q "^profile_verify=10/10$" "$FAKE/fusao/profile.state" && ok "driver honesto: verify 10/10" || bad "driver honesto: verify 10/10"
+grep -q "^profile_verify=9/9$" "$FAKE/fusao/profile.state" && ok "driver honesto: verify 9/9" || bad "driver honesto: verify 9/9"
 
 # 9e-6) verify confere o valor JÁ com snap: tabela do aparelho sem os degraus do perfil (P0 = 700000 1100000 2002000,
 # cpuinfo_min 700000). O battery pede 533000/1728000 e o aparelho só pode dar 700000/1100000: com o alvo cru
@@ -439,19 +441,19 @@ TUNE_NOW=5000 probe_at "$FAKE" 1152000 - apply_battery
 grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "hint no apply: pending" || bad "hint no apply: pending"
 grep -q "^profile_mismatch=" "$FAKE/fusao/profile.state" && bad "hint no apply: sem mismatch real" || ok "hint no apply: sem mismatch real"
 grep -q "tune: battery pending (piso/teto de CPU externo: p0_min:1152000!=533000)" "$FLOG" && ok "hint no apply: loga pending" || bad "hint no apply: loga pending"
-# o hint solta (o nó guarda o NOSSO pedido): verify do status dentro da janela fecha 10/10 applied
+# o hint solta (o nó guarda o NOSSO pedido): verify do status dentro da janela fecha 9/9 applied
 echo 533000 > "$P0D/scaling_min_freq"
 TUNE_NOW=5040 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
-grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && grep -q "^profile_verify=10/10$" "$FAKE/fusao/profile.state" && ok "hint soltou: applied 10/10" || bad "hint soltou: applied 10/10"
+grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && grep -q "^profile_verify=9/9$" "$FAKE/fusao/profile.state" && ok "hint soltou: applied 9/9" || bad "hint soltou: applied 9/9"
 # piso da GPU segurado no boot (aparelho 16:50: 455000 com alvo 221000, depois 221000 sem reescrita) = pending;
-# teto da GPU sobrescrito p/ cima (650000 -> 949000, ficou) continua falha real = partial
+# teto da GPU sobrescrito (aqui p/ baixo, 949000 -> 845000) continua falha real = partial: a GPU não é QoS
 echo 455000 > "$FAKE/sys/kernel/gpu/gpu_min_clock"
 TUNE_NOW=5045 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
 grep -q "^profile_external=gpu_min:455000!=221000$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "piso gpu segurado: pending" || bad "piso gpu segurado: pending"
-echo 221000 > "$FAKE/sys/kernel/gpu/gpu_min_clock"; echo 949000 > "$FAKE/sys/kernel/gpu/gpu_max_clock"
+echo 221000 > "$FAKE/sys/kernel/gpu/gpu_min_clock"; echo 845000 > "$FAKE/sys/kernel/gpu/gpu_max_clock"
 TUNE_NOW=5045 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
-grep -q "^profile_mismatch=gpu_max:949000!=650000$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "teto gpu sobrescrito: partial" || bad "teto gpu sobrescrito: partial"
-echo 650000 > "$FAKE/sys/kernel/gpu/gpu_max_clock"
+grep -q "^profile_mismatch=gpu_max:845000!=949000$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "teto gpu sobrescrito: partial" || bad "teto gpu sobrescrito: partial"
+echo 949000 > "$FAKE/sys/kernel/gpu/gpu_max_clock"
 # teto de CPU clampado ABAIXO pelo térmico dentro da janela = pending; ACIMA do alvo nunca é externo
 echo 1344000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
 TUNE_NOW=5050 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
@@ -470,7 +472,7 @@ grep -q "^profile_state=pending$" "$FAKE/fusao/profile.state" && ok "reverify: p
 echo 533000 > "$P0D/scaling_min_freq"
 : > "$FLOG"
 TUNE_NOW=6030 REVERIFY_STEPS=0 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" reverify battery 6000 >/dev/null 2>&1
-grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && grep -q "tune: reverify battery -> applied 10/10" "$FLOG" && ok "reverify: converge p/ applied" || bad "reverify: converge p/ applied"
+grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && grep -q "tune: reverify battery -> applied 9/9" "$FLOG" && ok "reverify: converge p/ applied" || bad "reverify: converge p/ applied"
 echo 1152000 > "$P0D/scaling_min_freq"
 cp "$FAKE/fusao/profile.state" "$FAKE/state.before"
 TUNE_NOW=6030 REVERIFY_STEPS=0 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" reverify battery 4242 >/dev/null 2>&1

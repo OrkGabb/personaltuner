@@ -1018,3 +1018,15 @@ sintético, IO em MB/s sintético) e precisa ser refeita no workload certo (`lau
   candidato a remoção (não removido: dono decide).
 - `launch-iosched` não rodou (parado a pedido). kernlab: `drop_caches` no workload launch; knobs
   `io.dm-60/dm-6.read_ahead_kb` (conferir /proc/mounts: número do dm muda em boot completo).
+
+## 2.10.0/1602 (instalado 18:20, aguardando soft-reboot do dono)
+- **read_ahead saiu dos perfis**: o da sda (o único que o `readahead_nodes` ajusta) não chega na leitura de
+  arquivo (kernlab: sda 2048 = +0,2%), e no nó certo (dm-60 /data, dm-6 /) subir PIORA a abertura (512 +5,9%,
+  2048 +9,2%). Em jogo não foi medido; o ajuste do game (512 na sda) nunca chegou no jogo, então tirar não
+  muda nada lá. Os perfis só devolvem ao stock o que versões antigas deixaram na sda. verify passa a 9 nós.
+- **battery sem teto de GPU** (escreve o máximo físico 949000, o que também solta o cap de outro perfil): o
+  650000 era sobrescrito no boot e pelo térmico e o verify vivia PARCIAL 9/10.
+- app: descrições dos 3 perfis com os alvos reais (game dizia "P0 999k / P4 889k", de outro SoC; balanced
+  "GPU 858", degrau que não existe; battery "P0 400k" e "GPU 650").
+- Validação: harness 202/202 (WSL); controle negativo = 16 FAIL contra o tune.sh 2.9.9; sweep OK; zip
+  `c6f7677e...` (731509 b) e APK `56fb1395...` = instalados.

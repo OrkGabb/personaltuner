@@ -12,6 +12,7 @@
 # reverificações só de leitura dão o veredito final fora da janela (EXT_WINDOW_S).
 # 2.9.9: auto/verify usam o perfil EM VIGOR (lib.sh effective_profile: battery + jogo da gamelist = game,
 # balanced fica balanced); piso da GPU também é trava externa.
+# 2.10.0: read_ahead saiu dos perfis (nó errado: sda; no dm certo subir piora) e o battery não capa a GPU.
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -308,6 +309,15 @@ restore_one() {
   [ -n "$v" ] && w "$1" "$v"
 }
 
+# read_ahead NÃO é perfil (2.10.0, kernlab launch-readahead, YouTube frio de disco, 6 blocos): o da sda
+# (readahead_nodes = sd*/mmcblk*/nvme*) não chega na leitura de arquivo (sda 2048 = +0,2%, equivalente) —
+# o /data é dm-60 e a raiz dm-6, e neles subir PIORA a abertura (512 +5,9%, 2048 +9,2%). Os perfis só
+# devolvem ao stock o que versões antigas deixaram na sda (game 512 / balanced 256).
+restore_readahead() {
+  local n
+  for n in $(readahead_nodes); do restore_one "$n"; done
+}
+
 restore_stock() {
   [ -s "$STOCK" ] || return 0
   # Primeiro desce policy0/policy4/gpu com segurança
@@ -357,7 +367,7 @@ profile_targets() {
       r_p4min=960000;  r_p4max=1824000
       r_gmin=351000;   r_gmax=949000
       T_MIF_MIN=845000; T_INT_MIN=200000; T_DISP_MIN=200000
-      T_SWAP=60; T_VFS=50; T_RA=512
+      T_SWAP=60; T_VFS=50
       if [ "$act" = 1 ]; then
         r_p0min=1152000; r_p4min=1056000
         T_MIF_MIN=1014000; T_INT_MIN=267000
@@ -366,11 +376,14 @@ profile_targets() {
     battery)
       # Piso do P0 = 533000: o mínimo físico e o stock. NÃO subir p/ 672000 (gasta mais em ocioso) e
       # 400000 não existe (o driver clampa p/ 533000 em silêncio e o verify nunca fechava 10/10).
+      # Teto da GPU = máximo físico (sem cap): o 650000 nunca segurava — a Samsung sobrescreve o
+      # gpu_max_clock no boot e o térmico ao liberar (2026-10-18: 650000 -> 949000 e ficou), e o verify
+      # vivia em 9/10. Escrever o máximo também solta o cap deixado por outro perfil.
       r_p0min=533000; r_p0max=1728000
       r_p4min=533000; r_p4max=1440000
-      r_gmin=221000;  r_gmax=650000
+      r_gmin=221000;  r_gmax=949000
       T_MIF_MIN=421000; T_INT_MIN=50000; T_DISP_MIN=66000
-      T_SWAP=160; T_VFS=150; T_RA=128
+      T_SWAP=160; T_VFS=150
       ;;
     *)
       # teto da GPU era 858000 (não existe na tabela); 845000 é o degrau logo abaixo do máximo 949000
@@ -378,7 +391,7 @@ profile_targets() {
       r_p4min=533000; r_p4max=1824000
       r_gmin=221000;  r_gmax=845000
       T_MIF_MIN=421000; T_INT_MIN=100000; T_DISP_MIN=133000
-      T_SWAP=120; T_VFS=100; T_RA=256
+      T_SWAP=120; T_VFS=100
       if [ "$act" = 1 ]; then
         r_p0min=672000; r_p4min=672000
         T_MIF_MIN=676000
@@ -489,9 +502,9 @@ verify_profile() {
   check_eq "$R/proc/sys/vm/swappiness" "$T_SWAP" "swappiness"
   check_eq "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS" "vfs_pressure"
 
+  # read_ahead saiu dos perfis (2.10.0): fica só no sysfs_summary como leitura informativa
   local _ra_node
   _ra_node=$(readahead_nodes | head -n 1)
-  [ -n "$_ra_node" ] && check_eq "$_ra_node" "$T_RA" "read_ahead"
 
   local state="applied"
   if [ "$tot_cnt" -eq 0 ]; then
@@ -575,7 +588,7 @@ apply_game() {
   w "$R/proc/sys/vm/stat_interval" "10"
   w "$R/proc/sys/vm/page-cluster" "0"
 
-  for n in $(readahead_nodes); do w "$n" "$T_RA"; done
+  restore_readahead
   for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
     [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "1"
     [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"
@@ -606,7 +619,7 @@ apply_balanced() {
   w "$R/proc/sys/vm/stat_interval" "5"
   w "$R/proc/sys/vm/page-cluster" "0"
 
-  for n in $(readahead_nodes); do w "$n" "$T_RA"; done
+  restore_readahead
   for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
     [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "0"
     [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"
@@ -619,14 +632,13 @@ apply_balanced() {
   log "tune: apply balanced"
 }
 
-# ATENÇÃO (medido ao vivo em 2026-10-18): os tetos do battery (P0 max 1728000 / P4 max 1440000 /
-# GPU max 650000) SOMEM sozinhos quando a tela entra em Dozing — a Samsung reescreve os nós
-# (presentes até uptime ~3194s, ausentes em ~3709s). Isso NÃO se resolve com loop de reescrita
-# (briga com o framework da ROM, gasta bateria e esconde o sintoma). Se um dia for preciso reaplicar,
-# que seja por EVENTO de tela-acesa, UMA vez, com releitura (w/verify_profile) — não implementado.
-# Em jogo (kernlab game-tetos, NTE): o térmico da Samsung é dono dos tetos — o gpu_max_clock 650000 foi
-# SOBRESCRITO para cima (845000/949000/754000) ao liberar e os tetos de CPU só caem (QoS). O cap de GPU do
-# battery não segura em jogo; o de CPU segura enquanto o térmico não pedir menos.
+# ATENÇÃO (medido ao vivo em 2026-10-18): os tetos de CPU do battery (P0 max 1728000 / P4 max 1440000)
+# SOMEM sozinhos quando a tela entra em Dozing — a Samsung reescreve os nós (presentes até uptime ~3194s,
+# ausentes em ~3709s). Isso NÃO se resolve com loop de reescrita (briga com o framework da ROM, gasta
+# bateria e esconde o sintoma). Se um dia for preciso reaplicar, que seja por EVENTO de tela-acesa, UMA
+# vez, com releitura (w/verify_profile) — não implementado.
+# GPU: o battery NÃO capa mais o teto (2.10.0). O cap 650000 era sobrescrito no boot e pelo térmico ao
+# liberar (kernlab game-tetos: 650000 -> 845000/949000/754000); em jogo o battery vira game (effective_profile).
 apply_battery() {
   snapshot_stock
   profile_targets battery
@@ -643,7 +655,7 @@ apply_battery() {
   w "$R/proc/sys/vm/stat_interval" "15"
   w "$R/proc/sys/vm/page-cluster" "0"
 
-  for n in $(readahead_nodes); do w "$n" "$T_RA"; done
+  restore_readahead
   for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
     [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "0"
     [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"

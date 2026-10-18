@@ -737,9 +737,10 @@ class MainActivity : ComponentActivity() {
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = when (st.profile) {
-                                            "game" -> "GPU 351–949 MHz · P0 999k / P4 889k · MIF 845k · 120Hz"
-                                            "battery" -> "P0 400–1728k · P4 533–1440k · GPU máx 650 MHz · 60Hz"
-                                            "balanced" -> "P0/P4 533k · GPU máx 858 MHz · VM/IO equilibrados · 60–120Hz"
+                                            // alvos reais do tune.sh (degraus do Exynos 1380); battery em jogo vira game
+                                            "game" -> "P0 ≥1056k · P4 ≥960k · GPU 351–949 MHz · MIF ≥845k"
+                                            "battery" -> "P0 ≤1728k · P4 ≤1440k · GPU sem teto · em jogo: GAME"
+                                            "balanced" -> "P0/P4 ≥533k · GPU máx 845 MHz · em jogo: BALANCED"
                                             else -> "Aguardando leitura do perfil em /data/adb/fusao/profile"
                                         },
                                         style = MaterialTheme.typography.bodySmall,
