@@ -684,3 +684,23 @@ pendente), tune/DND/downscale ✓ (valores conservadores, matriz afina).
   novos; (3) pill CONFIRMADO no perfil (readback); (4) preload sem jogo em foco
   (seletor de alvos da gamelist); (5) stamina Blackbird no NTE (ciclo loading +
   voo) = prova real do fim de cgroup.procs + observer.dex + game_overlay.
+
+## FULL REBOOT INESPERADO (2026-10-18, perda de temp-root, dono reportou)
+- Algo rebootou de VERDADE o aparelho (dono nao pediu). Consequencias por doutrina:
+  temp-root KernelSU PERDIDO, boot_id novo, uptime zerado, ADB WiFi porta
+  192.168.1.75:39041 MORTA (rotativa; pedir porta nova ao dono).
+- Modules_update era consumido pelo boot: modulo 2.9.6/1598 deveria estar
+  stageado->ativo, MAS sem KernelSU ativo os modulos ficam DORMANTES
+  (/data/adb/modules/* volta a rodar quando o temp-root for refeito + boot).
+- Causa do reboot: DESCONHECIDA p/ agora. Candidatos a nao descartar
+  (1) full reboot disparado por instalacao de APK/'update' do sistema;
+  (2) remedio OneUI (auto-restart de manutencao); (3) toque involuntario.
+  Registrar a proxima janela de boot_id para timeline comparada.
+- CONFIRMACAO DO DONO (positivo): app FUSAO release R8 melhorou o feel
+  (sem o lag/trava do debug). Debug banido em definitivo.
+- Quando o dono re-fizer temp-root: verificar (a) KernelSU vivo;
+  (b) /data/adb/modules/encore/module.prop = 2.9.6/1598; (c) PIDs novos
+  dos daemons; (d) flags preservadas (fusaod+framework+perf+preload+
+  ramclean+dnd on, gos pausado); (e) gamelist intacta; (f) fusao status
+  intros sem inicializar nada velho; (g) perfil lido com readback; (h) NTE: stamina
+  Blackbird no ciclo loading+voo = prova central do fim de cgroup.procs.
