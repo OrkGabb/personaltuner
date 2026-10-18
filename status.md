@@ -1030,3 +1030,19 @@ sintético, IO em MB/s sintético) e precisa ser refeita no workload certo (`lau
   "GPU 858", degrau que não existe; battery "P0 400k" e "GPU 650").
 - Validação: harness 202/202 (WSL); controle negativo = 16 FAIL contra o tune.sh 2.9.9; sweep OK; zip
   `c6f7677e...` (731509 b) e APK `56fb1395...` = instalados.
+
+## NTE: PRELOAD E READ_AHEAD NO TESTE CERTO (2026-10-18 ~19:10-19:40, WiFi `:45459`)
+Método (automatizado, sem o dono tocar): NTE fechado + `drop_caches` antes de cada abertura; tempo até o
+lobby = engrenagem do canto (pixel 2251,33 > 150 em 2 leituras seguidas, mínimo 30 s, via `screencap` cru
+sem gravar em disco); toque no centro; tempo até o jogo = botão de correr do HUD (pixel 2125,966 > 150);
+bytes lidos pelo jogo de `/proc/<pid>/io`. A fase até o lobby é quase toda a "Verifying resources" do
+próprio NTE (~1,6 GB lidos a cada abertura).
+- **Preload** (on, off, off, on; read_ahead 128): lobby 114,0/117,3 s com vs 116,8/112,4 s sem (igual);
+  toque->jogo 39,7/33,5 s com vs 30,4/32,2 s sem (tendência de piora, n=2); bytes lidos pelo jogo IGUAIS
+  (~1,55-1,6 GB até o lobby, ~3,4-3,5 GB até o jogo) = as páginas do WILLNEED não são aproveitadas.
+  **Preload desligado no aparelho** (`fusao preload off`; o padrão do módulo já é off).
+- **read_ahead do dm-60 (/data)**, preload off: 128 = lobby 119,7 s / 1606 MB; 512 = 134,3 e 126,3 s /
+  ~1700 MB (+5..12% de tempo, +6% de leitura); toque->jogo sem diferença clara. Bate com o YouTube:
+  read_ahead maior no nó certo atrasa e lê mais. O 128 (stock, mantido pelo 2.10.0) é o certo.
+- Estado ao fechar: read_ahead dm-60 = 128, preload off, 2.10.0 ativo (battery 9/9 confirmado 18:24).
+- Dono: testes curtos (2 aberturas por lado bastam p/ ver diferença grande); nada de bateria longa.
