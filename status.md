@@ -955,3 +955,46 @@ estado do perfil (`applied` ou `pending` com reverify convergindo); log sem a en
   (fim do cgroup.procs + observer.dex + game_overlay).
 - kernlab: fila pronta e não rodada (`ems-pelt-margin`, `ems-support-uclamp`, `ems-rate-limit`,
   `uclamp-latency-sensitive`, `cpuset-background`, `io-scheduler`, `io-readahead`).
+
+## 2.9.8 PROVADO AO VIVO + 2.9.9/1601 (regra de perfil do dono) — 2026-10-18 ~17:15, cabo `RQCW506Z0CX`
+- **Soft-reboot do dono 16:50** (mesmo boot_id `324cbe74`, root ok): 2.9.8 ativo, watch/gos_killer/observer
+  novos (16:50:43, observer vivo de novo). Apply do boot: a descida parou no 1º degrau = **2 WARN por policy
+  (era 15)**; P0/P4 min classificados `profile_external`. Saiu `partial 7/10` por `gpu_min:455000!=221000`:
+  o boost do boot também segura o PISO DA GPU; 17 min depois, sem reescrita, P0/P4 min 533000 e GPU min
+  221000 (o pedido valeu) e GPU max 650000 -> 949000 (sobrescrito, não voltou).
+- **2.9.9** (instalado 17:13, aguardando soft-reboot): (1) regra do dono, SSOT `effective_profile` no lib.sh:
+  **battery + jogo da gamelist em foco = game**, fora do jogo volta a battery; **balanced fica balanced** em
+  jogo (casuais); usada por tune/framework/perf/CLI (status confere o perfil em vigor e publica
+  `profile_effective=`; `fusao profile battery` com jogo aberto aplica game). (2) piso da GPU entra como
+  trava externa (medido acima); teto da GPU continua falha real. (3) app: botão escolhido mostra
+  "EM JOGO: GAME". Achado lateral: `tune.sh verify` sem argumento verificava balanced (resolve_mode
+  devolvia "verify"); corrigido.
+- **fusaod fica fora do battery+jogo de propósito**: ele lê `/data/adb/fusao/profile` sozinho e com "battery"
+  aplicaria os tetos de battery dele (GPU 552000, P0/P4 1056000) dentro do jogo. O gate dele segue no perfil
+  ESCOLHIDO. O binário tem patch de `.rodata` da outra AI; o fonte em `_historico/fusao-brain` não é
+  garantido igual — não recompilar sem conferir.
+- Validação: harness 202/202 (WSL); controle negativo = 7 FAIL dos checks novos no código 2.9.8; sweep OK;
+  zip `600dc44b...` (731177 b) e APK `e84f76b8...` = instalados.
+
+## FKM: o que cada categoria deu (pedido inicial do dono)
+| FKM | Medido | Resultado |
+|---|---|---|
+| Stune & Uclamp | `top-app uclamp.min` 10/25/40 (frame sintético) | -28/-46/-65% latência, mas o Hyper/EPIC da Samsung REESCREVE o nó em launch/toque: não dá p/ fixar. `latency_sensitive` não rodado |
+| CPU Sets | top-app só nos A55 (controle positivo) | PIORA +24%: o cpuset stock está certo. `cpuset-background` não rodado |
+| Scheduler (EMS `energy_aware`) | `freqboost ta` 30/60 | sintético -47/-69%; REAL: scroll 120 Hz sem efeito (30) / -20% saltos de 1 frame por +25% potência (60); NTE/Roblox 0 fps a mais, +5..10% potência. `pelt_margin`, `rate_limit`, `support_uclamp` não rodados |
+| Memory | swappiness 160 / vfs 150 (battery) | sem efeito mensurável no scroll. `vm-swappiness` (launch/troca de app) não rodado |
+| I/O | — | `io-scheduler`, `io-readahead` não rodados |
+| (fora do FKM) Display | refresh 60 -> 120 Hz | **a maior alavanca medida**: 2x frames, ~6x menos travadas, +34% potência |
+Conclusão até aqui: nenhum nó do FKM medido melhora carga real a custo aceitável; quem manda na fluidez é o
+refresh (UI) e a GPU + gráfico do jogo (jogos), e em jogo o térmico da Samsung é dono dos tetos após ~8 min.
+Falta a fila de 7 experimentos (~2-3 h, tela acesa, SEM cabo).
+
+## Driver: decisão (2026-10-18) — NÃO mexer/substituir driver neste aparelho
+- Risco: temp-root + bootloader travado. Kernel panic = full reboot = root perdido (já aconteceu hoje por uma
+  LEITURA de `ems/multi_load`). Trocar/descarregar módulo do vendor (ems, kbase, cpufreq) em memória é bem
+  mais arriscado que ler; mexer em partição (vendor_dlkm/boot) é impossível com AVB e, se tentado, bootloop.
+- Benefício: os dados não mostram gargalo que só um driver resolveria. Jogos = GPU no teto da tabela (949 MHz)
+  e calor; overclock exigiria tabela de tensão (ECT) = mais calor = o térmico corta antes. Relaxar o térmico é
+  proibido (nodes-m54.md §10). CPU/escalonador: as alavancas já são graváveis por sysfs e não compram frames.
+- Quando reabrir: só se uma medição achar regressão estável e reproduzível do lado do kernel que nenhum nó
+  gravável resolve. Até lá: userspace + sysfs allowlist.
