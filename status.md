@@ -1009,7 +1009,7 @@ sintético, IO em MB/s sintético) e precisa ser refeita no workload certo (`lau
 - **Memória no teste certo (troca de apps)**: 13 apps reais abertos em sequência (os mais usados + outros
   instalados), 12/12 mensuráveis voltaram HOT com 3,7 GB livres. Sem pressão no uso normal -> swappiness não
   tem o que decidir fora de jogo. Pressão real só com jogo (NTE: 114 MB livres, 2,4 GB swap); o teste certo
-  seria "NTE em fundo, abre YouTube/WhatsApp, volta" com o dono (login). Não rodado.
+  seria "NTE em fundo, abre YouTube/WhatsApp, volta". Não rodado. CORREÇÃO 19:45: NÃO precisa do dono — o NTE abre direto no lobby sem login (7 aberturas automáticas hoje); dá p/ automatizar. Cuidado: os hooks do FUSAO reaplicam swappiness no enter/exit (game 60 / battery 160).
 - **read_ahead no teste certo** (`launch-readahead`, YouTube frio de disco com drop_caches, 6 blocos, 45/48
   válidos): **dm do /data e da raiz 512 = PIORA +5,9%, 2048 = PIORA +9,2%** (p=0,031); **sda 2048 =
   EQUIVALENTE +0,2%**. Prova do nó errado: o read_ahead da sda (o que FKM e FUSAO `readahead_nodes` ajustam)
