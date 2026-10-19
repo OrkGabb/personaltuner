@@ -47,6 +47,7 @@ extract "$ZIPFILE" 'action.sh' "$MODPATH"
 extract "$ZIPFILE" 'cleanup.sh' "$MODPATH"
 extract "$ZIPFILE" 'system/bin/fusaod' "$MODPATH"
 extract "$ZIPFILE" 'system/bin/fusao' "$MODPATH"
+extract "$ZIPFILE" 'system/bin/fas-rs' "$MODPATH"
 extract "$ZIPFILE" 'fusao/thermal_guard.sh' "$MODPATH"
 extract "$ZIPFILE" 'fusao/thermal_guard_stop.sh' "$MODPATH"
 extract "$ZIPFILE" 'fusao/lib.sh' "$MODPATH"
@@ -60,6 +61,7 @@ extract "$ZIPFILE" 'fusao/display.sh' "$MODPATH"
 extract "$ZIPFILE" 'fusao/tune.sh' "$MODPATH"
 extract "$ZIPFILE" 'fusao/observer.sh' "$MODPATH"
 extract "$ZIPFILE" 'fusao/observer.dex' "$MODPATH"
+extract "$ZIPFILE" 'fusao/fas.sh' "$MODPATH"
 extract "$ZIPFILE" 'fusao/gamelist.txt' "$MODPATH"
 extract "$ZIPFILE" 'fusao/config' "$MODPATH"
 cp "$MODPATH/module.prop" "$MODPATH/module.prop.orig"
@@ -73,7 +75,7 @@ esac
 
 # FUSAO-M54: self-check de extração (lição temp-root: instalador que não
 # desembarca subdir em silêncio). Falha aqui, com nome, em vez de boot capenga.
-for f in service.sh uninstall.sh cleanup.sh action.sh system/bin/fusaod system/bin/fusao fusao/thermal_guard.sh fusao/thermal_guard_stop.sh fusao/lib.sh fusao/gos_killer.sh fusao/watch.sh fusao/framework.sh fusao/perf.sh fusao/bugreport.sh fusao/tune.sh fusao/dnd.sh fusao/display.sh fusao/observer.sh fusao/observer.dex fusao/gamelist.txt fusao/config; do
+for f in service.sh uninstall.sh cleanup.sh action.sh system/bin/fusaod system/bin/fusao system/bin/fas-rs fusao/thermal_guard.sh fusao/thermal_guard_stop.sh fusao/lib.sh fusao/gos_killer.sh fusao/watch.sh fusao/framework.sh fusao/perf.sh fusao/bugreport.sh fusao/tune.sh fusao/dnd.sh fusao/display.sh fusao/observer.sh fusao/observer.dex fusao/fas.sh fusao/gamelist.txt fusao/config; do
 	if [ -f "$MODPATH/$f" ]; then
 		ui_print "- [OK] $f"
 	else

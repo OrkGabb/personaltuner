@@ -13,6 +13,7 @@
 # 2.9.9: auto/verify usam o perfil EM VIGOR (lib.sh effective_profile: battery + jogo da gamelist = game,
 # balanced fica balanced); piso da GPU também é trava externa.
 # 2.10.0: read_ahead saiu dos perfis (nó errado: sda; no dm certo subir piora) e o battery não capa a GPU.
+# 2.11.0: com o FAS (fas-rs) dono da CPU em jogo, o verify não confere piso/teto de CPU (lib.sh fas_owns_cpu).
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -485,19 +486,24 @@ verify_profile() {
     fi
   }
 
+  # FAS dono da CPU (lib.sh fas_owns_cpu): o fas-rs reescreve piso/teto por frame, então conferir a CPU
+  # contra o perfil daria divergência falsa. O apply do enter ainda escreve o perfil (cobre o aquecimento
+  # do fas-rs, ~10 s); daí em diante só ele escreve.
+  local fas_cpu=0
+  fas_owns_cpu && fas_cpu=1
   if [ "$target" = "battery" ]; then
-    check_eq "$P0_MIN" "$T_P0_MIN" "p0_min" floor
-    check_eq "$P4_MIN" "$T_P4_MIN" "p4_min" floor
+    [ "$fas_cpu" = 1 ] || check_eq "$P0_MIN" "$T_P0_MIN" "p0_min" floor
+    [ "$fas_cpu" = 1 ] || check_eq "$P4_MIN" "$T_P4_MIN" "p4_min" floor
     check_eq "$GPU_MIN" "$T_GMIN" "gpu_min" floor
     check_eq "$MIF_MIN" "$T_MIF_MIN" "mif_min"
   else
-    check_ge "$P0_MIN" "$T_P0_MIN" "p0_min"
-    check_ge "$P4_MIN" "$T_P4_MIN" "p4_min"
+    [ "$fas_cpu" = 1 ] || check_ge "$P0_MIN" "$T_P0_MIN" "p0_min"
+    [ "$fas_cpu" = 1 ] || check_ge "$P4_MIN" "$T_P4_MIN" "p4_min"
     check_ge "$GPU_MIN" "$T_GMIN" "gpu_min"
     check_ge "$MIF_MIN" "$T_MIF_MIN" "mif_min"
   fi
-  check_eq "$P0_MAX" "$T_P0_MAX" "p0_max" ceil
-  check_eq "$P4_MAX" "$T_P4_MAX" "p4_max" ceil
+  [ "$fas_cpu" = 1 ] || check_eq "$P0_MAX" "$T_P0_MAX" "p0_max" ceil
+  [ "$fas_cpu" = 1 ] || check_eq "$P4_MAX" "$T_P4_MAX" "p4_max" ceil
   check_eq "$GPU_MAX" "$T_GMAX" "gpu_max"
   check_eq "$R/proc/sys/vm/swappiness" "$T_SWAP" "swappiness"
   check_eq "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS" "vfs_pressure"
@@ -533,6 +539,7 @@ verify_profile() {
   vm_s="$(rval "$R/proc/sys/vm/swappiness")/$(rval "$R/proc/sys/vm/vfs_cache_pressure")"
   io_s="$( [ -n "$_ra_node" ] && rval "$_ra_node" || echo "-" )k"
   summary="P0:${p0_s} P4:${p4_s} GPU:${gpu_s} MIF:${mif_s} VM:${vm_s} IO:${io_s}"
+  [ "$fas_cpu" = 1 ] && summary="$summary CPU:FAS"
 
   {
     echo "profile=$target"

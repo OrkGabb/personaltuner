@@ -21,6 +21,7 @@ from . import workloads as W
 from .emstune import value_of
 
 BASE = "@base"
+FREE = "@livre"    # no braço, outro escritor (um daemon) é dono do nó: o plano não escreve nem confere
 SCREEN = "settings.screen_off_timeout"   # o runner mantém a tela acesa e restaura no fim
 
 
@@ -54,6 +55,9 @@ class Experiment:
             for k in a:
                 if k not in ids:
                     ids.append(k)
+        # daemon primeiro: ao desligar ele devolve os nós de CPU, e só depois o braço escreve os dele
+        # (e a restauração final segue a mesma ordem)
+        ids.sort(key=lambda k: K.get(k).access != "daemon")
         return ids
 
 
@@ -80,8 +84,15 @@ def validate(exp: Experiment) -> None:
             kn = K.get(kid)
             if kn.risk != "low" and not exp.allow_medium:
                 raise K.KnobError(f"{kid} tem risco '{kn.risk}': exige \"allow_medium\": true no experimento")
-            if val != BASE:
+            if val == FREE:
+                if kn.access in ("daemon", "ems"):
+                    raise K.KnobError(f"{kid}: '{FREE}' só vale para nó escrito por um daemon do braço")
+                if not daemon_on(exp, arm):
+                    raise K.KnobError(f"{arm}: '{FREE}' em {kid} sem daemon ligado no braço (ninguém seria dono do nó)")
+            elif val != BASE:
                 kn.validate(val)
+    if FREE in exp.arms[exp.baseline_arm].values():
+        raise K.KnobError("o braço de referência não pode ter nó livre")
 
 
 def schedule(exp: Experiment) -> list[tuple[int, str]]:
@@ -151,8 +162,19 @@ def intended(exp: Experiment, base: Baseline, arm: str) -> dict[str, str]:
     out = {}
     for kid in exp.knob_ids():
         v = exp.arms[arm].get(kid, BASE)
-        out[kid] = base.write[kid] if v == BASE else K.get(kid).validate(v)
+        if v == FREE:
+            out[kid] = FREE
+        else:
+            out[kid] = base.write[kid] if v == BASE else K.get(kid).validate(v)
     return out
+
+
+def _set_lines(exp: Experiment, base: Baseline, arm: str) -> list[str]:
+    return [f"kl_set {_q(kid)} {_q(val)}" for kid, val in intended(exp, base, arm).items() if val != FREE]
+
+
+def daemon_on(exp: Experiment, arm: str) -> bool:
+    return any(K.get(k).access == "daemon" and v == "1" for k, v in exp.arms[arm].items())
 
 
 def _q(s: str) -> str:
@@ -187,17 +209,16 @@ def compile_plan(exp: Experiment, base: Baseline, run_id: str, run_dir: str) -> 
     # t0: aquecimento descartado. No primeiro A/A real o trial 1 saiu do estado deixado pelo
     # preflight/deploy (842 mW e 63% de perda contra ~720 mW e ~93% nos demais).
     lines.append(f"kl_trial 0 {_q('aquecimento')} -1")
-    for kid, val in intended(exp, base, exp.baseline_arm).items():
-        lines.append(f"kl_set {_q(kid)} {_q(val)}")
+    lines += _set_lines(exp, base, exp.baseline_arm)
     lines.append(f"kl_settle {exp.settle_s:g}")
     lines.append(measure)
     lines.append("kl_trial_end")
     for i, (block, arm) in enumerate(sched, start=1):
         lines.append(f"kl_trial {i} {_q(arm)} {block}")
-        for kid, val in intended(exp, base, arm).items():
-            lines.append(f"kl_set {_q(kid)} {_q(val)}")
+        lines += _set_lines(exp, base, arm)
+        floor = "daemon" if daemon_on(exp, arm) else gate.get("floor", "min")
         lines.append(f"kl_gate {int(gate.get('soc_c', 45))} {int(gate.get('batt_c', 37))} {int(gate.get('timeout_s', 300))} "
-                     f"{gate.get('floor', 'min')}")
+                     f"{floor}")
         lines.append(f"kl_settle {exp.settle_s:g}")
         lines.append(measure)
         lines.append("kl_trial_end")

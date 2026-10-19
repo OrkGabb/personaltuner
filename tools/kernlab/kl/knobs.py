@@ -48,8 +48,8 @@ class KnobError(ValueError):
 class Knob:
     id: str
     section: str
-    access: str                  # file | ems | setting
-    target: str                  # caminho, chave "func,modo,nível[,idx]" ou "namespace chave"
+    access: str                  # file | ems | setting | daemon
+    target: str                  # caminho, chave "func,modo,nível[,idx]", "namespace chave" ou nome do daemon
     kind: str
     domain: tuple = ()           # int: (min, max); enum/bracket: valores; pct: (min, max)
     risk: str = "low"
@@ -182,6 +182,9 @@ for _p, _cpu in (("policy0", 0), ("policy4", 4)):
     _f(f"cpufreq.{_p}.max", "CPU", f"{_base}/scaling_max_freq", "int",
        (CPU_FREQS[_cpu][0], CPU_FREQS[_cpu][-1]),
        note="Teto da policy. Usado como controle positivo (capar e exigir que o efeito apareça).")
+    _f(f"cpufreq.{_p}.min", "CPU", f"{_base}/scaling_min_freq", "int",
+       (CPU_FREQS[_cpu][0], CPU_FREQS[_cpu][-1]),
+       note="Piso da policy. O agente desce pelos degraus da tabela (policy0/min recusa pulo direto).")
     _f(f"cpufreq.{_p}.governor", "CPU", f"{_base}/scaling_governor", "str",
        ("energy_aware", "schedutil"), risk="medium",
        note="energy_aware é o governor EMS da Samsung; schedutil desliga o ego.")
@@ -303,6 +306,14 @@ for _k, _note in (("peak_refresh_rate", "Teto do refresh. 60.0 trava a tela em 6
 # --- Ajuste de tela usado pelo próprio runner (não é nó de kernel)
 _add(Knob("settings.screen_off_timeout", "Runner", "setting", "system screen_off_timeout", "int",
           (5000, 2147483647), workloads=(), note="O runner mantém a tela acesa e restaura no fim."))
+
+# --- Daemons: 1 liga, 0 desliga; a leitura é "1" só com o processo vivo E já controlando
+# (fas-rs do fork: último "FAS working on"/"FAS stopped" do log desde que ligou é o working;
+# "New fas buffer on" sai antes do controle e não serve). Os nós que o daemon escreve vão como
+# "@livre" no braço dele; ao desligar, o agente devolve os pisos/tetos de CPU de antes de ligar.
+_add(Knob("daemon.fasrs", "Daemon", "daemon", "fasrs", "enum", ("0", "1"), risk="medium",
+          workloads=("game",),
+          note="fas-rs (fork M54: uprobe em Surface::hook_queueBuffer) em device/opt; escreve min/max de CPU por frame."))
 
 # --- EMS emstune (Samsung). Não aparece no FKM. Escrita via aio_tuner, prova via cur_set.
 # (nome, id da função, escopo, domínio seguro, seção do cur_set, coluna)

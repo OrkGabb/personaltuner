@@ -128,15 +128,15 @@ kill_stale() {
 		[ "$_p" = "$$" ] || kill -9 "$_p" 2>/dev/null
 	done
 }
-for _pat in "fusaod serve" "fusao.observer" "watch.sh" "thermal_guard.sh" "gos_killer.sh"; do
+for _pat in "fusaod serve" "fusao.observer" "watch.sh" "thermal_guard.sh" "gos_killer.sh" "fas-rs run"; do
 	kill_stale "$_pat"
 done
 
-for f in thermal_guard.sh thermal_guard_stop.sh lib.sh gos_killer.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh dnd.sh display.sh observer.sh observer.dex; do
+for f in thermal_guard.sh thermal_guard_stop.sh lib.sh gos_killer.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh dnd.sh display.sh observer.sh observer.dex fas.sh; do
 	[ -f "$MODDIR/fusao/$f" ] && cp -f "$MODDIR/fusao/$f" "$FUSAO_DIR/$f" 2>/dev/null
 done
 [ -s "$FUSAO_DIR/gamelist.txt" ] || cp -f "$MODDIR/fusao/gamelist.txt" "$FUSAO_DIR/gamelist.txt" 2>/dev/null
-chmod 0755 "$FUSAO_DIR/thermal_guard.sh" "$FUSAO_DIR/thermal_guard_stop.sh" "$FUSAO_DIR/gos_killer.sh" "$FUSAO_DIR/watch.sh" "$FUSAO_DIR/framework.sh" "$FUSAO_DIR/perf.sh" "$FUSAO_DIR/bugreport.sh" "$FUSAO_DIR/tune.sh" "$FUSAO_DIR/dnd.sh" "$FUSAO_DIR/display.sh" "$FUSAO_DIR/observer.sh" 2>/dev/null
+chmod 0755 "$FUSAO_DIR/thermal_guard.sh" "$FUSAO_DIR/thermal_guard_stop.sh" "$FUSAO_DIR/gos_killer.sh" "$FUSAO_DIR/watch.sh" "$FUSAO_DIR/framework.sh" "$FUSAO_DIR/perf.sh" "$FUSAO_DIR/bugreport.sh" "$FUSAO_DIR/tune.sh" "$FUSAO_DIR/dnd.sh" "$FUSAO_DIR/display.sh" "$FUSAO_DIR/observer.sh" "$FUSAO_DIR/fas.sh" 2>/dev/null
 
 [ -f "$FUSAO_DIR/config" ] || {
 	echo "thermal=moderate" >"$FUSAO_DIR/config"
@@ -151,6 +151,11 @@ chmod 0755 "$FUSAO_DIR/thermal_guard.sh" "$FUSAO_DIR/thermal_guard_stop.sh" "$FU
 # Inicializa flags essenciais na 1ª instalação se ainda não inicializado
 if [ ! -f "$FUSAO_DIR/.flags_seeded" ]; then
 	touch "$FUSAO_DIR/framework.enabled" "$FUSAO_DIR/perf.enabled" "$FUSAO_DIR/.flags_seeded" 2>/dev/null
+fi
+# 2.11.0: FAS (fas-rs) ligado UMA vez (decisão do dono, medido: -10,4% de bateria no jogo); o marcador
+# separado respeita um "fusao fas off" posterior e também vale p/ quem atualiza de versão antiga.
+if [ ! -f "$FUSAO_DIR/.fas_seeded" ]; then
+	touch "$FUSAO_DIR/fas.enabled" "$FUSAO_DIR/.fas_seeded" 2>/dev/null
 fi
 
 if [ ! -f "$FUSAO_DIR/disable" ] && grep -q "^thermal=aggressive" "$FUSAO_DIR/config" 2>/dev/null; then

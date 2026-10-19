@@ -92,6 +92,8 @@ data class FusaoUiState(
     val selectedPreloadPkg: String = "",
     val ramcleanInfo: List<String> = emptyList(),
     val games: List<String> = emptyList(),
+    /** Alvos do FAS por jogo (pkg -> lista), lidos de `fusao fas gen`. */
+    val fasTargets: Map<String, List<Int>> = emptyMap(),
     val logLines: List<String> = emptyList(),
     val logFusaod: Boolean = false,
     val logLineLimit: Int = 120,
@@ -429,7 +431,32 @@ class FusaoViewModel : ViewModel() {
             if (_state.value.anyBusy()) return@launch
             _state.update { it.copy(busy = Busy.GAMELIST, activeTarget = "gamelist_load") }
             val games = FusaoBridge.gamelist()
-            _state.update { it.copy(games = games, busy = Busy.NONE, activeTarget = "") }
+            val fasTargets = if (_state.value.status.fasSupported) FusaoBridge.fasTargets() else emptyMap()
+            _state.update { it.copy(games = games, fasTargets = fasTargets, busy = Busy.NONE, activeTarget = "") }
+        }
+    }
+
+    fun setFasMode(mode: String) {
+        if (!guardRoot()) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = Busy.FLAG, activeTarget = "fas_mode:$mode") }
+            val out = FusaoBridge.setFasMode(mode)
+            val st = FusaoBridge.status()
+            _state.update { it.copy(status = st, busy = Busy.NONE, activeTarget = "", notice = out) }
+        }
+    }
+
+    /** Toque no FAS de um jogo: avança para o próximo limite (AUTO -> 30 -> 40 -> ... -> 144 -> AUTO). */
+    fun cycleFasCap(pkg: String) {
+        if (!guardRoot()) return
+        viewModelScope.launch {
+            val cur = fasCapOf(_state.value.fasTargets[pkg])
+            val idx = FAS_CAP_PRESETS.indexOf(cur).coerceAtLeast(0)
+            val next = FAS_CAP_PRESETS[(idx + 1) % FAS_CAP_PRESETS.size]
+            _state.update { it.copy(busy = Busy.FLAG, activeTarget = "fas_target:$pkg") }
+            val out = FusaoBridge.setFasTarget(pkg, fasTargetsForCap(next))
+            val fasTargets = FusaoBridge.fasTargets()
+            _state.update { it.copy(fasTargets = fasTargets, busy = Busy.NONE, activeTarget = "", notice = out) }
         }
     }
 

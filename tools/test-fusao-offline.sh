@@ -11,7 +11,7 @@ export M54_DIR="$FAKE/fusao"
 export FAKE_SETTINGS_DIR="$FAKE/settings"
 # 2.9.8: apply pending agenda reverificação em background (sleep 30..185 s); no harness ela é chamada à mão
 export TUNE_NO_DEFER=1
-for _s in lib.sh framework.sh perf.sh watch.sh bugreport.sh tune.sh dnd.sh display.sh gos_killer.sh thermal_guard.sh thermal_guard_stop.sh; do
+for _s in lib.sh framework.sh perf.sh watch.sh bugreport.sh tune.sh dnd.sh display.sh gos_killer.sh thermal_guard.sh thermal_guard_stop.sh fas.sh; do
   cp "$STAGE/fusao/$_s" "$FAKE/fusao/" 2>/dev/null
 done
 cp "$STAGE/fusao/config" "$FAKE/fusao/" 2>/dev/null
@@ -28,7 +28,7 @@ ok(){ pass=$((pass+1)); echo "PASS $1"; }
 bad(){ fail=$((fail+1)); echo "FAIL $1"; }
 
 # 1) bash -n em todos os scripts
-for s in lib.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh observer.sh dnd.sh display.sh thermal_guard.sh thermal_guard_stop.sh gos_killer.sh; do
+for s in lib.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh observer.sh dnd.sh display.sh thermal_guard.sh thermal_guard_stop.sh gos_killer.sh fas.sh; do
   if [ -f "$STAGE/fusao/$s" ]; then
     bash -n "$STAGE/fusao/$s" 2>"$FAKE/shn.err" && ok "sh-n $s" || { bad "sh-n $s"; cat "$FAKE/shn.err"; }
   fi
@@ -589,6 +589,98 @@ export DUMPSYS_FAKE="$FAKE/dump.txt"
 unset FOCUS_FAKE
 _got=$(grep -oE "[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+" "$FAKE/dump.txt" | head -1)
 [ "$_got" = "com.roblox.client" ] && ok "watch dumpsys parse" || bad "watch dumpsys parse ($_got)"
+
+# 16) FAS (fas-rs fork M54): lista da gamelist, alvo/modo, verify sem CPU, ordem no watch.
+# fas-rs falso: processo vivo com "fas-rs run" na cmdline que loga a linha de controle do fork.
+mkdir -p "$FAKE/bin" "$FAKE/sdcard"
+cat > "$FAKE/bin/fas-rs" <<'FASEOF'
+#!/bin/sh
+trap 'exit 0' TERM
+echo "[t] INFO: Config watcher started"
+echo "[t] INFO: New fas buffer on: [com.roblox.client]"
+echo "[t] INFO: FAS working on [com.roblox.client]"
+while :; do sleep 1; done
+FASEOF
+chmod +x "$FAKE/bin/fas-rs"
+export FAS_BIN="$FAKE/bin/fas-rs" FAS_NODE="$FAKE/fas_mode_node" FAS_USER_TOML="$FAKE/sdcard/games.toml"
+: > "$FAS_NODE"
+cp "$STAGE/fusao/fas.sh" "$FAKE/fusao/" && chmod +x "$FAKE/fusao/fas.sh"
+cp "$STAGE/fusao/lib.sh" "$STAGE/fusao/tune.sh" "$STAGE/fusao/watch.sh" "$FAKE/fusao/"
+cp "$STAGE/system/bin/fusao" "$FAKE/fusao/fusao-cli"
+grep -Fxq "com.roblox.client" "$FAKE/fusao/gamelist.txt" || echo "com.roblox.client" >> "$FAKE/fusao/gamelist.txt"
+fas() { M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" fas "$@"; }
+
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" gen | grep -Fq '"com.roblox.client" = [30, 45, 60, 90, 120]' && ok "fas gen auto" || bad "fas gen auto"
+grep -Fq '"com.hottagames.nte" = [' "$FAKE/fusao/fas/games.toml" && ok "fas gen gamelist ssot" || bad "fas gen gamelist ssot"
+fas target com.roblox.client 60 | grep -Fq "com.roblox.client=60" && ok "fas target set" || bad "fas target set"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" gen | grep -Fq '"com.roblox.client" = [60]' && ok "fas target in toml" || bad "fas target in toml"
+fas target com.roblox.client 90,60 >/dev/null 2>&1 && bad "fas target decrescente recusado" || ok "fas target decrescente recusado"
+fas target com.roblox.client 5 >/dev/null 2>&1 && bad "fas target fora do dominio recusado" || ok "fas target fora do dominio recusado"
+fas target com.roblox.client auto | grep -Fq "com.roblox.client=30, 45, 60, 90, 120" && ok "fas target auto" || bad "fas target auto"
+fas mode fast | grep -q "fas_mode=fast" && ok "fas mode" || bad "fas mode"
+fas mode turbo | grep -q "fas_mode=fast" && ok "fas mode invalido ignorado" || bad "fas mode invalido ignorado"
+rm -f "$FAKE/fusao/fas.mode"
+
+# fas_owns_cpu (lib.sh): ligado + binário + jogo da gamelist em foco; kill-switch, flag ou jogo fora = não
+owns() { ( M54_DIR="$FAKE/fusao"; . "$FAKE/fusao/lib.sh"; fas_owns_cpu ); }
+echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
+rm -f "$FAKE/fusao/fas.enabled"; owns && bad "fas owns sem flag" || ok "fas owns sem flag"
+touch "$FAKE/fusao/fas.enabled"; owns && ok "fas owns ligado" || bad "fas owns ligado"
+touch "$FAKE/fusao/disable"; owns && bad "fas owns kill-switch" || ok "fas owns kill-switch"; rm -f "$FAKE/fusao/disable"
+( FAS_BIN="$FAKE/bin/nao-existe"; export FAS_BIN; owns ) && bad "fas owns sem binario" || ok "fas owns sem binario"
+echo "com.fora.da.lista" > "$FAKE/fusao/game-active.txt"; owns && bad "fas owns jogo fora" || ok "fas owns jogo fora"
+
+# verify do tune com o FAS dono da CPU: o fas-rs crava min=max (768000); com FAS não é divergência,
+# sem FAS é (controle negativo no próprio teste)
+FR="$FAKE/fasroot"
+for p in policy0 policy4; do
+  mkdir -p "$FR/sys/devices/system/cpu/cpufreq/$p"
+  echo 533000 > "$FR/sys/devices/system/cpu/cpufreq/$p/cpuinfo_min_freq"
+done
+echo 2002000 > "$FR/sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq"
+echo 2400000 > "$FR/sys/devices/system/cpu/cpufreq/policy4/cpuinfo_max_freq"
+echo "533000 672000 768000 864000 960000 1056000 1152000 1248000 1344000 1440000 1536000 1632000 1728000 1824000 1920000 2002000" > "$FR/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies"
+echo "533000 672000 768000 864000 960000 1056000 1152000 1248000 1344000 1440000 1536000 1632000 1728000 1824000 1920000 2016000 2112000 2208000 2304000 2400000" > "$FR/sys/devices/system/cpu/cpufreq/policy4/scaling_available_frequencies"
+for n in policy0/scaling_min_freq policy0/scaling_max_freq policy4/scaling_min_freq policy4/scaling_max_freq; do
+  echo 768000 > "$FR/sys/devices/system/cpu/cpufreq/$n"
+done
+echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
+echo "battery" > "$FAKE/fusao/profile"
+vfy() { M54_DIR="$FAKE/fusao" FS_ROOT="$FR" sh "$FAKE/fusao/tune.sh" verify; }
+vfy | grep -q "CPU:FAS" && ok "fas verify resume CPU:FAS" || bad "fas verify resume CPU:FAS"
+vfy | grep -Eq "profile_mismatch=.*p4_max" && bad "fas verify pula CPU" || ok "fas verify pula CPU"
+rm -f "$FAKE/fusao/fas.enabled"
+vfy | grep -Eq "profile_mismatch=.*p4_max" && ok "fas verify sem FAS confere CPU (controle)" || bad "fas verify sem FAS confere CPU (controle)"
+touch "$FAKE/fusao/fas.enabled"
+echo "balanced" > "$FAKE/fusao/profile"
+
+# CLI on/status/off com o fas-rs falso
+fas on | grep -q "jogo ativo: ligado agora" && ok "fas on em jogo" || bad "fas on em jogo"
+sleep 1
+st=$(M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" status)
+echo "$st" | grep -q "^fas_state=working$" && ok "fas status working" || bad "fas status working"
+echo "$st" | grep -q "^fas_game=com.roblox.client$" && ok "fas status game" || bad "fas status game"
+[ -s "$FAS_USER_TOML" ] && cmp -s "$FAS_USER_TOML" "$FAKE/fusao/fas/games.toml" && ok "fas publica lista do usuario" || bad "fas publica lista do usuario"
+fas off | grep -q "fas=off" && ok "fas off" || bad "fas off"
+pgrep -f "[f]as-rs run" >/dev/null && bad "fas off mata o daemon" || ok "fas off mata o daemon"
+fas status | grep -q "^fas_state=stopped$" && ok "fas status stopped" || bad "fas status stopped"
+
+# watch: enter liga o FAS depois do tune; exit desliga ANTES do tune (o tune escreve a CPU por último)
+touch "$FAKE/fusao/fas.enabled"
+: > "$FAKE/fusao/fusao.log"
+echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
+( OBSERVER_FAKE_ALIVE=1 M54_DIR="$FAKE/fusao" timeout 10 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1 ) &
+WPID=$!
+sleep 4
+: > "$FAKE/fusao/game-active.txt"
+wait "$WPID" 2>/dev/null
+grep -Eq "watch: hooks.* fas( |$)" "$FAKE/fusao/fusao.log" && ok "watch enter fas hook" || bad "watch enter fas hook"
+awk '/watch: enter/ && !e {e=NR} e && /tune: apply/ && !t {t=NR} e && /fas: on/ && !f {f=NR} END {exit !(t && f && t < f)}' "$FAKE/fusao/fusao.log" && ok "watch enter tune antes do fas" || bad "watch enter tune antes do fas"
+awk '/watch: exit/ && !x {x=NR} x && NR > x && /fas: off/ && !f {f=NR} x && NR > x && /tune: apply/ && !t {t=NR} END {exit !(f && t && f < t)}' "$FAKE/fusao/fusao.log" && ok "watch exit fas antes do tune" || bad "watch exit fas antes do tune"
+pgrep -f "[f]as-rs run" >/dev/null && bad "watch exit mata o daemon" || ok "watch exit mata o daemon"
+for _p in $(pgrep -f "[f]as-rs run"); do kill "$_p" 2>/dev/null; done
+unset FAS_BIN FAS_NODE FAS_USER_TOML
+rm -f "$FAKE/fusao/fas.enabled"
 
 echo "----"
 echo "pass=$pass fail=$fail"

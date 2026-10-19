@@ -75,19 +75,150 @@ kl_line() { awk -F'\t' -v id="$1" '$1==id{print; exit}' "$KL_RUN/knobs.tsv"; }
 kl_read_raw() {
   # <access> <target> -> leitura crua (primeira linha)
   case "$1" in
-    file) head -n 1 "$2" 2>/dev/null | tr -d '\r' ;;
+    file)
+      case "$2" in
+        */scaling_min_freq) kl_read_floor "$2" ;;
+        *) head -n 1 "$2" 2>/dev/null | tr -d '\r' ;;
+      esac
+      ;;
     setting) settings get $2 2>/dev/null ;;
     ems) echo "@curset" ;;
+    daemon) kl_daemon_read "$2" ;;
   esac
 }
 
 kl_write_raw() {
   # <access> <target> <valor>
   case "$1" in
-    file) echo "$3" > "$2" 2>/dev/null ;;
+    file)
+      case "$2" in
+        */scaling_min_freq) kl_write_min "$2" "$3" ;;
+        *) echo "$3" > "$2" 2>/dev/null ;;
+      esac
+      ;;
     setting) settings put $2 "$3" >/dev/null 2>&1 ;;
     ems) echo "$2 $3" > "$KL_EMS_TUNER" 2>/dev/null ;;
+    daemon) kl_daemon_write "$2" "$3" ;;
   esac
+}
+
+# kl_read_floor <nó scaling_min_freq>: o valor lido é o piso EFETIVO (o maior pedido), e um hint da
+# Samsung (LISTVIEW_SCROLL, AMS_RESUME, jogo) sobe ele por instantes. Hint só sobe, então o menor
+# valor visto em ~1 s é o pedido real. Sem isso, o preflight leu 1536000 de um hint como "base" do
+# P4 (pedido real 1056000), o run abortou por baseline e a restauração gravou o hint (2026-10-18).
+kl_read_floor() {
+  _fl=$(head -n 1 "$1" 2>/dev/null | tr -d '\r')
+  _j=0
+  while [ "$_j" -lt 10 ]; do
+    sleep 0.1
+    _fv=$(head -n 1 "$1" 2>/dev/null | tr -d '\r')
+    [ -n "$_fv" ] && [ "$_fv" -lt "$_fl" ] 2>/dev/null && _fl=$_fv
+    _j=$((_j + 1))
+  done
+  echo "$_fl"
+}
+
+# kl_write_min <nó scaling_min_freq> <alvo>: policy0/min recusa descida em pulo único
+# (nodes-m54.md §10), então desce pelos degraus da tabela da própria policy; subida é direta.
+kl_write_min() {
+  _cur=$(head -n 1 "$1" 2>/dev/null | tr -d '\r')
+  if [ -n "$_cur" ] && [ "$2" -lt "$_cur" ] 2>/dev/null; then
+    for _s in $(tr ' ' '\n' < "${1%/*}/scaling_available_frequencies" | sort -rn); do
+      [ "$_s" -lt "$_cur" ] && [ "$_s" -gt "$2" ] && echo "$_s" > "$1" 2>/dev/null
+    done
+  fi
+  echo "$2" > "$1" 2>/dev/null
+}
+
+# ------------------------------------------------------------------ daemons (access=daemon)
+# Escrever 1 liga, 0 desliga. A leitura só dá 1 com o processo vivo E controlando desde que
+# ligou: um daemon vivo que não pegou o jogo invalida o trial em vez de medir "nada".
+KL_OPT=$KL_HOME/opt
+KL_CPU_POLICIES="/sys/devices/system/cpu/cpufreq/policy0 /sys/devices/system/cpu/cpufreq/policy4"
+
+kl_cpu_snapshot() {
+  # piso por kl_read_floor: um hint ativo na hora viraria "o piso de antes" e a restauração o
+  # gravaria como pedido nosso (2026-10-18: P4 1536000 no lugar de 1056000)
+  : > "$1"
+  for _pd in $KL_CPU_POLICIES; do
+    printf '%s\t%s\t%s\n' "$_pd" "$(kl_read_floor $_pd/scaling_min_freq)" "$(head -n 1 $_pd/scaling_max_freq)" >> "$1"
+  done
+}
+
+kl_cpu_restore() {
+  # teto antes (subir não pode esbarrar no piso velho), piso por degraus, teto de novo (descer)
+  [ -f "$1" ] || return 0
+  while IFS='	' read -r _pd _mn _mx; do
+    echo "$_mx" > "$_pd/scaling_max_freq" 2>/dev/null
+    kl_write_min "$_pd/scaling_min_freq" "$_mn"
+    echo "$_mx" > "$_pd/scaling_max_freq" 2>/dev/null
+  done < "$1"
+}
+
+kl_fasrs_pids() { pgrep -f "[f]as-rs-m54 run" 2>/dev/null; }
+
+kl_daemon_read() {
+  case "$1" in
+    fasrs)
+      if [ -z "$(kl_fasrs_pids)" ]; then
+        echo 0
+      elif [ -n "$KL_RUN" ] && [ -f "$KL_RUN/fasrs.off" ]; then
+        # "New fas buffer on" sai ANTES de controlar (o fas-rs ainda junta ~5 s de frames + 4 s);
+        # o fork loga "FAS working on" na entrada do controle e "FAS stopped" na saída
+        tail -c +$(($(cat "$KL_RUN/fasrs.off") + 1)) "$KL_RUN/fasrs.log" 2>/dev/null \
+          | grep -E "FAS working on|FAS stopped" | tail -n 1 | grep -q "FAS working on" && echo 1 || echo 0
+      else
+        echo 1
+      fi
+      ;;
+    *) echo "@absent" ;;
+  esac
+}
+
+kl_daemon_write() {
+  case "$1" in
+    fasrs) kl_fasrs "$2" ;;
+  esac
+}
+
+kl_fasrs() {
+  if [ "$1" = 1 ]; then
+    [ -n "$(kl_fasrs_pids)" ] && return 0
+    if [ ! -x "$KL_OPT/fas-rs-m54" ] || [ ! -f "$KL_OPT/games.toml" ]; then
+      kl_log "fasrs: fas-rs-m54/games.toml ausentes em $KL_OPT"
+      return 1
+    fi
+    kl_cpu_snapshot "$KL_RUN/fasrs_cpu.snap"
+    # o fas-rs lê a lista do usuário em /sdcard/Android/fas-rs; a do kernlab é a única fonte
+    mkdir -p /sdcard/Android/fas-rs
+    cp "$KL_OPT/games.toml" /sdcard/Android/fas-rs/games.toml
+    touch "$KL_RUN/fasrs.log"
+    wc -c < "$KL_RUN/fasrs.log" | tr -d ' ' > "$KL_RUN/fasrs.off"
+    nohup "$KL_OPT/fas-rs-m54" run "$KL_OPT/games.toml" >> "$KL_RUN/fasrs.log" 2>&1 &
+    kl_log "fasrs: ligado pid=$!"
+    # aquecimento: o trial só começa com o controle ativo (no Bleach a 45 fps: ~13 s)
+    _i=0
+    while [ "$(kl_daemon_read fasrs)" != 1 ] && [ "$_i" -lt 30 ]; do
+      sleep 1
+      _i=$((_i + 1))
+    done
+    kl_log "fasrs: controle $(kl_daemon_read fasrs) após ${_i}s"
+  else
+    _pids=$(kl_fasrs_pids)
+    [ -n "$_pids" ] || return 0
+    kill -TERM $_pids 2>/dev/null
+    _i=0
+    while [ -n "$(kl_fasrs_pids)" ] && [ "$_i" -lt 30 ]; do
+      sleep 0.1
+      _i=$((_i + 1))
+    done
+    _pids=$(kl_fasrs_pids)
+    [ -n "$_pids" ] && kill -KILL $_pids 2>/dev/null
+    # o fas-rs sai com min=max cravados: devolve a CPU de antes de ligar (o braço seguinte
+    # ainda reescreve os nós dele por cima, se o experimento declarar pisos/tetos)
+    kl_cpu_restore "$KL_RUN/fasrs_cpu.snap"
+    kl_log "fasrs: desligado, CPU devolvida ao snapshot"
+  fi
 }
 
 kl_set() {
@@ -237,6 +368,12 @@ kl_gate() {
   # Modo "start" (jogo in-situ): o jogo segura um piso o run inteiro (NTE: P0 min 1152000), que
   # é o regime medido; a referência passa a ser o piso lido no kl_begin e só um hint ACIMA dele
   # segura o trial. No modo "min" todo trial do jogo esperava 30 s e saía inválido.
+  # Modo "daemon": no braço com daemon ligado é ELE quem crava os pisos (fas-rs: min=max por
+  # frame), então esperar piso quieto mediria o próprio braço como hint e estouraria sempre.
+  if [ "$4" = daemon ]; then
+    printf 'gate_floor_wait_s=0\ngate_floor=daemon\n' >> "$KL_T/meta"
+    return 0
+  fi
   _fw=0
   _p0=/sys/devices/system/cpu/cpufreq/policy0
   _p4=/sys/devices/system/cpu/cpufreq/policy4

@@ -47,20 +47,38 @@ def deploy(dev: A.Device) -> None:
     dev.push(HERE / "device" / "agent.sh", f"{DEVICE_HOME}/agent.sh")
     for b in sorted((HERE / "device" / "bin").iterdir()):
         dev.push(b, f"{DEVICE_HOME}/bin/{b.name}")
+    # device/opt (fora do git): binários de terceiros que um daemon do registro usa (fas-rs, GPL)
+    opt = HERE / "device" / "opt"
+    if opt.is_dir():
+        dev.shell(f"mkdir -p {DEVICE_HOME}/opt")
+        for b in sorted(opt.iterdir()):
+            dev.push(b, f"{DEVICE_HOME}/opt/{b.name}")
+        dev.root(f"chmod 755 {DEVICE_HOME}/opt/*\n")
     dev.root(f"chmod 755 {DEVICE_HOME}/bin/*; chmod 644 {DEVICE_HOME}/agent.sh\n")
+
+
+def _is_floor(kn: K.Knob) -> bool:
+    return kn.access == "file" and kn.target.endswith("/scaling_min_freq")
 
 
 def _read_script(kn_list: list[K.Knob], want_curset: bool) -> str:
     lines = []
+    if any(kn.access == "daemon" or _is_floor(kn) for kn in kn_list):
+        lines.append(f". {DEVICE_HOME}/agent.sh")
     for kn in kn_list:
         for rx in K.READ_DENYLIST:
             if rx.search(kn.target):
                 raise K.KnobError(f"leitura proibida: {kn.target}")
-        if kn.access == "file":
+        if _is_floor(kn):
+            # mesma leitura do agente (menor piso em ~1 s): um hint da Samsung no preflight virava a base
+            lines.append(f"printf 'K\\t%s\\t%s\\n' '{kn.id}' \"$(kl_read_floor '{kn.target}')\"")
+        elif kn.access == "file":
             lines.append(f"if [ -e '{kn.target}' ]; then printf 'K\\t%s\\t%s\\n' '{kn.id}' \"$(head -n 1 '{kn.target}' 2>/dev/null | tr -d '\\r')\"; "
                          f"else printf 'K\\t%s\\t@absent\\n' '{kn.id}'; fi")
         elif kn.access == "setting":
             lines.append(f"printf 'K\\t%s\\t%s\\n' '{kn.id}' \"$(settings get {kn.target})\"")
+        elif kn.access == "daemon":
+            lines.append(f"printf 'K\\t%s\\t%s\\n' '{kn.id}' \"$(kl_daemon_read {kn.target})\"")
     if want_curset:
         lines += [f"echo '{MARK_CURSET}'", f"cat {K.EMS_CURSET}", f"echo '{MARK_END}'"]
     lines += [f"echo '{MARK_ETABLE}'", "cat /sys/devices/platform/ems/energy_table/energy_table", f"echo '{MARK_END}'"]

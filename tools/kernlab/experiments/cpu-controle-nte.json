@@ -1,0 +1,23 @@
+{
+  "$comment": "Quem controla a CPU no jogo (dono, 2026-10-18: 'aquele que for melhor'). Rodar com o NTE nos graficos que o dono usa (medium/low, limite 60 que ele nunca alcanca), NAO no maximo: no maximo o NTE e preso na GPU e a CPU nao decide nada. 'fusao' = FUSAO 2.10.0 como esta (perfil game em jogo: P0 1152000-2002000, P4 1056000-1824000). 'p4_2400' = o mesmo com o teto do P4 no maximo fisico (1824000 nao e teto de hardware: o kernlab mediu 2400000 segurando, media 1,88 GHz no game-tetos); separa 'o fas-rs ganha por controlar' de 'ganha so por soltar o teto errado'. 'fasrs' = fork M54 do fas-rs dono da CPU (min/max por frame), FUSAO no resto. REGRA DE DECISAO declarada antes: fps primeiro (ts_fps, limiar 5%); com fps EQUIVALENTE, menor pbat_mw ganha; empate fica no FUSAO (sem daemon a mais). Se p4_2400 empata com fasrs, a correcao e so o teto no perfil game. Pre-requisitos: bateria >= 30%, sem carregador, NTE em foco numa cena estavel (lobby parado), games.toml do device/opt com o alvo medido pela sonda.",
+  "name": "cpu-controle-nte",
+  "hypothesis": "nos graficos do dono o NTE fica abaixo de 60 por CPU; soltar o P4 (p4_2400) sobe ts_fps; o fas-rs so ganha do p4_2400 se cortar pbat_mw com fps equivalente.",
+  "workload": {"kind": "game", "package": "com.hottagames.nte", "duration_s": 20},
+  "arms": {
+    "fusao": {"daemon.fasrs": "@base",
+              "cpufreq.policy0.max": "@base", "cpufreq.policy4.max": "@base",
+              "cpufreq.policy0.min": "@base", "cpufreq.policy4.min": "@base"},
+    "p4_2400": {"daemon.fasrs": "0",
+                "cpufreq.policy0.max": "@base", "cpufreq.policy4.max": "2400000",
+                "cpufreq.policy0.min": "@base", "cpufreq.policy4.min": "@base"},
+    "fasrs": {"daemon.fasrs": "1",
+              "cpufreq.policy0.max": "@livre", "cpufreq.policy4.max": "@livre",
+              "cpufreq.policy0.min": "@livre", "cpufreq.policy4.min": "@livre"}
+  },
+  "rounds": 6,
+  "settle_s": 5,
+  "primary": "ts_fps",
+  "min_effect_pct": 5,
+  "allow_medium": true,
+  "gate": {"soc_c": 70, "batt_c": 40, "timeout_s": 120, "floor": "start"}
+}

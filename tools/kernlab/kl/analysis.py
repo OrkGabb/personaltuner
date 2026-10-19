@@ -19,7 +19,7 @@ from . import knobs as K
 from . import parse
 from . import stats
 from . import workloads as W
-from .plan import SCREEN, Experiment
+from .plan import FREE, SCREEN, Experiment
 
 
 @dataclass
@@ -67,6 +67,8 @@ def check_knobs(intended: dict[str, str], tdir: Path) -> list[str]:
         if m:
             seen_sets[(int(m.group(1)), int(m.group(2)))] = _curset(p)
     for kid, want in intended.items():
+        if want == FREE:
+            continue
         kn = K.get(kid)
         if kn.access == "ems":
             # o cur_set só mostra o conjunto ATIVO; cada observação em que o conjunto do nó estava

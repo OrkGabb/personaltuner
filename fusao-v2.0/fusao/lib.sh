@@ -105,6 +105,26 @@ selected_profile() {
   case "$_p" in battery|balanced|game) echo "$_p";; *) echo "balanced";; esac
 }
 
+# fas_bin — o fas-rs do módulo (fork M54); FAS_BIN sobrepõe (teste offline).
+fas_bin() {
+  local _b
+  for _b in "${FAS_BIN:-}" /data/adb/modules/encore/system/bin/fas-rs /system/bin/fas-rs; do
+    [ -n "$_b" ] && [ -x "$_b" ] && { echo "$_b"; return 0; }
+  done
+  return 1
+}
+
+# fas_owns_cpu — o FAS é o dono da CPU: ligado, sem kill-switch, binário presente e jogo da gamelist em
+# foco. SSOT p/ tune.sh (o verify não confere CPU) e watch/CLI (fusaod não sobe: ele escreve piso de CPU).
+fas_owns_cpu() {
+  local _g
+  [ -f "$M54_DIR/fas.enabled" ] || return 1
+  [ -f "$M54_DIR/disable" ] && return 1
+  fas_bin >/dev/null || return 1
+  _g=$(tr -d '[:space:]' < "$M54_DIR/game-active.txt" 2>/dev/null)
+  [ -n "$_g" ] && grep -Fxq "$_g" "$M54_DIR/gamelist.txt" 2>/dev/null
+}
+
 # effective_profile — o perfil EM VIGOR, SSOT p/ tune/framework/perf/watch/CLI (regra do dono, 2026-10-18):
 #   battery + jogo da gamelist em foco -> game (fora do jogo volta a battery);
 #   balanced fica balanced mesmo em jogo (jogos casuais); game é game.

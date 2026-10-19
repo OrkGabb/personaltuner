@@ -15,6 +15,8 @@
 #
 
 # FUSAO-M54: para cérebro + guard ANTES de reverter sysfs.
+# fas-rs primeiro: ele reescreve a CPU por frame e desfaria a restauração abaixo
+pkill -f "[f]as-rs run" 2>/dev/null
 if [ -x /data/adb/fusao/framework.sh ]; then
 	M54_DIR=/data/adb/fusao sh /data/adb/fusao/framework.sh idle 2>/dev/null
 fi
@@ -100,6 +102,8 @@ for b in sda sdb sdc sdd sde sdf mmcblk0; do
 done
 
 rm -rf /data/adb/fusao
+# lista do usuário do fas-rs (caminho fixo do upstream): só o FUSAO escreve nela
+rm -rf /sdcard/Android/fas-rs
 rm -f /data/adb/service.d/.fusao_cleanup.sh
 
 need_gone="fusaod fusao"

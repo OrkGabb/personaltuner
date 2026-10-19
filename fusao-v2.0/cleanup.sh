@@ -22,6 +22,8 @@ THIS_SCRIPT="/data/adb/service.d/.fusao_cleanup.sh"
 MODULE_CONFIG="/data/adb/fusao"
 
 if [ ! -d "$MODULE_DIR" ] || [ -f "$MODULE_DIR/disable" ]; then
+	# fas-rs primeiro: ele reescreve a CPU por frame e desfaria a restauração abaixo
+	pkill -f "[f]as-rs run" 2>/dev/null
 	if [ -x /data/adb/fusao/framework.sh ]; then
 		M54_DIR=/data/adb/fusao sh /data/adb/fusao/framework.sh idle 2>/dev/null
 	fi

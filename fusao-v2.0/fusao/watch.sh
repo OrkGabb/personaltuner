@@ -68,7 +68,8 @@ sync_fusaod_session() {
   local _in_game="$1" _prof _b _p
   [ -n "$FAKE_SETTINGS_DIR" ] && return 0
   _prof=$(selected_profile)
-  if [ "$_in_game" = "1" ] && [ -f "$M54_DIR/fusaod.enabled" ] && [ ! -f "$M54_DIR/disable" ] && [ "$_prof" != "battery" ]; then
+  # FAS ligado = fas-rs dono da CPU no jogo; o fusaod escreve piso de CPU e brigaria com ele
+  if [ "$_in_game" = "1" ] && [ -f "$M54_DIR/fusaod.enabled" ] && [ ! -f "$M54_DIR/fas.enabled" ] && [ ! -f "$M54_DIR/disable" ] && [ "$_prof" != "battery" ]; then
     if ! pgrep -f "[f]usaod serve" >/dev/null 2>&1; then
       _b=$(find_fusaod)
       if [ -n "$_b" ] && [ -d /sys/kernel/gpu ]; then
@@ -232,6 +233,10 @@ fire_enter() {
   elif [ -x "$(dirname "$0")/tune.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/tune.sh" auto 2>/dev/null && HOOKS="$HOOKS tune"
   fi
+  # FAS depois do tune: o perfil cobre o aquecimento do fas-rs (~10 s) e então ele assume a CPU
+  if [ -f "$M54_DIR/fas.enabled" ] && [ -x "$(dirname "$0")/fas.sh" ]; then
+    M54_DIR="$M54_DIR" sh "$(dirname "$0")/fas.sh" enter "$_pkg" 2>/dev/null && HOOKS="$HOOKS fas"
+  fi
   sync_fusaod_session 1
   [ -z "$HOOKS" ] && HOOKS=" nenhum (flags off)"
   log "watch: hooks$HOOKS [$_pkg]"
@@ -240,6 +245,9 @@ fire_enter() {
 fire_exit() {
   _exited_pkg="$1"
   log "watch: exit (foco fora da lista)"
+  # FAS antes do tune: o fas-rs sai com min=max cravados e o tune.sh do exit tem de escrever por último.
+  # Sem checar o .enabled: desligado no meio do jogo, o daemon ainda pode estar vivo.
+  [ -x "$(dirname "$0")/fas.sh" ] && M54_DIR="$M54_DIR" sh "$(dirname "$0")/fas.sh" exit 2>/dev/null
   sync_fusaod_session 0
   if [ -n "$_exited_pkg" ] && ! pidof "$_exited_pkg" >/dev/null 2>&1; then
     LAST_HEAVY_PKG=""

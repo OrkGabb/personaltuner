@@ -1,3 +1,5 @@
 runs/
 .device
 __pycache__/
+# binarios de terceiros (fas-rs = GPL-3.0) que o deploy envia; nao versionar
+device/opt/

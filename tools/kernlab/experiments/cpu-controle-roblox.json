@@ -1,0 +1,23 @@
+{
+  "$comment": "Mesmo desenho e mesma REGRA DE DECISAO do cpu-controle-nte.json (fps primeiro; fps equivalente -> menor pbat_mw; empate -> FUSAO; p4_2400 empatando com fasrs -> a correcao e so o teto). Roblox nos graficos do dono (sem limite configuravel, ~60+ fps). Trials de 15 s e settle 3 s porque o Roblox expulsa quem fica parado ~20 min: 36 trials precisam caber antes disso. Pre-requisitos: bateria >= 30%, sem carregador, Roblox em foco dentro de uma experiencia, parado, camera fixa.",
+  "name": "cpu-controle-roblox",
+  "hypothesis": "no Roblox que bate o limite de ~60, o fas-rs segura o fps com menos pbat_mw que o FUSAO; quando cai abaixo, o P4 solto (p4_2400 ou fasrs) devolve fps.",
+  "workload": {"kind": "game", "package": "com.roblox.client", "duration_s": 15},
+  "arms": {
+    "fusao": {"daemon.fasrs": "@base",
+              "cpufreq.policy0.max": "@base", "cpufreq.policy4.max": "@base",
+              "cpufreq.policy0.min": "@base", "cpufreq.policy4.min": "@base"},
+    "p4_2400": {"daemon.fasrs": "0",
+                "cpufreq.policy0.max": "@base", "cpufreq.policy4.max": "2400000",
+                "cpufreq.policy0.min": "@base", "cpufreq.policy4.min": "@base"},
+    "fasrs": {"daemon.fasrs": "1",
+              "cpufreq.policy0.max": "@livre", "cpufreq.policy4.max": "@livre",
+              "cpufreq.policy0.min": "@livre", "cpufreq.policy4.min": "@livre"}
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "ts_fps",
+  "min_effect_pct": 5,
+  "allow_medium": true,
+  "gate": {"soc_c": 70, "batt_c": 40, "timeout_s": 120, "floor": "start"}
+}

@@ -189,6 +189,60 @@ class TestPlan(unittest.TestCase):
         with self.assertRaises(K.KnobError):
             plan.baseline_from_preflight(e, {plan.SCREEN: "1800000", "cpuctl.top-app.uclamp.min": None}, None)
 
+    def _daemon_exp(self, **kw):
+        # CPU antes do daemon no JSON de propósito: a ordem de aplicação tem de sair do registro
+        arms = {"fusao": {"cpufreq.policy4.max": "@base", "daemon.fasrs": "@base"},
+                "p4_2400": {"daemon.fasrs": "0", "cpufreq.policy4.max": "2400000"},
+                "fasrs": {"cpufreq.policy4.max": "@livre", "daemon.fasrs": "1"}}
+        d = dict(workload={"kind": "game", "package": "com.roblox.client", "duration_s": 30}, arms=arms,
+                 rounds=2, allow_medium=True, gate={"soc_c": 70, "batt_c": 40, "timeout_s": 120, "floor": "start"})
+        d.update(kw)
+        return _exp(**d)
+
+    def test_free_needs_daemon_on_in_the_same_arm(self):
+        with self.assertRaises(K.KnobError):
+            plan.validate(_exp(arms={"A": {"cpufreq.policy4.max": "@base"}, "B": {"cpufreq.policy4.max": "@livre"}}))
+        with self.assertRaises(K.KnobError):   # referência livre: não haveria base para comparar
+            plan.validate(self._daemon_exp(arms={"A": {"daemon.fasrs": "1", "cpufreq.policy4.max": "@livre"},
+                                                 "B": {"daemon.fasrs": "0", "cpufreq.policy4.max": "@base"}}))
+        with self.assertRaises(K.KnobError):   # daemon de risco medium sem opt-in
+            plan.validate(self._daemon_exp(allow_medium=False))
+        plan.validate(self._daemon_exp())
+
+    def test_daemon_first_free_not_written_gate_skips_floor(self):
+        e = self._daemon_exp()
+        self.assertEqual(e.knob_ids(), ["daemon.fasrs", "cpufreq.policy4.max"])
+        raw = {"daemon.fasrs": "0", "cpufreq.policy4.max": "1824000", plan.SCREEN: "1800000"}
+        base = plan.baseline_from_preflight(e, raw, None)
+        script, _, man = plan.compile_plan(e, base, "rid", "/x")
+        self.assertEqual(man["intended"]["fasrs"], {"daemon.fasrs": "1", "cpufreq.policy4.max": plan.FREE})
+        self.assertEqual(man["intended"]["fusao"], {"daemon.fasrs": "0", "cpufreq.policy4.max": "1824000"})
+        self.assertNotIn("@livre", script)
+        for chunk in script.split("kl_trial ")[2:]:     # [0] = cabeçalho, [1] = aquecimento
+            arm = chunk.split()[1].strip("'")
+            sets = [ln for ln in chunk.splitlines() if ln.startswith("kl_set ")]
+            self.assertTrue(sets[0].startswith("kl_set 'daemon.fasrs'"))   # desliga antes de escrever a CPU
+            if arm == "fasrs":
+                self.assertEqual(sets, ["kl_set 'daemon.fasrs' '1'"])
+                self.assertIn("kl_gate 70 40 120 daemon\n", chunk)
+            else:
+                self.assertIn("kl_gate 70 40 120 start\n", chunk)
+
+    def test_free_node_not_checked_but_daemon_is(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            want = {"daemon.fasrs": "1", "cpufreq.policy4.max": plan.FREE}
+            (tmp / "knobs_pre.tsv").write_text("daemon.fasrs\t1\ncpufreq.policy4.max\t1152000\n", encoding="utf-8")
+            (tmp / "knobs_post.tsv").write_text("daemon.fasrs\t1\ncpufreq.policy4.max\t2016000\n", encoding="utf-8")
+            self.assertEqual(analysis.check_knobs(want, tmp), [])
+            # vivo mas sem pegar o jogo (ou morreu no meio): o agente lê 0 e o trial cai
+            (tmp / "knobs_post.tsv").write_text("daemon.fasrs\t0\ncpufreq.policy4.max\t2016000\n", encoding="utf-8")
+            probs = analysis.check_knobs(want, tmp)
+            self.assertEqual(len(probs), 1)
+            self.assertIn("daemon.fasrs: derivou", probs[0])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_ems_inactive_set_refused(self):
         cs = emstune.parse(fx("curset_l0.txt"))
         e = _exp(arms={"A": {"ems.pelt_margin.m3l0.cg4": "@base"}, "B": {"ems.pelt_margin.m3l0.cg4": "50"}},

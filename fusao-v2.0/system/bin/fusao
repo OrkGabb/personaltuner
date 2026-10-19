@@ -2,6 +2,7 @@
 # fusao CLI — controle único do módulo.
 # Uso: fusao profile [battery|balanced|game] | fusao framework [on|off|game|balanced|battery|idle]
 #      fusao perf [on|off] | fusao fusaod [on|off] | fusao dnd [on|off]
+#      fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|30,45,60>|gen]
 #      fusao preload [on|off|prepare [pkg|all]|now [pkg|all]|record [pkg] [s]|status]
 #      fusao display [show|720p|810p|900p|reset]
 #      fusao gamelist [list|add <pkg>|del <pkg>|count|eligible]
@@ -72,7 +73,8 @@ sync_fusaod_for_profile() {
   local _prof="$1" _ga _b _p
   [ -n "$FAKE_SETTINGS_DIR" ] && return 0
   _ga=$(cat "$M54_DIR/game-active.txt" 2>/dev/null | tr -d '[:space:]')
-  if [ -f "$M54_DIR/fusaod.enabled" ] && [ ! -f "$M54_DIR/disable" ] && [ -n "$_ga" ] && [ "$_prof" != "battery" ]; then
+  # FAS ligado = fas-rs dono da CPU no jogo; o fusaod escreve piso de CPU e brigaria com ele
+  if [ -f "$M54_DIR/fusaod.enabled" ] && [ ! -f "$M54_DIR/fas.enabled" ] && [ ! -f "$M54_DIR/disable" ] && [ -n "$_ga" ] && [ "$_prof" != "battery" ]; then
     if ! pgrep -f "[f]usaod serve" >/dev/null 2>&1; then
       _b=$(find_fusaod)
       if [ -n "$_b" ] && [ -d /sys/kernel/gpu ]; then
@@ -391,6 +393,42 @@ case "$cmd" in
         [ -f "$M54_DIR/fusaod.enabled" ] && echo "fusaod=on" || echo "fusaod=off"
         ;;
     esac;;
+  fas)
+    _fas="$M54_DIR/fas.sh"
+    _ga=$(tr -d '[:space:]' < "$M54_DIR/game-active.txt" 2>/dev/null)
+    _prof=$(tr -d '[:space:]' < "$M54_DIR/profile" 2>/dev/null)
+    case "$arg" in
+      on)
+        touch "$M54_DIR/fas.enabled"
+        sync_fusaod_for_profile "${_prof:-balanced}"
+        if [ -n "$_ga" ] && [ -f "$_fas" ]; then
+          M54_DIR="$M54_DIR" sh "$_fas" enter "$_ga" >/dev/null 2>&1
+          echo "fas=on (jogo ativo: ligado agora)"
+        else
+          echo "fas=on (armado: liga no próximo game-enter)"
+        fi
+        ;;
+      off)
+        rm -f "$M54_DIR/fas.enabled"
+        [ -f "$_fas" ] && M54_DIR="$M54_DIR" sh "$_fas" exit >/dev/null 2>&1
+        # o fas-rs sai com a CPU cravada: com jogo ativo o perfil em vigor volta a ser o dono
+        if [ -n "$_ga" ] && [ -f "$M54_DIR/tune.sh" ]; then
+          M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/tune.sh" auto >/dev/null 2>&1
+        fi
+        sync_fusaod_for_profile "${_prof:-balanced}"
+        echo "fas=off"
+        ;;
+      mode|target|gen)
+        M54_DIR="$M54_DIR" sh "$_fas" "$arg" "$3" "$4"
+        ;;
+      status|"")
+        M54_DIR="$M54_DIR" sh "$_fas" status
+        ;;
+      *)
+        echo "uso: fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|30,45,60>|gen]"
+        exit 1
+        ;;
+    esac;;
   dnd)
     case "$arg" in
       on)
@@ -652,6 +690,11 @@ case "$cmd" in
     [ -f "$M54_DIR/preload.enabled" ] && echo "preload=on" || echo "preload=off"
     [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off"
     [ -f "$M54_DIR/gos_killer.paused" ] && echo "gos=off" || echo "gos=on"
+    if [ -f "$M54_DIR/fas.sh" ]; then
+      M54_DIR="$M54_DIR" sh "$M54_DIR/fas.sh" status 2>/dev/null
+    else
+      [ -f "$M54_DIR/fas.enabled" ] && echo "fas=on" || echo "fas=off"
+    fi
     echo "display=$(M54_DIR="$M54_DIR" sh "$M54_DIR/display.sh" show 2>/dev/null)"
     echo "thermal=$(grep -E '^thermal=' "$M54_DIR/config" 2>/dev/null | tail -1 | cut -d= -f2-)"
     echo "--- última atividade dos ganchos (foi ou não) ---"
@@ -669,7 +712,7 @@ case "$cmd" in
       on)
         touch "$M54_DIR/disable"
         if [ -z "$FAKE_SETTINGS_DIR" ]; then
-          for _pat in "[f]usaod serve" "[f]usao.observer" "[w]atch.sh" "[t]hermal_guard.sh" "[g]os_killer"; do
+          for _pat in "[f]usaod serve" "[f]usao.observer" "[w]atch.sh" "[t]hermal_guard.sh" "[g]os_killer" "[f]as-rs run"; do
             for _p in $(pgrep -f "$_pat" 2>/dev/null); do
               [ "$_p" = "$$" ] || kill -TERM "$_p" 2>/dev/null
             done
@@ -693,5 +736,5 @@ case "$cmd" in
       del) [ -n "$3" ] && { grep -Fxv "$3" "$M54_DIR/gamelist.txt" 2>/dev/null > "$M54_DIR/gamelist.tmp"; [ $? -le 1 ] && mv -f "$M54_DIR/gamelist.tmp" "$M54_DIR/gamelist.txt"; echo "removed $3"; };;
       *) printf "%s\n" "$arg" "$3" "$4" "$5" "$6" | grep -v "^$" > "$M54_DIR/gamelist.txt"; echo "gamelist substituida";;
     esac;;
-  *) echo "fusao: profile|framework|perf|fusaod|dnd|preload|ramclean|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"; exit 1;;
+  *) echo "fusao: profile|framework|perf|fusaod|fas|dnd|preload|ramclean|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"; exit 1;;
 esac

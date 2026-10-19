@@ -1,0 +1,37 @@
+{
+  "$comment": "Bleach: Soul Resonance (Unity), graficos MINIMOS do dono. FUSAO (perfil game) x fork M54 do fas-rs com alvo [30, 45, 60] (o jogo crava 44,8 fps; com [30, 60] o fas-rs mirava 60 e jogava a CPU no maximo a toa). Checagem 2026-10-18 21:56 (15 s por estado, A B A): fas-rs cravou P0/P4 em 768000 (f4 771 x 1521 MHz), fps 45,9 x 46,4, ~2354 x ~2826 mW (-17%), mas frames >= 33 ms 2,2% x 0,1%. Sem p4_2400: em jogo o termico nao deixa o P4 em 2400000 (11/12 trials caidos no run 213345) e a CPU nao e o limite aqui. REGRA DE DECISAO (declarada antes): fps primeiro (ts_fps, 5%); fps equivalente -> a cauda nao pode piorar (ts_p2p_ge33ms_pct / p95); com as duas iguais -> menor pbat_mw; empate -> FUSAO. Se a cauda piorar com pbat bem menor, a troca vai para o dono decidir (nao e empate). Trials de 10 s, settle 3 s, 6 blocos (minimo para veredito). Pre-requisitos: bateria >= 30%, sem carregador, Bleach em foco numa cena estavel, sem tocar.",
+  "name": "cpu-controle-bleach",
+  "hypothesis": "o fas-rs segura ts_fps com bem menos pbat_mw que o FUSAO; o custo e a cauda (frames >= 33 ms).",
+  "workload": {
+    "kind": "game",
+    "package": "com.crunchyroll.bleachsoulres",
+    "duration_s": 10
+  },
+  "arms": {
+    "fusao": {
+      "daemon.fasrs": "@base",
+      "cpufreq.policy0.max": "@base",
+      "cpufreq.policy4.max": "@base",
+      "cpufreq.policy0.min": "@base",
+      "cpufreq.policy4.min": "@base"
+    },
+    "fasrs": {
+      "daemon.fasrs": "1",
+      "cpufreq.policy0.max": "@livre",
+      "cpufreq.policy4.max": "@livre",
+      "cpufreq.policy0.min": "@livre",
+      "cpufreq.policy4.min": "@livre"
+    }
+  },
+  "rounds": 6,
+  "settle_s": 3,
+  "primary": "ts_fps",
+  "min_effect_pct": 5,
+  "allow_medium": true,
+  "gate": {
+    "soc_c": 70,
+    "batt_c": 40,
+    "timeout_s": 120,
+    "floor": "start"
+  }
+}

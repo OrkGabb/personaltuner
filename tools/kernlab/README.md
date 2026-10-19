@@ -124,6 +124,25 @@ início do run (só hint ACIMA dele segura o trial). Com o padrão `"min"` todo 
 esperava 30 s e saía inválido. Em jogo o térmico da Samsung assume os tetos de GPU/CPU depois
 de ~8 min: trial cujo teto derivou é excluído (2026-10-18: 12/36 e 9/24 válidos).
 
+## Daemon como braço (fas-rs)
+
+Um processo que é dono de nós enquanto vive entra como nó de `access: daemon` (`daemon.fasrs`):
+`1` liga, `0` desliga e devolve os pisos/tetos de CPU de antes de ligar. A leitura só dá `1` com o
+processo vivo **e** controlando desde que ligou (fork do fas-rs: a última linha `FAS working on` /
+`FAS stopped` do log é a de working; `New fas buffer on` sai ~10 s antes do controle e não prova
+nada), então um daemon que não pegou o jogo invalida o trial. Ligar espera o controle começar (até 30 s). No braço dele, os nós que ele escreve vão como `"@livre"` (o
+plano não escreve nem confere; o braço de referência não pode ter nó livre) e o portão de piso é
+pulado (é o daemon que crava os pisos). O daemon é aplicado antes dos nós em todo trial e na restauração.
+
+- Binários de terceiros ficam em `device/opt/` (fora do git; o deploy envia): `fas-rs-m54` + `games.toml`
+  (a única lista que o agente copia para `/sdcard/Android/fas-rs/`), `fa-patched`/`fa-upstream`.
+  Receita do fork: `~/fas-m54/build.sh` no WSL (status.md, seção fas-rs).
+- Antes do primeiro run com o daemon: `device/sonda_frames.sh <pacote>` (envio manual) com o jogo em
+  foco. `fa-upstream` tem de falhar ao anexar (controle negativo) e `fa-patched` tem de contar o mesmo
+  fps que o TimeStats; o dobro = duas superfícies no mesmo fluxo, e o fas-rs veria frametime errado.
+- `cpu-controle-nte.json` / `cpu-controle-roblox.json`: FUSAO como está × P4 solto (2400000) × fas-rs,
+  nos gráficos do dono.
+
 ## Estender
 
 - **Nó novo**: uma linha em `kl/knobs.py` com caminho, tipo e domínio seguro. Leia o nó uma

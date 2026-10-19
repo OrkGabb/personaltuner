@@ -155,6 +155,21 @@ private val FLAG_SPECS = listOf(
         category = "SAMSUNG MITIGATION · KILLER",
         accent = FusaoPalette.CrimsonCore,
     ),
+    FlagSpec(
+        cmd = "fas",
+        title = "fas",
+        desc = "fas-rs controla a CPU por frame no jogo",
+        category = "FRAME AWARE · GAME-ENTER",
+        accent = FusaoPalette.MintPulse,
+    ),
+)
+
+/** Rótulos dos modos do fas-rs (margem de fps abaixo do alvo). */
+private val FAS_MODE_LABELS = mapOf(
+    "powersave" to "ECONOMIA",
+    "balance" to "EQUILÍBRIO",
+    "performance" to "DESEMPENHO",
+    "fast" to "RÁPIDO",
 )
 
 class MainActivity : ComponentActivity() {
@@ -212,6 +227,7 @@ class MainActivity : ComponentActivity() {
                         selectedTab = tab,
                         onSelectTab = { tab = it },
                         activeFlags = state.status.activeFlagsCount,
+                        flagsTotal = state.status.flagsTotal,
                         gamesCount = state.games.size,
                         inGame = state.status.inGame,
                         accentColor = profileAccent,
@@ -399,14 +415,15 @@ class MainActivity : ComponentActivity() {
         selectedTab: Int,
         onSelectTab: (Int) -> Unit,
         activeFlags: Int,
+        flagsTotal: Int,
         gamesCount: Int,
         inGame: Boolean,
         accentColor: Color,
     ) {
-        val tabs = remember(activeFlags, gamesCount, inGame) {
+        val tabs = remember(activeFlags, flagsTotal, gamesCount, inGame) {
             listOf(
                 Triple("Status", FusaoNavIcon.STATUS, if (inGame) "LIVE" else null),
-                Triple("Flags", FusaoNavIcon.FLAGS, "$activeFlags/7"),
+                Triple("Flags", FusaoNavIcon.FLAGS, "$activeFlags/$flagsTotal"),
                 Triple("Preload", FusaoNavIcon.PRELOAD, null),
                 Triple("Jogos", FusaoNavIcon.GAMES, if (gamesCount > 0) "$gamesCount" else null),
                 Triple("Log", FusaoNavIcon.LOG, null),
@@ -1236,6 +1253,8 @@ class MainActivity : ComponentActivity() {
     private fun FlagsTab(state: FusaoUiState) {
         val st = state.status
         val busy = state.anyBusy()
+        // módulo < 2.11.0 não tem FAS: a chave nem aparece (o CLI antigo recusaria `fas on`)
+        val specs = remember(st.fasSupported) { FLAG_SPECS.filter { it.cmd != "fas" || st.fasSupported } }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -1254,7 +1273,7 @@ class MainActivity : ComponentActivity() {
                         accentColor = FusaoPalette.CryoCyan,
                         trailing = {
                             TelemetryPill(
-                                text = "${st.activeFlagsCount}/7 ATIVOS",
+                                text = "${st.activeFlagsCount}/${st.flagsTotal} ATIVOS",
                                 color = FusaoPalette.CryoCyan,
                                 filled = true,
                             )
@@ -1263,7 +1282,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            items(items = FLAG_SPECS, key = { it.cmd }) { spec ->
+            items(items = specs, key = { it.cmd }) { spec ->
                 val checked = st.flag(spec.cmd)
                 val isThisFlagBusy = state.isBusy(Busy.FLAG) && state.activeTarget == spec.cmd
                 val available = state.rooted && state.moduleInstalled
@@ -1276,6 +1295,10 @@ class MainActivity : ComponentActivity() {
                     spec.cmd == "dnd" && !checked -> "DESARMADO"
                     spec.cmd == "gos" && checked -> "KILLER ATIVO"
                     spec.cmd == "gos" && !checked -> "PAUSADO"
+                    spec.cmd == "fas" && checked && !st.fasBinOk -> "SEM BINÁRIO"
+                    spec.cmd == "fas" && checked && st.fasState == "working" -> "CONTROLANDO"
+                    spec.cmd == "fas" && checked && st.fasState == "waiting" -> "AQUECENDO"
+                    spec.cmd == "fas" && checked -> "ARMADO (PRÓX. JOGO)"
                     checked -> "ATIVO"
                     else -> "INATIVO"
                 }
@@ -1283,6 +1306,7 @@ class MainActivity : ComponentActivity() {
                 val badgeColor = when {
                     !available -> FusaoPalette.TextMuted
                     isThisFlagBusy -> FusaoPalette.CryoCyan
+                    spec.cmd == "fas" && checked && !st.fasBinOk -> FusaoPalette.CrimsonCore
                     checked -> spec.accent
                     spec.cmd == "gos" && !checked -> FusaoPalette.IgnisAmber
                     else -> FusaoPalette.TextMuted
@@ -1347,6 +1371,115 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            }
+
+            if (st.fasSupported) {
+                item(key = "fas_panel") {
+                    FasPanel(state)
+                }
+            }
+        }
+    }
+
+    /** Painel do FAS (fas-rs): estado em jogo, trava de GPU saturada e modo. Alvo por jogo fica na aba Jogos. */
+    @Composable
+    private fun FasPanel(state: FusaoUiState) {
+        val st = state.status
+        val busy = state.anyBusy()
+        val accent = FusaoPalette.MintPulse
+        val working = st.fas && st.fasState == "working"
+
+        TacticalPanel(
+            modifier = Modifier.fillMaxWidth(),
+            accentColor = if (st.fas) accent else FusaoPalette.BorderSubtle,
+            highlighted = working,
+            contentPadding = PaddingValues(14.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                HudSectionHeader(
+                    title = "FAS · fas-rs",
+                    subtitle = "A CPU mais baixa que ainda segura o fps do jogo, frame a frame",
+                    accentColor = accent,
+                    trailing = {
+                        TelemetryPill(
+                            text = when {
+                                !st.fas -> "DESLIGADO"
+                                !st.fasBinOk -> "SEM BINÁRIO"
+                                working -> "CONTROLANDO"
+                                st.fasState == "waiting" -> "AQUECENDO"
+                                else -> "ARMADO"
+                            },
+                            color = when {
+                                !st.fas -> FusaoPalette.TextMuted
+                                !st.fasBinOk -> FusaoPalette.CrimsonCore
+                                else -> accent
+                            },
+                            filled = working,
+                            pulsingDot = working,
+                        )
+                    },
+                )
+
+                if (working) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = state.labelFor(st.fasGame),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = FusaoPalette.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (st.fasGpu == "saturated") {
+                            // a trava do fork: GPU >= 95% ocupada = frame lento é da GPU, a CPU não sobe
+                            TelemetryPill(
+                                text = "GPU SATURADA · SEM BOOST",
+                                color = FusaoPalette.IgnisAmber,
+                                filled = true,
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "MODO · MARGEM ABAIXO DO ALVO",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FusaoPalette.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                FAS_MODES.chunked(2).forEach { rowModes ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        rowModes.forEach { mode ->
+                            val selected = st.fasMode == mode
+                            TacticalButton(
+                                text = mode,
+                                subtitle = if (selected) "ATIVO" else FAS_MODE_LABELS[mode],
+                                onClick = { vm.setFasMode(mode) },
+                                enabled = state.rooted && !busy && !selected,
+                                filled = selected,
+                                isLoading = state.isBusy(Busy.FLAG) && state.activeTarget == "fas_mode:$mode",
+                                accentColor = accent,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Medido no Bleach (gráficos mínimos, limite 45): −10% de bateria e CPU 3,5 °C mais fria " +
+                        "com o mesmo fps, em troca de ~1 frame lento a cada 3 s. Limite de fps por jogo: aba Jogos, " +
+                        "toque no FAS de cada jogo.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FusaoPalette.TextSecondary,
+                )
             }
         }
     }
@@ -2049,6 +2182,19 @@ class MainActivity : ComponentActivity() {
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
+                                        if (state.status.fas && state.status.fasSupported) {
+                                            // toque avança o limite de fps do jogo: AUTO -> 30 -> 40 -> ... -> 144 -> AUTO
+                                            val fasCap = fasCapOf(state.fasTargets[pkg])
+                                            val isFasBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "fas_target:$pkg"
+                                            TelemetryPill(
+                                                text = if (isFasBusy) "FAS · …" else "FAS · ${fasCap?.let { "$it FPS" } ?: "AUTO"}",
+                                                color = FusaoPalette.MintPulse,
+                                                filled = fasCap != null,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .clickable(enabled = state.rooted && !busy) { vm.cycleFasCap(pkg) },
+                                            )
+                                        }
                                         if (!isInstalled && state.apps.isNotEmpty()) {
                                             Text(
                                                 text = "Registrado em gamelist.txt (não instalado)",

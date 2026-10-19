@@ -1,0 +1,37 @@
+From 24fed832240fbc95f82eda2573d1c35e0576c4f4 Mon Sep 17 00:00:00 2001
+From: OrkGabb <gabrielribeiroggv@gmail.com>
+Date: Sun, 18 Oct 2026 21:54:08 -0300
+Subject: [PATCH 2/3] looper: log when FAS starts/stops controlling
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/framework/scheduler/looper/mod.rs | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/framework/scheduler/looper/mod.rs b/src/framework/scheduler/looper/mod.rs
+index c952c63..6ac896b 100644
+--- a/src/framework/scheduler/looper/mod.rs
++++ b/src/framework/scheduler/looper/mod.rs
+@@ -259,6 +259,7 @@ impl Looper {
+     pub fn disable_fas(&mut self) {
+         match self.fas_state.working_state {
+             State::Working => {
++                info!("FAS stopped");
+                 self.fas_state.working_state = State::NotWorking;
+                 self.cleaner.undo_cleanup();
+                 self.controller_state
+@@ -280,6 +281,11 @@ impl Looper {
+             }
+             State::Waiting => {
+                 if self.fas_state.delay_timer.elapsed() > DELAY_TIME {
++                    // kernlab (M54) uses this line as proof that FAS is controlling, not just buffering
++                    info!(
++                        "FAS working on [{}]",
++                        self.fas_state.buffer.as_ref().unwrap().package_info.pkg
++                    );
+                     self.fas_state.working_state = State::Working;
+                     self.cleaner.cleanup();
+                     self.controller_state.target_fps_offset = 0.0;
+-- 
+2.53.0
+

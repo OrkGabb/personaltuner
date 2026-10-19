@@ -1046,3 +1046,98 @@ próprio NTE (~1,6 GB lidos a cada abertura).
   read_ahead maior no nó certo atrasa e lê mais. O 128 (stock, mantido pelo 2.10.0) é o certo.
 - Estado ao fechar: read_ahead dm-60 = 128, preload off, 2.10.0 ativo (battery 9/9 confirmado 18:24).
 - Dono: testes curtos (2 aberturas por lado bastam p/ ver diferença grande); nada de bateria longa.
+
+## fas-rs: fork M54 + braço "daemon" no kernlab (2026-10-18 ~20:00-21:30, sem tocar no aparelho)
+Pedido do dono: usar o fas-rs (FAS por eBPF) se for melhor que a abordagem atual.
+- **O fas-rs de release não roda aqui (confirmado na tabela de símbolos, não executado)**: o
+  frame-analyzer anexa um uprobe em `Surface::queueBuffer(ANativeWindowBuffer*, int[, ...])` do
+  `/system/lib64/libgui.so`, e o libgui do OneUI 8.5 (Android 16) não tem nenhum dos dois. Tem
+  `Surface::hook_queueBuffer(ANativeWindow*, ANativeWindowBuffer*, int)` (entrada do ANativeWindow:
+  EGL e Vulkan passam por ela). Mesmo bug do issue #349 do fas-rs (Android 16 QPR1, aberto).
+  Kernel tem o necessário: `UPROBES`, `UPROBE_EVENTS`, `BPF_EVENTS`, BTF, JIT; `perf_event_paranoid=-1`.
+- **Fork** em `~/fas-m54` no WSL (branches locais `m54`): fallback para `hook_queueBuffer` em
+  `frame-analyzer/src/uprobe.rs` + `[patch.crates-io]` no fas-rs. Receita `~/fas-m54/build.sh`
+  (nightly + cargo-ndk + bpf-linker 0.12.0 oficial; o do apt não serve: rustc nightly usa LLVM 23).
+  Binários em `tools/kernlab/device/opt/` (fora do git, GPL-3.0): `fas-rs-m54`, `fa-patched`,
+  `fa-upstream` (controle negativo, sem a correção). Attach NÃO provado no aparelho ainda.
+- **Correção do dono que muda o escopo**: todos os testes de jogo foram com gráficos no MÁXIMO (aí a GPU
+  manda e a CPU não compra frame). O dono joga em medium/low: NTE limitado a 60 (nunca chega), Roblox
+  sem limite configurável (~60+). Lá a CPU pode decidir, e é onde um FAS faz sentido.
+- **Achado**: o perfil `game` capa o P4 em 1824000 achando que é teto de hardware (`fusaod`/`tune.sh`,
+  nodes-m54 §10). Não é: o `game-tetos` mediu 2400000 segurando (f4 médio 1,88 GHz). Por isso o
+  experimento tem o braço `p4_2400`: separa "o fas-rs ganha por controlar" de "ganha por soltar o teto".
+- Com `battery` escolhido + jogo da lista (uso do dono) o `fusaod` NÃO roda: o único escritor de CPU do
+  FUSAO em jogo é o `tune.sh`, uma vez, na entrada. fas-rs dono da CPU + FUSAO no resto não briga.
+- **kernlab**: nó `daemon.fasrs` (access `daemon`: 1 liga, 0 desliga e devolve a CPU de antes; leitura
+  = 1 só com o processo vivo E controlando; ver correção abaixo: "New fas buffer on" NÃO prova controle), valor `@livre` (nó do daemon
+  no braço dele: não escreve nem confere), pisos `cpufreq.policy{0,4}.min` (descida por degraus no
+  agente), portão de piso pulado no braço com daemon. 36/36 testes offline; as 5 peças novas têm teste
+  que FALHA quando a peça é desfeita.
+- **Para rodar** (bateria ≥30%, sem carregador, gráficos do dono): (1) `device/sonda_frames.sh <pacote>`
+  no jogo em foco: `fa-upstream` tem de falhar, `fa-patched` tem de contar ≈ o fps do TimeStats (2x =
+  duas superfícies no mesmo fluxo, o fas-rs veria frametime errado); acertar os alvos do
+  `device/opt/games.toml` (provisórios: [60]); (2) `cpu-controle-nte.json` / `cpu-controle-roblox.json`
+  (36 trials, ~20/16 min). Regra declarada antes: fps primeiro; fps equivalente -> menor pbat_mw;
+  empate -> FUSAO; `p4_2400` empatando com `fasrs` -> só subir o teto do perfil game.
+- Risco do passo 1: uprobe dentro do jogo em kernel Samsung stock. Baixo, mas panic = root temporário perdido.
+- **Sonda PROVADA no Bleach: Soul Resonance** (21:2x, WiFi `:45459`, bateria 46% sem cabo, boot_id
+  `324cbe74` igual antes/depois): `fa-upstream` rc=1 `unknown symbol ...queueBuffer...` (controle negativo);
+  `fa-patched` 695 frames / 36,4 fps / mediana 24,1 ms × TimeStats na mesma janela 704 / 35,7 / 24 ms
+  (SurfaceView única). **fas-rs ponta a ponta** (25 s, alvo provisório [30, 60]): "New fas buffer on" em
+  2 s; com o jogo abaixo de 58 fps ele subiu o teto do P4 1824000 -> 2400000 (cur 2,2-2,4 GHz; o térmico
+  cortou para 2304000); desligar devolveu P0/P4 exatamente ao snapshot. No mesmo momento a GPU estava a
+  949 MHz com 99% de ocupação (o jogo estava preso na GPU, 36-39 fps): fps 39,1 com fas-rs vs 35,7 antes,
+  janelas/cenas diferentes = sem conclusão. `cpu-controle-bleach.json` pronto.
+- **Run `20261018-213345-cpu-controle-bleach` (36 trials, 25 válidos) NÃO testou FAS** (erro meu no
+  desenho): o fas-rs nunca cravou frequência em nenhum dos 12 trials dele (telemetria: f4 1056-2400 dentro
+  de cada trial). "New fas buffer on" sai na criação do buffer, ~10 s antes do controle (300 frames no alvo
+  60 + 1 s + DELAY_TIME 3 s), e a checagem aceitou. O que o run mediu: pisos do perfil game × faixa inteira
+  = fps -0,1% / pbat +1,4% (EQUIVALENTE ±5%). `p4_2400`: 1 bloco válido (o térmico capa o P4 em
+  1824000-2112000 em jogo). Corrigido: fork loga `FAS working on [pkg]` / `FAS stopped` (commit `24fed83`
+  local); o agente exige o working e espera até 30 s ao ligar.
+- **fas-rs debug, 40 s no Bleach (gráficos mínimos)**: fps CRAVADO em 44,8 (22,3 ms; parece opção de 45 do
+  jogo); alvo [30, 60] -> alvo 60 -> 1528 de 1530 decisões = subir; todas as policies pedidas em 2400000;
+  fps continuou 44,8 = a CPU não é o limite ali. O fas-rs neste aparelho só escreve teto (piso fica no
+  mínimo da tabela: caminho "não crítico"); `core_temperature: 0` = o térmico do fas-rs está inerte.
+  Alvo errado = CPU no máximo à toa: a lista do jogo TEM de bater com o limite de fps configurado nele.
+- Bug do snapshot de CPU (pegou o piso do P4 em 1536000 de um hint e regravou como pedido): corrigido no
+  aparelho (P4 min 1056000) e no agente (menor piso lido em ~1 s).
+- **Checagem com controle de verdade** (21:56, release `1704aec3...` com o log novo, alvo [30, 45, 60], 15 s
+  por estado, FUSAO / fas-rs / FUSAO): "FAS working on" 9 s depois de ligar; fas-rs cravou P0 e P4 em
+  768000 (f4 771 MHz × 1521 com FUSAO); ts_fps 45,9 × 46,4/46,4; pbat ~2354 × ~2868/~2784 mW (−17%);
+  frames ≥33 ms 2,2% × 0,1%/0,0%. n=1 por estado = indicação. `cpu-controle-bleach.json` agora é FUSAO ×
+  fas-rs (24 trials, ~10 min).
+- Run `20261018-220455` abortou no início (`baseline_changed`): o preflight leu o P4 min 1536000 de um hint
+  e a restauração do aborto gravou o hint (corrigido à mão para 1056000). Corrigido no kernlab: todo
+  `scaling_min_freq` é lido como o menor valor em ~1 s (`kl_read_floor`, no agente e no preflight).
+- **Run `20261018-220702-cpu-controle-bleach` (FUSAO × fas-rs, alvo [30, 45, 60], 24 trials)**: o térmico da
+  Samsung (bateria ~38,6 °C) baixou os TETOS no braço FUSAO (P0 2002000 -> 1824000-1920000, P4 1824000 ->
+  1632000-1728000), 11/12 trials dele excluídos pelo "não segurou" -> leitura estrita = 1 bloco, INSUFICIENTE.
+  Leitura de SENSIBILIDADE (não pré-declarada; inclui os trials cujo único problema é teto cortado pelo
+  térmico, o que só pode baixar a potência do FUSAO, logo é conservadora para o fas-rs), 6 blocos:
+  ts_fps −1,3% [−2,3, −0,2] EQUIVALENTE; **pbat_mw −10,4% [−13,3, −7,5] p=0,031**; frames ≥33 ms
+  0,13% -> 0,79% (PIORA, p=0,031); p95 igual; f4 −51%, f0 −36%, MIF −7%, tbig 55,3 -> 51,8 °C. fas-rs
+  "controle 1" em 8-10 s nos 12 trials dele. Pela regra declarada (cauda não pode piorar) o FUSAO ganha,
+  mas a regra também manda a troca bateria × cauda para o dono decidir.
+- Estado ao fechar o run: fas-rs parado; pedidos de CPU restaurados ao perfil game; o efetivo segue capado
+  pelo térmico (P0 1824000, P4 1536000, bateria 38,9 °C) até esfriar.
+
+## 2.11.0/1603 + app 1.1.0: FAS (fas-rs) adotado (dono, 2026-10-18 ~23:30)
+Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%, frames ≥33 ms 0,13% -> 0,79%).
+- **Fork**: + `0003` trava de GPU saturada (`gpu_busy` ≥ 95% = não sobe a CPU; NÃO medida num jogo preso na
+  GPU ainda). Binário `0695467d...` em `fusao-v2.0/system/bin/fas-rs`; fonte GPL em `tools/fas-rs-m54/`.
+- **Módulo**: `fusao/fas.sh` (enter/exit/gen/status/mode/target) gera a lista do fas-rs da `gamelist.txt`
+  (SSOT; escada automática 30/45/60/90/120, limite por jogo em `fas.targets`), liga no game-enter DEPOIS do
+  tune (o perfil cobre o aquecimento ~10 s) e desliga no exit ANTES do tune (o tune escreve a CPU por
+  último). `lib.sh fas_owns_cpu` = FAS ligado + binário + jogo da gamelist em foco: o verify do tune não
+  confere CPU (resumo `CPU:FAS`) e o `fusaod` não sobe em jogo. CLI `fusao fas on|off|status|mode|target|gen`
+  + linhas `fas_*` no `fusao status`; boot liga o FAS UMA vez (`.fas_seeded`); kill-switch/cleanup/uninstall
+  matam o fas-rs antes de restaurar a CPU; bugreport leva `fas.log`/lista.
+- **App 1.1.0 (versionCode 2)**: chave `fas` na aba Flags (CONTROLANDO/AQUECENDO/ARMADO/SEM BINÁRIO), painel
+  FAS (estado, GPU saturada, 4 modos), aba Jogos com "FAS · AUTO/N FPS" por jogo (toque troca o limite);
+  contadores "x/7" vêm do modelo; módulo < 2.11.0 não mostra nada de FAS.
+- Validação: harness 231/231 (29 novos; controle negativo: 9 dos novos FALHAM contra tune/watch/lib 2.10.0);
+  kernlab 36/36; sweep OK; zip `da0f39c0...` (64 entradas, self-check 14); APK release R8 `e9c7a20f...`.
+- Instalado 23:27: módulo via `ksud module install` (STAGED, vale no próximo soft-reboot) + APK 1.1.0. Com o
+  2.10.0 ainda ativo o app abriu sem crash, Status e Flags (5/7) normais (foto). Falta: soft-reboot do dono e
+  prova ao vivo (FAS liga no enter, `fusao status` = working, desliga no exit, tela do FAS no app).

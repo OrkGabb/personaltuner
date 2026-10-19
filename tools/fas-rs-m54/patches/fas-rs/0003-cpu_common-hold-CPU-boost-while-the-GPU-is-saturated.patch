@@ -1,0 +1,142 @@
+From 6b03c41dc6d1737535190238b20c8a509230c1f1 Mon Sep 17 00:00:00 2001
+From: OrkGabb <gabrielribeiroggv@gmail.com>
+Date: Sun, 18 Oct 2026 22:29:31 -0300
+Subject: [PATCH 3/3] cpu_common: hold CPU boost while the GPU is saturated
+ (Mali gpu_busy >= 95%)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/cpu_common/gpu_guard.rs | 72 +++++++++++++++++++++++++++++++++++++
+ src/cpu_common/mod.rs       |  9 +++++
+ 2 files changed, 81 insertions(+)
+ create mode 100644 src/cpu_common/gpu_guard.rs
+
+diff --git a/src/cpu_common/gpu_guard.rs b/src/cpu_common/gpu_guard.rs
+new file mode 100644
+index 0000000..092b3a7
+--- /dev/null
++++ b/src/cpu_common/gpu_guard.rs
+@@ -0,0 +1,72 @@
++// Copyright 2024-2025, dependabot[bot], reigadegr, shadow3aaa
++//
++// This file is part of fas-rs.
++//
++// fas-rs is free software: you can redistribute it and/or modify it under
++// the terms of the GNU General Public License as published by the Free
++// Software Foundation, either version 3 of the License, or (at your option)
++// any later version.
++//
++// fas-rs is distributed in the hope that it will be useful, but WITHOUT ANY
++// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
++// details.
++//
++// You should have received a copy of the GNU General Public License along
++// with fas-rs. If not, see <https://www.gnu.org/licenses/>.
++
++use std::{
++    fs,
++    time::{Duration, Instant},
++};
++
++use log::info;
++
++// Mali on Exynos reports the GPU load as " 47%"; a missing node (other SoCs) means no guard.
++const GPU_BUSY_PATH: &str = "/sys/kernel/gpu/gpu_busy";
++const SATURATED_PCT: u32 = 95;
++const SAMPLE_EVERY: Duration = Duration::from_millis(250);
++
++/// With the GPU saturated, a frame below target is GPU time: boosting the CPU only burns power
++/// (M54, Bleach on max graphics: GPU 949 MHz at 99%, fas-rs pushed the A78 to 2.4 GHz for 0 fps).
++#[derive(Debug)]
++pub struct GpuGuard {
++    saturated: bool,
++    last_sample: Instant,
++}
++
++impl GpuGuard {
++    pub fn new() -> Self {
++        Self {
++            saturated: false,
++            last_sample: Instant::now()
++                .checked_sub(SAMPLE_EVERY)
++                .unwrap_or_else(Instant::now),
++        }
++    }
++
++    pub fn saturated(&mut self) -> bool {
++        if self.last_sample.elapsed() >= SAMPLE_EVERY {
++            self.last_sample = Instant::now();
++            let now = read_busy_pct().is_some_and(|pct| pct >= SATURATED_PCT);
++            if now != self.saturated {
++                info!(
++                    "GPU guard: {}",
++                    if now { "saturated, CPU boost held" } else { "released" }
++                );
++                self.saturated = now;
++            }
++        }
++        self.saturated
++    }
++}
++
++fn read_busy_pct() -> Option<u32> {
++    fs::read_to_string(GPU_BUSY_PATH)
++        .ok()?
++        .trim()
++        .trim_end_matches('%')
++        .trim()
++        .parse()
++        .ok()
++}
+diff --git a/src/cpu_common/mod.rs b/src/cpu_common/mod.rs
+index c86e8ba..45c9bce 100644
+--- a/src/cpu_common/mod.rs
++++ b/src/cpu_common/mod.rs
+@@ -17,6 +17,7 @@
+ 
+ mod cpu_info;
+ pub mod extra_policy;
++mod gpu_guard;
+ mod process_monitor;
+ 
+ use std::{
+@@ -45,6 +46,7 @@ use crate::{
+     file_handler::FileHandler,
+ };
+ use cpu_info::Info;
++use gpu_guard::GpuGuard;
+ use extra_policy::ExtraPolicy;
+ 
+ pub static EXTRA_POLICY_MAP: OnceLock<HashMap<i32, Mutex<ExtraPolicy>>> = OnceLock::new();
+@@ -57,6 +59,7 @@ pub struct Controller {
+     file_handler: FileHandler,
+     process_monitor: ProcessMonitor,
+     util_max: Option<f64>,
++    gpu_guard: GpuGuard,
+ }
+ 
+ impl Controller {
+@@ -93,6 +96,7 @@ impl Controller {
+             file_handler: FileHandler::new(),
+             process_monitor: ProcessMonitor::new(),
+             util_max: None,
++            gpu_guard: GpuGuard::new(),
+         })
+     }
+ 
+@@ -157,6 +161,11 @@ impl Controller {
+     }
+ 
+     pub fn fas_update_freq(&mut self, control: isize, is_janked: bool) {
++        let (control, is_janked) = if self.gpu_guard.saturated() {
++            (control.min(0), false)
++        } else {
++            (control, is_janked)
++        };
+         #[cfg(debug_assertions)]
+         debug!("change freq: {control}");
+ 
+-- 
+2.53.0
+

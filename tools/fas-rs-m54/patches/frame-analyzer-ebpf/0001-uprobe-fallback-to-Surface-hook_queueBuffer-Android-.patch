@@ -1,0 +1,33 @@
+From dc92da1df1a755d7803d1de5c97a0777c04f1507 Mon Sep 17 00:00:00 2001
+From: OrkGabb <gabrielribeiroggv@gmail.com>
+Date: Sun, 18 Oct 2026 20:55:45 -0300
+Subject: [PATCH] uprobe: fallback to Surface::hook_queueBuffer (Android 16
+ QPR1+ libgui)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ frame-analyzer/src/uprobe.rs | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/frame-analyzer/src/uprobe.rs b/frame-analyzer/src/uprobe.rs
+index 653d3ce..b916cee 100644
+--- a/frame-analyzer/src/uprobe.rs
++++ b/frame-analyzer/src/uprobe.rs
+@@ -54,6 +54,14 @@ impl UprobeHandler {
+                 "/system/lib64/libgui.so",
+                 Some(pid),
+             )
++        }).or_else(|_e2| {
++            // Android 16 QPR1+ dropped the overloads above; arg0 (ANativeWindow*) is still the Surface.
++            program.attach(
++                Some("_ZN7android7Surface16hook_queueBufferEP13ANativeWindowP19ANativeWindowBufferi"),
++                0,
++                "/system/lib64/libgui.so",
++                Some(pid),
++            )
+         })?;
+ 
+         Ok(Self { bpf })
+-- 
+2.53.0
+

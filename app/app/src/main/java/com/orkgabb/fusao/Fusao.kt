@@ -108,6 +108,33 @@ object FusaoBridge {
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
+    /** Modo do FAS (fas-rs): `fusao fas mode <powersave|balance|performance|fast>`. */
+    suspend fun setFasMode(mode: String): String {
+        val c = cli()
+        if (c.isEmpty()) return "módulo ausente"
+        if (mode !in FAS_MODES) return "modo inválido: $mode"
+        val r = RootShell.run("\"$c\" fas mode $mode 2>&1")
+        return r.output.lastOrNull()?.trim().orEmpty()
+    }
+
+    /** Alvo de fps do FAS por jogo: `auto` ou lista crescente ("30,45,60"). */
+    suspend fun setFasTarget(pkg: String, targets: String): String {
+        val c = cli()
+        if (c.isEmpty()) return "módulo ausente"
+        val safePkg = pkg.trim().replace(Regex("[^A-Za-z0-9_.]"), "")
+        val safeTargets = targets.trim().replace(Regex("[^0-9,a-z]"), "")
+        if (safePkg.isEmpty() || safeTargets.isEmpty()) return "alvo inválido"
+        val r = RootShell.run("\"$c\" fas target $safePkg $safeTargets 2>&1")
+        return r.output.lastOrNull()?.trim().orEmpty()
+    }
+
+    /** Alvos em vigor por jogo, lidos da lista que o módulo gera para o fas-rs (`fusao fas gen`). */
+    suspend fun fasTargets(): Map<String, List<Int>> {
+        val c = cli()
+        if (c.isEmpty()) return emptyMap()
+        return parseFasToml(RootShell.run("\"$c\" fas gen 2>/dev/null").output)
+    }
+
     suspend fun preloadStatus(): List<String> {
         val c = cli()
         if (c.isEmpty()) return listOf("módulo ausente")
@@ -214,6 +241,14 @@ data class FusaoStatus(
     val preload: Boolean = false,
     val ramclean: Boolean = false,
     val gos: Boolean = true,
+    /** FAS (fas-rs, fork M54): dono da CPU no jogo quando ligado. Vazio/false em módulo < 2.11.0. */
+    val fas: Boolean = false,
+    val fasSupported: Boolean = false,
+    val fasMode: String = "",
+    val fasState: String = "",
+    val fasGame: String = "",
+    val fasGpu: String = "",
+    val fasBinOk: Boolean = true,
     val display: String = "",
     val thermal: String = "",
     val hooks: List<String> = emptyList(),
@@ -227,7 +262,11 @@ data class FusaoStatus(
         get() = profile.isNotEmpty() && profileState != "failed"
 
     val activeFlagsCount: Int
-        get() = listOf(fusaod, framework, perf, dnd, preload, ramclean, gos).count { it }
+        get() = listOf(fusaod, framework, perf, dnd, preload, ramclean, gos, fas && fasSupported).count { it }
+
+    /** Total de chaves que este módulo expõe (o FAS só existe a partir do 2.11.0). */
+    val flagsTotal: Int
+        get() = if (fasSupported) 8 else 7
 
     val runningDaemonsCount: Int
         get() = listOf(fusaodRunning, watchRunning, observerRunning).count { it }
@@ -240,6 +279,7 @@ data class FusaoStatus(
         "preload" -> preload
         "ramclean" -> ramclean
         "gos" -> gos
+        "fas" -> fas
         else -> false
     }
 
@@ -257,6 +297,12 @@ data class FusaoStatus(
             val flags = mutableMapOf<String, Boolean>()
             var display = ""
             var thermal = ""
+            var fasSupported = false
+            var fasMode = ""
+            var fasState = ""
+            var fasGame = ""
+            var fasGpu = ""
+            var fasBinOk = true
             val hooks = mutableListOf<String>()
             val daemons = mutableMapOf<String, Boolean>()
             var inHooks = false
@@ -288,8 +334,16 @@ data class FusaoStatus(
                         "game-active" -> gameActive = v
                         "display" -> display = v
                         "thermal" -> thermal = v.removePrefix("thermal=")
-                        "fusaod", "framework", "perf", "dnd", "preload", "ramclean", "gos" ->
+                        "fusaod", "framework", "perf", "dnd", "preload", "ramclean", "gos", "fas" ->
                             flags[k] = v == "on"
+                        "fas_mode" -> {
+                            fasSupported = true
+                            fasMode = v
+                        }
+                        "fas_state" -> fasState = v
+                        "fas_game" -> fasGame = v
+                        "fas_gpu" -> fasGpu = v
+                        "fas_bin" -> fasBinOk = v != "missing"
                     }
                     continue
                 }
@@ -311,6 +365,13 @@ data class FusaoStatus(
                 preload = flags["preload"] == true,
                 ramclean = flags["ramclean"] == true,
                 gos = flags["gos"] != false,
+                fas = flags["fas"] == true,
+                fasSupported = fasSupported,
+                fasMode = fasMode,
+                fasState = fasState,
+                fasGame = fasGame,
+                fasGpu = fasGpu,
+                fasBinOk = fasBinOk,
                 display = display,
                 thermal = thermal,
                 hooks = hooks.takeLast(8),
@@ -478,4 +539,32 @@ data class RamcleanTelemetry(
             )
         }
     }
+}
+
+/** Modos do fas-rs (margem de fps abaixo do alvo: 3,0 / 1,0 / 0,3 / 0). */
+val FAS_MODES = listOf("powersave", "balance", "performance", "fast")
+
+/** Escada automática do módulo (fas.sh FAS_AUTO): o fas-rs mira o primeiro alvo >= fps atual - 3. */
+val FAS_AUTO_STEPS = listOf(30, 45, 60, 90, 120)
+
+/** Limites de fps que o app oferece por jogo; null = automático. */
+val FAS_CAP_PRESETS: List<Int?> = listOf(null, 30, 40, 45, 60, 90, 120, 144)
+
+/** Lista do fas-rs para um jogo travado em [cap]: os degraus da escada abaixo dele + o próprio limite. */
+fun fasTargetsForCap(cap: Int?): String =
+    if (cap == null) "auto" else (FAS_AUTO_STEPS.filter { it < cap } + cap).joinToString(",")
+
+/** Limite que uma lista representa: null quando é a escada automática. */
+fun fasCapOf(targets: List<Int>?): Int? =
+    if (targets == null || targets.isEmpty() || targets == FAS_AUTO_STEPS) null else targets.last()
+
+/** `"pkg" = [30, 45, 60]` (saída de `fusao fas gen`) -> pkg -> [30, 45, 60]. */
+fun parseFasToml(lines: List<String>): Map<String, List<Int>> {
+    val rx = Regex("""^\s*"([A-Za-z0-9_.]+)"\s*=\s*\[([0-9,\s]*)]""")
+    val out = LinkedHashMap<String, List<Int>>()
+    for (line in lines) {
+        val m = rx.find(line) ?: continue
+        out[m.groupValues[1]] = m.groupValues[2].split(",").mapNotNull { it.trim().toIntOrNull() }
+    }
+    return out
 }
