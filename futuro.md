@@ -41,3 +41,21 @@ Descrição do dono (do anúncio do Rairin, recurso que existe no Google Pixel e
   3. Limites do Android: janelas `FLAG_SECURE` e tela de bloqueio; overlay de app comum não cobre tudo
      (acessibilidade cobre mais, com outro custo de permissão).
 - **Risco**: sem kernel, sem sysfs = baixo. Custo possível = composição e legibilidade.
+
+## 3. Pontas abertas do FAS (fas-rs, 2.11.x) — registradas em 2026-10-19
+
+O FAS está adotado e provado no Bleach (gráficos mínimos, limite 45): bateria −10,4%, fps −1,3%, frames
+≥33 ms de 0,13% para 0,79% (`status.md`, seção fas-rs). Falta medir onde ele ainda não foi visto.
+
+1. **Trava de GPU saturada do fork** (`tools/fas-rs-m54/patches/fas-rs/0003`): com `gpu_busy` ≥ 95% o
+   fas-rs não sobe a CPU. Implementada, NÃO medida. Teste: um jogo em gráficos altos (Bleach no máximo
+   prendia a GPU a 949 MHz/99%); conferir no `fas.log` a linha `GPU guard: saturated` e que a CPU fica baixa
+   com o mesmo fps. Sem a trava, o fas-rs jogava o A78 a 2,4 GHz por 0 fps.
+2. **FAS em outros jogos**: `tools/kernlab/experiments/cpu-controle-nte.json` e `cpu-controle-roblox.json`
+   (FUSAO × teto solto × fas-rs, regra de decisão declarada no JSON). Rodar nos gráficos que o dono usa;
+   bateria ≥ 30%, sem carregador, ~16-20 min cada. Se um jogo piorar, tirar só ele: `fusao fas target`
+   não desliga por jogo — precisa de opção nova ou tirar da gamelist.
+3. **Separar a taxa de tela do `framework`**: hoje ligar o framework traz junto a trava de 60 Hz do
+   battery (o "agarrado") e 120 Hz fixo em jogo. Opção: o framework aplicar só as tríades (jobs/standby)
+   e deixar a tela no stock 120/60. Medir antes no kernlab (scroll e jogo, pbat) — as tríades nunca foram
+   medidas.
