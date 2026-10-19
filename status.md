@@ -1186,3 +1186,11 @@ Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%,
   em português. Só texto: layout e dados iguais (fotos Status/Flags).
 - Instalado: APK 1.1.2 (`628f5db6...`); módulo 2.11.2 STAGED via ksud (`5092862...`), observer.sh e fas.sh
   vivos = release. Falta: soft-reboot do dono e reteste.
+- **Soft-reboot do dono 00:39 (2.11.2 ativo; boot_id `4765192b` igual = só soft, sem rollback desta vez)**:
+  service.sh 00:39:06, observer registrado 00:39:08 na 1ª tentativa, watch em standby (evento, sem poll).
+  No soft-reboot os scripts rodam no namespace global (APEX visíveis, 36 variáveis): a correção do
+  observer.sh fica parada, como desenhado. Bleach detectado pelo OBSERVER (`observer: enter`) -> 00:40:27
+  ganchos -> 00:40:36 `fas: on` -> `FAS working on` 00:41:14; CPU cravada 672-864 MHz, GPU 75-83%.
+- Visto em jogo, NÃO é do FAS: `profile_mismatch=gpu_min:221000<351000` (verify game 4/5). O fas-rs só LÊ
+  `gpu_busy` (conferido no fonte); outro escritor baixou o piso da GPU depois do apply. Mesma família da
+  "trava externa do piso da GPU" do 2.9.9. Sem impacto visível (GPU ocupada, o governor sobe o clock).
