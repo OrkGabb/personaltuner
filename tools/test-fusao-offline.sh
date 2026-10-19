@@ -682,6 +682,44 @@ for _p in $(pgrep -f "[f]as-rs run"); do kill "$_p" 2>/dev/null; done
 unset FAS_BIN FAS_NODE FAS_USER_TOML
 rm -f "$FAKE/fusao/fas.enabled"
 
+# 17) observer.sh: sem libnativeloader visível (root reativado após boot completo) entra no mount
+# namespace do zygote64 antes do app_process; com a lib visível vai direto; nunca em laço.
+OB="$FAKE/obsbin"; mkdir -p "$OB"
+export OBS_TRACE="$FAKE/obs.trace"
+cat > "$OB/pidof" <<'OBSEOF'
+#!/bin/sh
+[ "$1" = zygote64 ] && echo 4242
+OBSEOF
+cat > "$OB/nsenter" <<'OBSEOF'
+#!/bin/sh
+echo "nsenter $*" >> "$OBS_TRACE"
+shift 4
+exec "$@"
+OBSEOF
+cat > "$OB/app_process" <<'OBSEOF'
+#!/bin/sh
+echo "app_process hop=${FUSAO_NS_HOP:-0} $* | bcp=${BOOTCLASSPATH:-} sock=${ANDROID_SOCKET_zygote:-}" >> "$OBS_TRACE"
+OBSEOF
+chmod +x "$OB/pidof" "$OB/nsenter" "$OB/app_process"
+cp "$STAGE/fusao/observer.sh" "$FAKE/fusao/observer.sh"
+: > "$FAKE/fusao/observer.dex"
+obs() { PATH="$OB:$PATH" M54_DIR="$FAKE/fusao" FUSAO_ART_LIB="$1" sh "$FAKE/fusao/observer.sh"; }
+: > "$OBS_TRACE"; obs "$FAKE/nao-existe/libnativeloader.so"
+grep -q "^nsenter -t 4242 -m -- sh " "$OBS_TRACE" && ok "observer sem lib entra no ns do zygote" || bad "observer sem lib entra no ns do zygote"
+[ "$(grep -c "^app_process hop=1 /system/bin com.fusao.observer.ObserverMain" "$OBS_TRACE")" = 1 ] && ok "observer roda uma vez no ns novo (sem laco)" || bad "observer roda uma vez no ns novo (sem laco)"
+: > "$FAKE/libnativeloader.so"; : > "$OBS_TRACE"; obs "$FAKE/libnativeloader.so"
+grep -q "^nsenter" "$OBS_TRACE" && bad "observer com lib vai direto" || ok "observer com lib vai direto"
+grep -q "^app_process hop=0 " "$OBS_TRACE" && ok "observer com lib chama app_process" || bad "observer com lib chama app_process"
+# ambiente do KSU late-load sem BOOTCLASSPATH: herda o do zygote64, sem os sockets dele
+printf 'BOOTCLASSPATH=/x/core-oj.jar\0ANDROID_SOCKET_zygote=9\0ANDROID_ART_ROOT=/apex/art\0' > "$FAKE/zyg.environ"
+: > "$OBS_TRACE"
+( unset BOOTCLASSPATH; FUSAO_ZYGOTE_ENV="$FAKE/zyg.environ"; export FUSAO_ZYGOTE_ENV; obs "$FAKE/libnativeloader.so" )
+grep -q "| bcp=/x/core-oj.jar sock=$" "$OBS_TRACE" && ok "observer herda o ambiente do zygote sem sockets" || bad "observer herda o ambiente do zygote sem sockets"
+: > "$OBS_TRACE"
+( BOOTCLASSPATH=/meu/bcp; export BOOTCLASSPATH; FUSAO_ZYGOTE_ENV="$FAKE/zyg.environ"; export FUSAO_ZYGOTE_ENV; obs "$FAKE/libnativeloader.so" )
+grep -q "| bcp=/meu/bcp " "$OBS_TRACE" && ok "observer com BOOTCLASSPATH nao importa" || bad "observer com BOOTCLASSPATH nao importa"
+unset OBS_TRACE
+
 echo "----"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

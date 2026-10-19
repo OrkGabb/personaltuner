@@ -101,7 +101,6 @@ private data class FlagSpec(
     val cmd: String,
     val title: String,
     val desc: String,
-    val category: String,
     val accent: Color,
 )
 
@@ -109,57 +108,49 @@ private val FLAG_SPECS = listOf(
     FlagSpec(
         cmd = "fusaod",
         title = "fusaod",
-        desc = "Escritor CPU/GPU/MIF/INT/DISP (sobe no boot)",
-        category = "SINGLE-WRITER · BOOT",
+        desc = "Pisos de CPU/GPU/memória em jogo (perfis game e balanced; fica fora com o FAS)",
         accent = FusaoPalette.CryoCyan,
     ),
     FlagSpec(
         cmd = "framework",
         title = "framework",
-        desc = "Triads + overlay + tune no game-enter",
-        category = "FRAMEWORK · GAME-ENTER",
+        desc = "Ajustes do Android por perfil: taxa da tela (battery = 60 Hz), jobs e standby",
         accent = FusaoPalette.PlasmaViolet,
     ),
     FlagSpec(
         cmd = "perf",
         title = "perf",
-        desc = "renice/IO do jogo no game-enter",
-        category = "SCHEDULER & IO · GAME-ENTER",
+        desc = "Prioridade de CPU e de disco do jogo ao entrar",
         accent = FusaoPalette.IgnisAmber,
     ),
     FlagSpec(
         cmd = "dnd",
         title = "dnd",
-        desc = "Arma auto-DND no game-enter (off = desarmado)",
-        category = "ZEN GUARD · ARMED ON ENTER",
+        desc = "Não Perturbe automático ao entrar no jogo",
         accent = FusaoPalette.CryoTurquoise,
     ),
     FlagSpec(
         cmd = "preload",
         title = "preload",
-        desc = "WILLNEED dos assets no game-enter",
-        category = "POSIX FADVISE · GAME-ENTER",
+        desc = "Pré-carrega os arquivos do jogo na RAM ao entrar",
         accent = FusaoPalette.ElectricOrchid,
     ),
     FlagSpec(
         cmd = "ramclean",
         title = "ramclean",
-        desc = "Limpa RAM ANTES do preload no game-enter",
-        category = "VM DROP+COMPACT · PRE-PRELOAD",
+        desc = "Libera RAM ao entrar no jogo, antes do pré-carregamento",
         accent = FusaoPalette.BioEmerald,
     ),
     FlagSpec(
         cmd = "gos",
         title = "gos",
-        desc = "Mata o GOS da Samsung (off = pausado)",
-        category = "SAMSUNG MITIGATION · KILLER",
+        desc = "Encerra o Game Optimizing Service (GOS) da Samsung",
         accent = FusaoPalette.CrimsonCore,
     ),
     FlagSpec(
         cmd = "fas",
         title = "fas",
-        desc = "fas-rs controla a CPU por frame no jogo",
-        category = "FRAME AWARE · GAME-ENTER",
+        desc = "Controla a CPU frame a frame no jogo (fas-rs)",
         accent = FusaoPalette.MintPulse,
     ),
 )
@@ -376,11 +367,11 @@ class MainActivity : ComponentActivity() {
                             )
                             Text(
                                 text = when {
-                                    !state.ready -> "SONDANDO PONTE ROOT..."
+                                    !state.ready -> "VERIFICANDO ROOT..."
                                     !state.rooted -> "SEM ROOT · MODO LEITURA"
-                                    !state.moduleInstalled -> "MÓDULO ENCORE AUSENTE"
+                                    !state.moduleInstalled -> "MÓDULO NÃO INSTALADO"
                                     state.status.inGame -> "JOGO ATIVO · ${state.labelFor(state.status.gameActive).uppercase()}"
-                                    else -> "EXYNOS 1380 · PONTE KSU ATIVA"
+                                    else -> "SEM JOGO ATIVO"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = FusaoPalette.TextSecondary,
@@ -728,7 +719,7 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     TelemetryPill(
-                                        text = if (st.inGame) "SESSÃO DE JOGO ATIVA" else "SISTEMA EM STANDBY",
+                                        text = if (st.inGame) "SESSÃO DE JOGO ATIVA" else "SEM JOGO ATIVO",
                                         color = if (st.inGame) FusaoPalette.IgnisAmber else accent,
                                         filled = true,
                                         pulsingDot = true,
@@ -736,10 +727,10 @@ class MainActivity : ComponentActivity() {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         text = when (st.profile) {
-                                            "game" -> "PERFIL // GAME"
-                                            "battery" -> "PERFIL // BATTERY"
-                                            "balanced" -> "PERFIL // BALANCED"
-                                            else -> "PERFIL // ${st.profile.ifEmpty { "—" }.uppercase()}"
+                                            "game" -> "PERFIL GAME"
+                                            "battery" -> "PERFIL BATTERY"
+                                            "balanced" -> "PERFIL BALANCED"
+                                            else -> "PERFIL ${st.profile.ifEmpty { "—" }.uppercase()}"
                                         },
                                         style = MaterialTheme.typography.headlineMedium.copy(
                                             fontSize = 20.sp,
@@ -766,7 +757,7 @@ class MainActivity : ComponentActivity() {
                                     if (st.sysfsSummary.isNotEmpty()) {
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "READBACK // ${st.sysfsSummary}",
+                                            text = "LIDO NO APARELHO: ${st.sysfsSummary}",
                                             style = MaterialTheme.typography.labelSmall.copy(
                                                 fontFamily = FontFamily.Monospace,
                                                 fontSize = 10.sp,
@@ -913,7 +904,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = "JOGO ATIVO (GAME-ACTIVE)",
+                                                text = "JOGO ATIVO",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = if (st.inGame) FusaoPalette.IgnisAmber else FusaoPalette.TextMuted,
                                                 maxLines = 1,
@@ -964,7 +955,7 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(
-                                    text = "DISPLAY (WM SIZE)",
+                                    text = "RESOLUÇÃO DA TELA",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.CryoCyan,
                                     maxLines = 1,
@@ -979,7 +970,7 @@ class MainActivity : ComponentActivity() {
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = "Resolução via display.sh",
+                                    text = "Muda na escala abaixo",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = FusaoPalette.TextSecondary,
                                     maxLines = 1,
@@ -1010,7 +1001,7 @@ class MainActivity : ComponentActivity() {
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = "Guard 78°C CPU / 45°C Batt",
+                                    text = "Proteção: CPU 78 °C · bateria 45 °C",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = FusaoPalette.TextSecondary,
                                     maxLines = 1,
@@ -1033,7 +1024,7 @@ class MainActivity : ComponentActivity() {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "ESCALA DE RENDERIZAÇÃO (DOWNSCALE)",
+                                    text = "ESCALA DA TELA",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FusaoPalette.TextSecondary,
                                     maxLines = 1,
@@ -1085,7 +1076,7 @@ class MainActivity : ComponentActivity() {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         HudSectionHeader(
                             title = "Daemons",
-                            subtitle = "Processos residentes monitorados via pgrep pelo módulo",
+                            subtitle = "Processos do módulo em execução",
                             accentColor = FusaoPalette.PlasmaViolet,
                             trailing = {
                                 TelemetryPill(
@@ -1098,19 +1089,19 @@ class MainActivity : ComponentActivity() {
 
                         DaemonStatusRow(
                             name = "fusaod",
-                            role = "Single-writer Rust (CPU/GPU/MIF/INT/DISP)",
+                            role = "Pisos de CPU/GPU/memória em jogo",
                             running = st.fusaodRunning,
                             flagEnabled = st.fusaod,
                         )
                         DaemonStatusRow(
                             name = "watch",
-                            role = "Supervisor de sessão e disparo de ganchos",
+                            role = "Aplica os ajustes ao entrar e sair de jogos",
                             running = st.watchRunning,
                             flagEnabled = true,
                         )
                         DaemonStatusRow(
                             name = "observer",
-                            role = "IProcessObserver via app_process (detecção instantânea)",
+                            role = "Avisa na hora que um jogo abre (sem ele: a cada 5 s)",
                             running = st.observerRunning,
                             flagEnabled = true,
                         )
@@ -1126,8 +1117,8 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         HudSectionHeader(
-                            title = "Ganchos (foi ou não)",
-                            subtitle = "Últimas 8 transições verificadas em fusao.log (.1 + atual)",
+                            title = "Ganchos",
+                            subtitle = "Últimos eventos ao entrar e sair de jogos",
                             accentColor = FusaoPalette.CryoCyan,
                             trailing = {
                                 TelemetryPill(
@@ -1269,7 +1260,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     HudSectionHeader(
                         title = "Controles do Módulo",
-                        subtitle = "Cada chave opera diretamente via CLI `fusao <flag> on|off` em /data/adb/fusao/",
+                        subtitle = "Liga e desliga cada função do módulo",
                         accentColor = FusaoPalette.CryoCyan,
                         trailing = {
                             TelemetryPill(
@@ -1353,13 +1344,6 @@ class MainActivity : ComponentActivity() {
                                 text = spec.desc,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = FusaoPalette.TextSecondary,
-                            )
-                            Text(
-                                text = spec.category,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = spec.accent.copy(alpha = 0.85f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
                             )
                         }
 
@@ -1560,8 +1544,8 @@ class MainActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         HudSectionHeader(
-                            title = "Preload (WILLNEED)",
-                            subtitle = "Política global baseada em gamelist.txt (aquecimento de pagecache com orçamento de RAM)",
+                            title = "Preload",
+                            subtitle = "Pré-carrega na RAM os arquivos dos jogos da lista",
                             accentColor = FusaoPalette.ElectricOrchid,
                             trailing = {
                                 TelemetryPill(
@@ -1807,7 +1791,7 @@ class MainActivity : ComponentActivity() {
 
                         // Console de saída real do CLI `fusao preload status` / `prepare` / `now` / `record`
                         TerminalOutputConsole(
-                            title = "SAÍDA CLI // FUSAO PRELOAD",
+                            title = "Resultado do preload",
                             lines = state.preloadInfo,
                         )
                     }
@@ -1821,8 +1805,8 @@ class MainActivity : ComponentActivity() {
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     HudSectionHeader(
-                        title = "RAM clean (antes do preload)",
-                        subtitle = "sync + drop_caches (3) + compact_memory (1) para abrir janela limpa antes do WILLNEED",
+                        title = "Limpeza de RAM",
+                        subtitle = "Libera memória antes do pré-carregamento",
                         accentColor = FusaoPalette.BioEmerald,
                         trailing = {
                             TelemetryPill(
@@ -1883,7 +1867,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     TerminalOutputConsole(
-                        title = "SAÍDA CLI // FUSAO RAMCLEAN",
+                        title = "Resultado da limpeza de RAM",
                         lines = state.ramcleanInfo,
                     )
                 }
@@ -2018,7 +2002,7 @@ class MainActivity : ComponentActivity() {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     HudSectionHeader(
                         title = "Jogos Monitorados",
-                        subtitle = "Pacotes que acionam o observer/watch e os ganchos de game-enter",
+                        subtitle = "Jogos que ativam o FUSAO ao abrir",
                         accentColor = FusaoPalette.CryoCyan,
                         trailing = {
                             TelemetryPill(
@@ -2294,7 +2278,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     HudSectionHeader(
                         title = "Adicionar jogo",
-                        subtitle = "Selecione um aplicativo instalado para incluir em gamelist.txt",
+                        subtitle = "Escolha um app instalado para adicionar à lista",
                         accentColor = FusaoPalette.PlasmaViolet,
                         trailing = {
                             TelemetryPill(
@@ -2476,7 +2460,7 @@ class MainActivity : ComponentActivity() {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     HudSectionHeader(
                         title = if (state.logFusaod) "fusaod.log (writer)" else "fusao.log (ganchos)",
-                        subtitle = "Leitura direta de /data/adb/fusao/ (.1 + atual) e bugreport em /sdcard/Download/",
+                        subtitle = "Registro do módulo; o bugreport vai para a pasta Download",
                         accentColor = FusaoPalette.CryoCyan,
                         trailing = {
                             TelemetryPill(

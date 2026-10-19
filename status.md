@@ -1163,3 +1163,26 @@ Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%,
   boot; o fas.sh vivo já é o do release).
 - Framework segue OFF (decisão do dono, sem mudança): ligar com o FAS não briga na CPU, mas volta a trava de
   60 Hz do battery fora do jogo e 120 Hz fixo em jogo (custo de tela em jogo não medido).
+
+## 2.11.2/1605 + app 1.1.2: observer volta depois de boot completo; textos do app (2026-10-19 ~00:30)
+- **Observer não subia após reboot completo + root reativado** (KSU late-load): duas causas encadeadas,
+  provadas no aparelho com o watch no estado real.
+  1. Mount namespace: os scripts do módulo rodam em `mnt:[4026535369]`, sem as APEX -> `app_process`:
+     CANNOT LINK `libnativeloader.so` (o zygote64 está em `4026535238`, com a lib).
+  2. Ambiente: o ksud passa 17 variáveis, sem BOOTCLASSPATH/ANDROID_*/armazenamento -> no namespace certo o
+     `app_process` sai na hora, rc 0, sem log (com o ambiente do zygote64: vivo).
+  `observer.sh` entra no namespace do zygote64 (`nsenter -t <zygote64> -m`, uma vez: FUSAO_NS_HOP) e
+  herda o ambiente dele (sem ANDROID_SOCKET_*). Prova pelo caminho real: o observer morto às 00:27:12, o
+  WATCH relançou e às 00:27:17 `observer relançado OK`; observer = app_process64 no namespace do zygote64,
+  38 variáveis, registrado na 1ª tentativa; watch saiu do poll de 5 s. Harness 237/237 (+6; controle
+  negativo: 3 FALHAM contra o observer.sh antigo).
+- Armadilha de teste: `pgrep -f "[f]usao.observer"` do watch casa a cmdline de QUALQUER shell que contenha
+  "fusao/observer" ou "com.fusao.observer" (inclusive comandos de monitoramento via adb).
+- **App 1.1.2 (pedido do dono: tirar texto sem sentido)**: cabeçalho "EXYNOS 1380 · PONTE KSU ATIVA" ->
+  "SEM JOGO ATIVO"; "SISTEMA EM STANDBY" -> "SEM JOGO ATIVO"; "PERFIL // X" -> "PERFIL X"; "READBACK //" ->
+  "LIDO NO APARELHO:"; saiu a linha de jargão em inglês das chaves ("SINGLE-WRITER · BOOT"...); descrições
+  em português do que cada chave faz (a do fusaod dizia "sobe no boot", errado: ele só roda em jogo);
+  subtítulos sem caminho/comando (pgrep, drop_caches, `fusao <flag>`, /data/adb/...); papéis dos daemons
+  em português. Só texto: layout e dados iguais (fotos Status/Flags).
+- Instalado: APK 1.1.2 (`628f5db6...`); módulo 2.11.2 STAGED via ksud (`5092862...`), observer.sh e fas.sh
+  vivos = release. Falta: soft-reboot do dono e reteste.
