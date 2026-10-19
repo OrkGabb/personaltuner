@@ -106,7 +106,9 @@ apply_triad() {
       sput global activity_manager_constants "service_restart_duration=1800000,service_reset_run_duration=60000,background_settle_time=15000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
       sput global job_scheduler_constants "max_job_count_active=2,min_ready_jobs_count=8,bg_normal_job_count=1,bg_moderate_job_count=1,enable_adaptive_scheduling=true,min_ready_cpu_only_jobs_count=8,min_ready_non_active_jobs_count=8,heavy_use_factor=0.85,moderate_use_factor=0.7"
       sput global app_standby_constants "strong_usage_duration=30000,system_interaction_duration=10000,initial_foreground_service_start_duration=120000,prediction_timeout=300000,sync_adapter_duration=30000"
-      sput system peak_refresh_rate "60.0"
+      # Adaptativo 120/60, não 60 travado (dono, 2026-10-19: "detesto 60 Hz", fluidez vale mais que a
+      # economia). Medido no kernlab: 60/60 = metade dos frames e ~6x mais travadas >= 33 ms no scroll.
+      sput system peak_refresh_rate "120.0"
       sput system min_refresh_rate "60.0"
       dput game_overlay "game_default_frame_rate" "0"
       ;;

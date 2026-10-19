@@ -63,7 +63,8 @@ M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/framework.sh" idle
 # 3) framework battery/balanced
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" battery
 grep -q "max_job_count_active=2" "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null && ok "framework battery" || bad "framework battery"
-[ "$(cat "$FAKE/settings/system__peak_refresh_rate" 2>/dev/null)" = "60.0" ] && ok "framework battery 60hz" || bad "framework battery 60hz"
+# 2.11.4: battery adaptativo 120/60 (dono: nada de 60 Hz travado)
+[ "$(cat "$FAKE/settings/system__min_refresh_rate" 2>/dev/null)" = "60.0" ] && [ "$(cat "$FAKE/settings/system__peak_refresh_rate" 2>/dev/null)" = "120.0" ] && ok "framework battery adaptive-hz" || bad "framework battery adaptive-hz"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" balanced
 grep -q "max_job_count_active=4" "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null && ok "framework balanced" || bad "framework balanced"
 [ "$(cat "$FAKE/settings/system__min_refresh_rate" 2>/dev/null)" = "60.0" ] && [ "$(cat "$FAKE/settings/system__peak_refresh_rate" 2>/dev/null)" = "120.0" ] && ok "framework balanced adaptive-hz" || bad "framework balanced adaptive-hz"

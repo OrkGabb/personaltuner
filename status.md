@@ -1211,3 +1211,15 @@ Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%,
   351–949" (com FAS: "CPU com o FAS em jogo · GPU sem piso · MIF ≥845k").
 - **Ao vivo** (Bleach, 01:00): game **5/5 applied**, GPU 221000-949000, FAS working, CPU 672 MHz.
   Módulo 2.11.3 STAGED (tune.sh vivo = release), APK 1.1.3 `355f652d...`.
+
+## 2.11.4/1607 + app 1.1.4: framework LIGADO, battery com tela adaptativa (2026-10-19 ~01:24, cabo)
+- Dono: "detesto 60 Hz", prefere fluidez a economia. `framework.sh` battery: 60/60 -> **120/60 adaptativo**
+  (igual ao balanced); game segue 120/120 fixo. Harness 237/237 (controle negativo: `framework battery
+  adaptive-hz` FALHA contra o framework.sh antigo). App 1.1.4: descrição da chave framework sem "battery =
+  60 Hz".
+- `fusao framework on` no aparelho (boot `4765192b`, sem reboot): battery -> peak 120 / min 60 + tríade do
+  battery; Bleach -> `framework: apply game` -> 120/120, game 5/5; saída -> `fas: off` -> tune battery ->
+  `framework: apply battery` -> 120/60, fas-rs parado.
+- Segue aberto: `framework.stock` contaminado (desligar não devolve o padrão exato da ROM) e as tríades
+  (jobs/standby) nunca medidas (futuro.md §3). Módulo 2.11.4 STAGED (framework.sh vivo = release), APK
+  1.1.4 `964e2278...`.

@@ -114,7 +114,7 @@ private val FLAG_SPECS = listOf(
     FlagSpec(
         cmd = "framework",
         title = "framework",
-        desc = "Ajustes do Android por perfil: taxa da tela (battery = 60 Hz), jobs e standby",
+        desc = "Ajustes do Android por perfil: tela (jogo 120 Hz fixo, fora adaptativo 120/60), jobs e standby",
         accent = FusaoPalette.PlasmaViolet,
     ),
     FlagSpec(
