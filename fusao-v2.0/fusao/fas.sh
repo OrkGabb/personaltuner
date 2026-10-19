@@ -46,7 +46,6 @@ valid_targets() {
 }
 
 fas_gen() {
-  local _pkg
   mkdir -p "$FAS_DIR" 2>/dev/null
   {
     echo "# gerado pelo FUSAO (fas.sh) a partir de gamelist.txt — não editar à mão;"
@@ -56,11 +55,23 @@ fas_gen() {
     echo "scene_game_list = false"
     echo ""
     echo "[game_list]"
-    while IFS= read -r _pkg; do
-      _pkg=$(printf "%s" "$_pkg" | tr -d '[:space:]')
-      case "$_pkg" in ''|\#*) continue;; esac
-      echo "\"$_pkg\" = [$(fas_targets_for "$_pkg")]"
-    done < "$M54_DIR/gamelist.txt"
+    # um awk só: no aparelho a gamelist tem 533 jogos e um subshell + awk por jogo levava > 30 s
+    # dentro do game-enter (2026-10-18). Override por jogo: fas.targets (pkg=30,45,60; o último vale).
+    awk -v tf="$FAS_TARGETS" -v auto="$FAS_AUTO" '
+      BEGIN {
+        while ((getline line < tf) > 0) {
+          i = index(line, "=")
+          if (i > 1) t[substr(line, 1, i - 1)] = substr(line, i + 1)
+        }
+      }
+      {
+        gsub(/[[:space:]]/, "")
+        if ($0 == "" || $0 ~ /^#/) next
+        v = (($0 in t) && t[$0] != "auto") ? t[$0] : auto
+        gsub(/ /, "", v)
+        gsub(/,/, ", ", v)
+        printf "\"%s\" = [%s]\n", $0, v
+      }' "$M54_DIR/gamelist.txt"
     echo ""
     echo "[powersave]"; echo "margin_fps = 3.0"; echo "core_temp_thresh = 80000"; echo ""
     echo "[balance]"; echo "margin_fps = 1.0"; echo "core_temp_thresh = 90000"; echo ""

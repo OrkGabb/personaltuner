@@ -1141,3 +1141,25 @@ Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%,
 - Instalado 23:27: módulo via `ksud module install` (STAGED, vale no próximo soft-reboot) + APK 1.1.0. Com o
   2.10.0 ainda ativo o app abriu sem crash, Status e Flags (5/7) normais (foto). Falta: soft-reboot do dono e
   prova ao vivo (FAS liga no enter, `fusao status` = working, desliga no exit, tela do FAS no app).
+
+## 2.11.1/1604 + app 1.1.1: FAS PROVADO AO VIVO (2026-10-18 23:52 – 2026-10-19 00:01, WiFi `:37087`)
+- **Reboot completo depois do soft-reboot (~23:36) NÃO foi o FAS**: `sys.boot.reason =
+  reboot,rollback_staged_install(vendor.fingerprint-default)`, reset_reason RPON, auto_comment vazio (sem
+  panic). O Android reverteu uma atualização do Play pendente (`pm list staged-sessions`:
+  mainline_train_primary) porque o HAL de digital caiu no soft-reboot. fas-rs nunca rodou (sem jogo).
+  Enquanto essa atualização estiver pendente, soft-reboot pode virar reboot completo.
+- Observer fora após o reboot completo (`app_process: libnativeloader.so not found`, problema antigo): o
+  watch caiu no poll de 5 s e os ganchos (inclusive o FAS) funcionaram por ele.
+- **Bleach (gráficos mínimos)**: enter -> tune game -> `fas: on` -> `FAS working on` em ~19 s;
+  `fusao status` = profile game 5/5 (CPU pulada: `CPU:FAS`), fas_state=working, fusaod parado; fas-rs
+  cravou P0/P4 em 672-864 MHz (min=max) com GPU 41-55% (trava de GPU não disparou, certo).
+  Exit -> `fas: off` (23:55:56) ANTES de `tune: apply battery` (23:56:01); fas-rs parado; CPU de volta ao
+  battery (P0 533000-1728000, P4 533000-1440000), 9/9. Segundo ciclo 00:00:33-00:00:57 igual.
+- **Corrigido ao vivo (2.11.1)**: `fas_gen` com um subshell + awk por jogo levava ~24 s dentro do
+  game-enter (gamelist com 533 jogos); um awk só = 0,76 s, saída idêntica byte a byte. Harness 231/231.
+- **App 1.1.1**: "AQUECENDO" virou AGUARDANDO (fas-rs vivo sem controlar: aquecimento OU jogo fora do foco);
+  o modo ativo fica habilitado e destacado (estava apagado, parecia indisponível). Fotos: Flags 6/8 com a
+  chave e o painel FAS, 4 modos 2×2; Jogos com "FAS · AUTO" por jogo. Módulo 2.11.1 STAGED (vale no próximo
+  boot; o fas.sh vivo já é o do release).
+- Framework segue OFF (decisão do dono, sem mudança): ligar com o FAS não briga na CPU, mas volta a trava de
+  60 Hz do battery fora do jogo e 120 Hz fixo em jogo (custo de tela em jogo não medido).

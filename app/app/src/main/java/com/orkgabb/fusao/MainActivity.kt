@@ -1297,7 +1297,8 @@ class MainActivity : ComponentActivity() {
                     spec.cmd == "gos" && !checked -> "PAUSADO"
                     spec.cmd == "fas" && checked && !st.fasBinOk -> "SEM BINÁRIO"
                     spec.cmd == "fas" && checked && st.fasState == "working" -> "CONTROLANDO"
-                    spec.cmd == "fas" && checked && st.fasState == "waiting" -> "AQUECENDO"
+                    // fas-rs vivo sem controlar: aquecendo (~10 s após o enter) ou jogo saiu do foco
+                    spec.cmd == "fas" && checked && st.fasState == "waiting" -> "AGUARDANDO"
                     spec.cmd == "fas" && checked -> "ARMADO (PRÓX. JOGO)"
                     checked -> "ATIVO"
                     else -> "INATIVO"
@@ -1406,7 +1407,7 @@ class MainActivity : ComponentActivity() {
                                 !st.fas -> "DESLIGADO"
                                 !st.fasBinOk -> "SEM BINÁRIO"
                                 working -> "CONTROLANDO"
-                                st.fasState == "waiting" -> "AQUECENDO"
+                                st.fasState == "waiting" -> "AGUARDANDO"
                                 else -> "ARMADO"
                             },
                             color = when {
@@ -1463,7 +1464,8 @@ class MainActivity : ComponentActivity() {
                                 text = mode,
                                 subtitle = if (selected) "ATIVO" else FAS_MODE_LABELS[mode],
                                 onClick = { vm.setFasMode(mode) },
-                                enabled = state.rooted && !busy && !selected,
+                                // o selecionado fica habilitado (filled = destaque); tocar de novo só regrava o modo
+                                enabled = state.rooted && !busy,
                                 filled = selected,
                                 isLoading = state.isBusy(Busy.FLAG) && state.activeTarget == "fas_mode:$mode",
                                 accentColor = accent,
