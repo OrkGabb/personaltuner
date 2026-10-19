@@ -177,7 +177,8 @@ grep -q "profile_verify=9/9" "$FAKE/prof_game.out" && ok "profile game verify 9/
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "960000" ] && ok "tune game p4_min" || bad "tune game p4_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")" = "2002000" ] && ok "tune game p0_max" || bad "tune game p0_max"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune game p4_max" || bad "tune game p4_max"
-[ "$(cat "$FAKE/sys/kernel/gpu/gpu_min_clock")" = "351000" ] && ok "tune game gpu_min" || bad "tune game gpu_min"
+# 2.11.3: game sem piso de GPU (Hyper da Samsung reescreve o gpu_min_clock a cada troca de app)
+[ "$(cat "$FAKE/sys/kernel/gpu/gpu_min_clock")" = "221000" ] && ok "tune game gpu_min" || bad "tune game gpu_min"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "949000" ] && ok "tune game gpu_max" || bad "tune game gpu_max"
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "845000" ] && ok "tune game mif_min" || bad "tune game mif_min"
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "60" ] && ok "tune game swap" || bad "tune game swap"

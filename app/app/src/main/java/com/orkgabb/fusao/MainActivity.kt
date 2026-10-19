@@ -746,7 +746,11 @@ class MainActivity : ComponentActivity() {
                                     Text(
                                         text = when (st.profile) {
                                             // alvos reais do tune.sh (degraus do Exynos 1380); battery em jogo vira game
-                                            "game" -> "P0 ≥1056k · P4 ≥960k · GPU 351–949 MHz · MIF ≥845k"
+                                            "game" -> if (st.fas && st.fasSupported) {
+                                                "CPU com o FAS em jogo · GPU sem piso · MIF ≥845k"
+                                            } else {
+                                                "P0 ≥1056k · P4 ≥960k · GPU sem piso · MIF ≥845k"
+                                            }
                                             "battery" -> "P0 ≤1728k · P4 ≤1440k · GPU sem teto · em jogo: GAME"
                                             "balanced" -> "P0/P4 ≥533k · GPU máx 845 MHz · em jogo: BALANCED"
                                             else -> "Aguardando leitura do perfil em /data/adb/fusao/profile"

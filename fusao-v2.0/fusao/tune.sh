@@ -14,6 +14,7 @@
 # balanced fica balanced); piso da GPU também é trava externa.
 # 2.10.0: read_ahead saiu dos perfis (nó errado: sda; no dm certo subir piora) e o battery não capa a GPU.
 # 2.11.0: com o FAS (fas-rs) dono da CPU em jogo, o verify não confere piso/teto de CPU (lib.sh fas_owns_cpu).
+# 2.11.3: game sem piso de GPU (o Hyper da Samsung reescreve o gpu_min_clock em toda troca de app).
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -366,7 +367,11 @@ profile_targets() {
       # P0 piso era 999000 (1104000 com jogo) e P4 889000 (999000): de outro SoC, agora degraus reais
       r_p0min=1056000; r_p0max=2002000
       r_p4min=960000;  r_p4max=1824000
-      r_gmin=351000;   r_gmax=949000
+      # GPU sem piso (= padrão da Samsung): o Hyper/EPIC é dono do gpu_min_clock (recurso GPUMinFreq,
+      # padrão 0# = 221000) e o reescreve a cada abertura/troca de app (AMS_ACT_START/AMS_RESUME...).
+      # Medido 2026-10-19: 351000 escrito -> abrir um app -> 455000 -> 351000 -> 221000 em ~2 s, sem o
+      # FUSAO agir; em jogo o verify ficava 4/5. Ganho do piso nunca medido; reescrever = briga com a ROM.
+      r_gmin=221000;   r_gmax=949000
       T_MIF_MIN=845000; T_INT_MIN=200000; T_DISP_MIN=200000
       T_SWAP=60; T_VFS=50
       if [ "$act" = 1 ]; then

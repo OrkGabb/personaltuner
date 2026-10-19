@@ -1194,3 +1194,20 @@ Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%,
 - Visto em jogo, NÃO é do FAS: `profile_mismatch=gpu_min:221000<351000` (verify game 4/5). O fas-rs só LÊ
   `gpu_busy` (conferido no fonte); outro escritor baixou o piso da GPU depois do apply. Mesma família da
   "trava externa do piso da GPU" do 2.9.9. Sem impacto visível (GPU ocupada, o governor sobe o clock).
+
+## 2.11.3/1606 + app 1.1.3: perfil game sem piso de GPU (a Samsung é dona dele) — 2026-10-19 ~01:00
+- **Quem baixava o piso da GPU em jogo: o Hyper/EPIC da Samsung** (`/vendor/etc/hyper/config_vendor.json`):
+  recurso `GPUMinFreq` (Handler sysfs, BoostPath `/sys/kernel/gpu/gpu_min_clock`, DefaultValue `0#` =
+  221000); `GPUMaxFreq` -> `gpu_max_clock`, padrão `100#` = 949000 (explica o teto 650000 do battery antigo
+  que nunca segurava). Hints que usam o piso: AMS_RESUME, AMS_ACT_RESUME, AMS_ACT_START, AMS_APP_SWITCH
+  (duração -1 = até liberar), AMS_APP_HOME, SF_GPU_MINLOCK, RECENTS_GESTURE_BOOSTER, BIXBY_BOOST,
+  MULTI_WINDOW_TOUCH_BOOSTER... Ao liberar, escrevem o padrão por cima do FUSAO.
+- **Prova causal** (fora do jogo; o FUSAO não reage a app fora da gamelist): 351000 escrito, 5 s parado
+  sem mudar; abrir Configurações -> 455000 (hint) -> 351000 -> **221000** em ~2 s; só a reverificação
+  (leitura) no log. Em jogo, sem eventos, 351000 segurou ~50 s.
+- **Decisão do dono (opção 1)**: o perfil game pede 221000 (= padrão da Samsung, sem piso). Ganho do piso
+  nunca medido; reescrever depois de cada hint seria briga com a ROM (proibido). Harness 237/237 (controle
+  negativo: `tune game gpu_min` FALHA contra o tune.sh antigo). App 1.1.3: descrição do game sem "GPU
+  351–949" (com FAS: "CPU com o FAS em jogo · GPU sem piso · MIF ≥845k").
+- **Ao vivo** (Bleach, 01:00): game **5/5 applied**, GPU 221000-949000, FAS working, CPU 672 MHz.
+  Módulo 2.11.3 STAGED (tune.sh vivo = release), APK 1.1.3 `355f652d...`.
