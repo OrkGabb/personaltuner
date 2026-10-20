@@ -81,6 +81,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.orkgabb.fusao.pixels.SmartPixelsStore
+import com.orkgabb.fusao.pixels.SmartPixelsTab
 import com.orkgabb.fusao.ui.AppIconBadge
 import com.orkgabb.fusao.ui.CyberSwitch
 import com.orkgabb.fusao.ui.FusaoAmbientCanvas
@@ -169,6 +171,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
+        (application as FusaoApp).prewarmRoot()
         super.onCreate(savedInstanceState)
         setContent {
             FusaoTheme {
@@ -197,6 +200,10 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun FusaoScreen(state: FusaoUiState) {
         var tab by rememberSaveable { mutableIntStateOf(0) }
+        val ctx = LocalContext.current
+        val pixelsStore = remember(ctx) { SmartPixelsStore.get(ctx) }
+        val pixels by pixelsStore.config.collectAsStateWithLifecycle()
+        val pixelsBadge = if (pixels.enabled) "${pixels.litPercent}%" else null
         val profileAccent = FusaoPalette.profileAccent(state.status.profile)
         val profileSecondary = FusaoPalette.profileSecondary(state.status.profile)
 
@@ -221,6 +228,7 @@ class MainActivity : ComponentActivity() {
                         flagsTotal = state.status.flagsTotal,
                         gamesCount = state.games.size,
                         inGame = state.status.inGame,
+                        pixelsBadge = pixelsBadge,
                         accentColor = profileAccent,
                     )
                 },
@@ -238,7 +246,7 @@ class MainActivity : ComponentActivity() {
                     // Banners de estado de sistema (Root, Módulo, Gravação 20s em andamento e Avisos)
                     SystemBannersArea(state)
 
-                    // Conteúdo principal das 5 áreas com transição suave
+                    // Conteúdo principal das 6 áreas com transição suave
                     Crossfade(
                         targetState = tab,
                         animationSpec = tween(durationMillis = 180),
@@ -250,7 +258,8 @@ class MainActivity : ComponentActivity() {
                             1 -> FlagsTab(state)
                             2 -> PreloadTab(state)
                             3 -> GamesTab(state)
-                            4 -> LogTab(state)
+                            4 -> SmartPixelsTab()
+                            5 -> LogTab(state)
                         }
                     }
                 }
@@ -409,14 +418,16 @@ class MainActivity : ComponentActivity() {
         flagsTotal: Int,
         gamesCount: Int,
         inGame: Boolean,
+        pixelsBadge: String?,
         accentColor: Color,
     ) {
-        val tabs = remember(activeFlags, flagsTotal, gamesCount, inGame) {
+        val tabs = remember(activeFlags, flagsTotal, gamesCount, inGame, pixelsBadge) {
             listOf(
                 Triple("Status", FusaoNavIcon.STATUS, if (inGame) "LIVE" else null),
                 Triple("Flags", FusaoNavIcon.FLAGS, "$activeFlags/$flagsTotal"),
                 Triple("Preload", FusaoNavIcon.PRELOAD, null),
                 Triple("Jogos", FusaoNavIcon.GAMES, if (gamesCount > 0) "$gamesCount" else null),
+                Triple("Pixels", FusaoNavIcon.PIXELS, pixelsBadge),
                 Triple("Log", FusaoNavIcon.LOG, null),
             )
         }

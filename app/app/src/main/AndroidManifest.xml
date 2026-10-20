@@ -27,5 +27,36 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Smart Pixels: o serviço de acessibilidade só hospeda a janela da máscara
+             (TYPE_ACCESSIBILITY_OVERLAY, preto 100%). O sistema religa o serviço sozinho
+             depois do boot enquanto a permissão estiver dada. BIND_* protegem os serviços
+             (só o sistema pode se ligar a eles); o app continua sem pedir permissões. -->
+        <service
+            android:name=".pixels.SmartPixelsService"
+            android:exported="true"
+            android:label="@string/smart_pixels_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/smart_pixels_accessibility" />
+        </service>
+
+        <service
+            android:name=".pixels.SmartPixelsTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_smart_pixels"
+            android:label="@string/smart_pixels_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

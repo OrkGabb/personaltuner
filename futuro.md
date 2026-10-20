@@ -41,6 +41,12 @@ Descrição do dono (do anúncio do Rairin, recurso que existe no Google Pixel e
   3. Limites do Android: janelas `FLAG_SECURE` e tela de bloqueio; overlay de app comum não cobre tudo
      (acessibilidade cobre mais, com outro custo de permissão).
 - **Risco**: sem kernel, sem sysfs = baixo. Custo possível = composição e legibilidade.
+- **Status 2026-10-20: implementado no app 1.1.5** (aba Pixels + bloco "Smart Pixels" nas Configurações
+  rápidas; `app/app/src/main/java/com/orkgabb/fusao/pixels/`). Janela TYPE_ACCESSIBILITY_OVERLAY (preto 100%),
+  bloco 16x16 células (Bayer / xadrez 2x2) repetido por BitmapShader — sem bitmap de tela cheia; movimento =
+  deslocamento do shader, 1 redesenho por passo, parado com a tela apagada. Boot: o sistema religa o serviço
+  de acessibilidade. **Falta no aparelho**: pontos 1–3 acima (composição DEVICE/CLIENT, pbat on/off com
+  conteúdo claro/escuro, tela de bloqueio/FLAG_SECURE) e a cobertura real (barras, recorte, rotação).
 
 ## 3. Pontas abertas do FAS (fas-rs, 2.11.x) — registradas em 2026-10-19
 

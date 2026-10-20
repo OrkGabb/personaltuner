@@ -12,8 +12,8 @@ android {
         applicationId = "com.orkgabb.fusao"
         minSdk = 29
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.1.4"
+        versionCode = 7
+        versionName = "1.1.5"
     }
 
     buildTypes {
@@ -56,4 +56,6 @@ dependencies {
     implementation("com.github.topjohnwu.libsu:core:6.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    testImplementation("junit:junit:4.13.2")
 }

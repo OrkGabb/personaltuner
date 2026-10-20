@@ -1011,10 +1011,10 @@ fun AppIconBadge(
 }
 
 /**
- * Ícones vetoriais desenhados nativamente em Canvas para as 5 áreas de navegação
+ * Ícones vetoriais desenhados nativamente em Canvas para as 6 áreas de navegação
  * e subsistemas técnicos (zero dependência de material-icons-extended pesado).
  */
-enum class FusaoNavIcon { STATUS, FLAGS, PRELOAD, GAMES, LOG }
+enum class FusaoNavIcon { STATUS, FLAGS, PRELOAD, GAMES, PIXELS, LOG }
 
 @Composable
 fun FusaoVectorGlyph(
@@ -1090,6 +1090,21 @@ fun FusaoVectorGlyph(
                 drawLine(color, Offset(w * 0.05f, h * 0.5f), Offset(w * 0.26f, h * 0.5f), stroke.width)
                 drawLine(color, Offset(w * 0.74f, h * 0.5f), Offset(w * 0.95f, h * 0.5f), stroke.width)
                 drawCircle(color = color, radius = w * 0.08f, center = center)
+            }
+            FusaoNavIcon.PIXELS -> {
+                // grade 3x3 em xadrez: pixels acesos e apagados
+                val cell = w * 0.24f
+                val gap = w * 0.07f
+                val origin = (w - (3f * cell + 2f * gap)) / 2f
+                for (row in 0 until 3) {
+                    for (col in 0 until 3) {
+                        drawRect(
+                            color = if ((row + col) % 2 == 0) color else color.copy(alpha = 0.3f),
+                            topLeft = Offset(origin + col * (cell + gap), origin + row * (cell + gap)),
+                            size = Size(cell, cell),
+                        )
+                    }
+                }
             }
             FusaoNavIcon.LOG -> {
                 drawRoundRect(
