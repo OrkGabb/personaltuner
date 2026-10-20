@@ -53,7 +53,10 @@ Descrição do dono (do anúncio do Rairin, recurso que existe no Google Pixel e
 O FAS está adotado e provado no Bleach (gráficos mínimos, limite 45): bateria −10,4%, fps −1,3%, frames
 ≥33 ms de 0,13% para 0,79% (`status.md`, seção fas-rs). Falta medir onde ele ainda não foi visto.
 
-1. **Trava de GPU saturada do fork** (`tools/fas-rs-m54/patches/fas-rs/0003`): com `gpu_busy` ≥ 95% o
+1. **Trava de GPU saturada do fork** — 2026-10-20: a versão 0003 (só `gpu_busy`) estava ERRADA (ativava com a
+   GPU a 221 MHz; Roblox: ~120 alternâncias). Corrigida no 0005 (só no teto da GPU, histerese, nunca na
+   travada): 0 alternâncias no NTE. Falta: jogo preso de verdade na GPU (teto + 99%) mostrar a CPU baixa com o
+   mesmo fps. Texto original: com `gpu_busy` ≥ 95% o
    fas-rs não sobe a CPU. Implementada, NÃO medida. Teste: um jogo em gráficos altos (Bleach no máximo
    prendia a GPU a 949 MHz/99%); conferir no `fas.log` a linha `GPU guard: saturated` e que a CPU fica baixa
    com o mesmo fps. Sem a trava, o fas-rs jogava o A78 a 2,4 GHz por 0 fps.
@@ -65,3 +68,17 @@ O FAS está adotado e provado no Bleach (gráficos mínimos, limite 45): bateria
    battery (o "agarrado") e 120 Hz fixo em jogo. Opção: o framework aplicar só as tríades (jobs/standby)
    e deixar a tela no stock 120/60. Medir antes no kernlab (scroll e jogo, pbat) — as tríades nunca foram
    medidas.
+4. **Pico de ~3 s no Roblox (queixa do dono, 2026-10-20)**: inferência = trava de GPU alternando (corrigida no
+   2.11.5). Confirmar numa sessão do dono no Roblox com o binário novo: sem pico periódico e sem "FAS stopped".
+5. **FAS também para GPU e memória (MIF)** — pergunta do dono, 2026-10-20. O fas-rs só controla CPU. A ideia
+   faz sentido (frame acima do alvo = GPU/MIF podem descer), mas o aparelho já mostrou três limites:
+   - o Hyper/EPIC da Samsung é DONO de `gpu_min_clock`/`gpu_max_clock` e reescreve nas trocas de app e nos
+     hints (`status.md` 2.11.3); o térmico desce o teto da GPU em jogo. Escrever por cima a cada frame = briga
+     com a ROM (o dono já decidiu: proibido);
+   - o governor da GPU (Mali, tick de 5 ms) já segue a carga; o ganho possível é só TETO (não deixar a GPU
+     subir além do que o alvo pede), não piso;
+   - MIF/INT são devfreq com QoS da Samsung (mesma família de dono externo).
+   Caminho de menor briga: o fas-rs escrever só o TETO da GPU em jogo (`gpu_max_clock`), descendo um degrau da
+   `gpu_freq_table` quando o frame sobra e subindo na hora em que falta (mesmo laço da CPU), e soltando no fim.
+   Antes de codar: medir no kernlab se capar a GPU num jogo que bate o limite (Bleach 45, Roblox no médio)
+   economiza (pbat) sem perder fps, e se o Hyper reescreve o teto DURANTE o jogo (sem troca de app).
