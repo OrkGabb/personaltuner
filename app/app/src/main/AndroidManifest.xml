@@ -58,5 +58,18 @@
                 android:name="android.service.quicksettings.TOGGLEABLE_TILE"
                 android:value="true" />
         </service>
+
+        <!-- Perfil em vigor publicado pelo módulo (root) a cada aplicação de perfil e no boot:
+             am broadcast, ação com.orkgabb.fusao.action.PROFILE, pacote com.orkgabb.fusao,
+             extra de texto profile = game | balanced | battery (comando em SmartPixelsProfileReceiver).
+             DUMP: root e shell têm, app de terceiro não consegue mandar. -->
+        <receiver
+            android:name=".pixels.SmartPixelsProfileReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.orkgabb.fusao.action.PROFILE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

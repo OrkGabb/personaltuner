@@ -12,8 +12,8 @@ android {
         applicationId = "com.orkgabb.fusao"
         minSdk = 29
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.1.5"
+        versionCode = 9
+        versionName = "1.1.7"
     }
 
     buildTypes {

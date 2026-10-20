@@ -77,7 +77,7 @@ class SmartPixelsService : AccessibilityService() {
         val serviceScope: CoroutineScope = MainScope()
         scope = serviceScope
         serviceScope.launch {
-            pixelsStore.config.collect { cfg -> apply(cfg) }
+            pixelsStore.state.collect { snapshot -> apply(snapshot) }
         }
     }
 
@@ -106,9 +106,11 @@ class SmartPixelsService : AccessibilityService() {
         store?.reportService(SmartPixelsServiceState.STOPPED)
     }
 
-    private fun apply(cfg: SmartPixelsConfig) {
+    /** Reavalia a visibilidade a cada mudança de config ou de perfil em vigor (regra em [SmartPixelsSnapshot]). */
+    private fun apply(snapshot: SmartPixelsSnapshot) {
         val pixelsStore: SmartPixelsStore = store ?: return
-        if (!cfg.enabled || cfg.masksNothing) {
+        val cfg: SmartPixelsConfig = snapshot.config
+        if (!snapshot.drawsMask) {
             removeMask()
             pixelsStore.reportService(SmartPixelsServiceState.IDLE)
             return

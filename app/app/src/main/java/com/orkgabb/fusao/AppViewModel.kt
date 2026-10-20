@@ -273,7 +273,7 @@ class FusaoViewModel : ViewModel() {
                     status = st,
                     busy = Busy.NONE,
                     activeTarget = "",
-                    notice = if (out.isNotEmpty()) "display: $out" else "display atualizado",
+                    notice = if (out.isNotEmpty()) "Escala da tela: $out" else "Escala da tela atualizada",
                 )
             }
         }
@@ -367,7 +367,7 @@ class FusaoViewModel : ViewModel() {
                     notice = if (inGameNow) {
                         "Observando o jogo ativo (~20s)..."
                     } else {
-                        "Mapeando diretórios dos pacotes elegíveis da gamelist..."
+                        "Gravando o pack dos jogos da lista..."
                     },
                 )
             }

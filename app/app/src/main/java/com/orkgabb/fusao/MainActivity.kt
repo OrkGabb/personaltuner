@@ -202,8 +202,13 @@ class MainActivity : ComponentActivity() {
         var tab by rememberSaveable { mutableIntStateOf(0) }
         val ctx = LocalContext.current
         val pixelsStore = remember(ctx) { SmartPixelsStore.get(ctx) }
-        val pixels by pixelsStore.config.collectAsStateWithLifecycle()
-        val pixelsBadge = if (pixels.enabled) "${pixels.litPercent}%" else null
+        val pixels by pixelsStore.state.collectAsStateWithLifecycle()
+        val pixelsBadge = if (pixels.active) "${pixels.config.litPercent}%" else null
+        // leitura do app aberto também alimenta o perfil do Smart Pixels (além do broadcast do módulo)
+        val effectiveProfile = state.status.effectiveProfile
+        LaunchedEffect(pixelsStore, effectiveProfile) {
+            pixelsStore.setEffectiveProfile(effectiveProfile)
+        }
         val profileAccent = FusaoPalette.profileAccent(state.status.profile)
         val profileSecondary = FusaoPalette.profileSecondary(state.status.profile)
 
@@ -553,7 +558,7 @@ class MainActivity : ComponentActivity() {
                         color = FusaoPalette.TextPrimary,
                     )
                     Text(
-                        text = "Validando ponte root (libsu) e estado de /data/adb/fusao/",
+                        text = "Verificando root e módulo",
                         style = MaterialTheme.typography.bodySmall,
                         color = FusaoPalette.TextSecondary,
                         textAlign = TextAlign.Center,
@@ -609,7 +614,7 @@ class MainActivity : ComponentActivity() {
                 Banner(
                     text = state.notice,
                     accentColor = if (isError) FusaoPalette.CrimsonCore else FusaoPalette.CryoCyan,
-                    tag = if (isError) "ALERTA" else "CLI",
+                    tag = if (isError) "ALERTA" else "AVISO",
                     onClose = { vm.clearNotice() },
                 )
             }
@@ -756,37 +761,19 @@ class MainActivity : ComponentActivity() {
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = when (st.profile) {
-                                            // alvos reais do tune.sh (degraus do Exynos 1380); battery em jogo vira game
+                                            // battery escolhido vira game em jogo
                                             "game" -> if (st.fas && st.fasSupported) {
-                                                "CPU com o FAS em jogo · GPU sem piso · MIF ≥845k"
+                                                "Desempenho · CPU com o FAS"
                                             } else {
-                                                "P0 ≥1056k · P4 ≥960k · GPU sem piso · MIF ≥845k"
+                                                "Desempenho no jogo"
                                             }
-                                            "battery" -> "P0 ≤1728k · P4 ≤1440k · GPU sem teto · em jogo: GAME"
-                                            "balanced" -> "P0/P4 ≥533k · GPU máx 845 MHz · em jogo: BALANCED"
-                                            else -> "Aguardando leitura do perfil em /data/adb/fusao/profile"
+                                            "battery" -> "Economia · tela 120/60 · em jogo vira GAME"
+                                            "balanced" -> "Equilíbrio · em jogo continua BALANCED"
+                                            else -> "Lendo o perfil..."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = FusaoPalette.TextSecondary,
                                     )
-                                    if (st.sysfsSummary.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "LIDO NO APARELHO: ${st.sysfsSummary}",
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 10.sp,
-                                            ),
-                                            color = when (st.profileState) {
-                                                "failed" -> FusaoPalette.CrimsonCore
-                                                "partial" -> FusaoPalette.IgnisAmber
-                                                "pending" -> FusaoPalette.CryoCyan
-                                                else -> FusaoPalette.BioEmerald
-                                            },
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
                                 }
                                 Spacer(modifier = Modifier.width(10.dp))
                                 ReactorCoreEmblem(
@@ -804,7 +791,7 @@ class MainActivity : ComponentActivity() {
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = "SELECIONAR PERFIL DE OPERAÇÃO",
+                                        text = "PERFIL",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = FusaoPalette.TextSecondary,
                                         maxLines = 1,
@@ -813,11 +800,11 @@ class MainActivity : ComponentActivity() {
                                     if (st.profileState.isNotEmpty()) {
                                         TelemetryPill(
                                             text = when (st.profileState) {
-                                                "applied" -> "CONFIRMADO ${st.profileVerify}".trim()
-                                                "partial" -> "PARCIAL ${st.profileVerify}".trim()
+                                                "applied" -> "APLICADO"
+                                                "partial" -> "EM PARTE"
                                                 // piso/teto de CPU segurado pelo QoS da Samsung (boost/hint/térmico): pedido gravado
-                                                "pending" -> "AGUARDANDO ${st.profileVerify}".trim()
-                                                "failed" -> "FALHA DE READBACK"
+                                                "pending" -> "AGUARDANDO"
+                                                "failed" -> "FALHOU"
                                                 else -> st.profileState.uppercase()
                                             },
                                             color = when (st.profileState) {
@@ -849,7 +836,7 @@ class MainActivity : ComponentActivity() {
                                             st.profileEffective.isNotEmpty() && st.profileEffective != pKey ->
                                                 "EM JOGO: ${st.profileEffective.uppercase()}"
                                             st.profileState == "failed" -> "FALHOU"
-                                            st.profileState == "partial" -> "PARCIAL"
+                                            st.profileState == "partial" -> "EM PARTE"
                                             st.profileState == "pending" -> "AGUARDANDO"
                                             else -> "APLICADO"
                                         }
@@ -926,26 +913,17 @@ class MainActivity : ComponentActivity() {
                                                 overflow = TextOverflow.Ellipsis,
                                             )
                                             Text(
-                                                text = if (st.inGame) state.labelFor(st.gameActive) else "— (idle)",
+                                                text = if (st.inGame) state.labelFor(st.gameActive) else "Nenhum",
                                                 style = MaterialTheme.typography.titleMedium,
                                                 color = FusaoPalette.TextPrimary,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                             )
-                                            if (st.inGame) {
-                                                Text(
-                                                    text = st.gameActive,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = FusaoPalette.TextSecondary,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                            }
                                         }
                                     }
                                     Spacer(modifier = Modifier.width(8.dp))
                                     TelemetryPill(
-                                        text = if (st.inGame) "EM FOCO" else "IDLE",
+                                        text = if (st.inGame) "EM FOCO" else "SEM JOGO",
                                         color = if (st.inGame) FusaoPalette.IgnisAmber else FusaoPalette.TextMuted,
                                         filled = st.inGame,
                                     )
@@ -1033,28 +1011,13 @@ class MainActivity : ComponentActivity() {
                         contentPadding = PaddingValues(12.dp),
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = "ESCALA DA TELA",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = FusaoPalette.TextSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "atual: ${st.display.ifEmpty { "—" }}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = FusaoPalette.CryoCyan,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
+                            Text(
+                                text = "ESCALA DA TELA",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FusaoPalette.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1090,12 +1053,11 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         HudSectionHeader(
-                            title = "Daemons",
-                            subtitle = "Processos do módulo em execução",
+                            title = "Serviços do módulo",
                             accentColor = FusaoPalette.PlasmaViolet,
                             trailing = {
                                 TelemetryPill(
-                                    text = "${st.runningDaemonsCount}/3 VIVOS",
+                                    text = "${st.runningDaemonsCount}/3 RODANDO",
                                     color = if (st.runningDaemonsCount == 3) FusaoPalette.BioEmerald else FusaoPalette.CryoCyan,
                                     filled = true,
                                 )
@@ -1120,71 +1082,6 @@ class MainActivity : ComponentActivity() {
                             running = st.observerRunning,
                             flagEnabled = true,
                         )
-                    }
-                }
-            }
-
-            // GANCHOS (FOI OU NÃO)
-            item(key = "status_hooks") {
-                TacticalPanel(
-                    modifier = Modifier.fillMaxWidth(),
-                    accentColor = FusaoPalette.CryoCyan,
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        HudSectionHeader(
-                            title = "Ganchos",
-                            subtitle = "Últimos eventos ao entrar e sair de jogos",
-                            accentColor = FusaoPalette.CryoCyan,
-                            trailing = {
-                                TelemetryPill(
-                                    text = "${st.hooks.size} EVENTOS",
-                                    color = FusaoPalette.CryoCyan,
-                                )
-                            },
-                        )
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(FusaoPalette.VoidBlack.copy(alpha = 0.82f))
-                                .border(1.dp, FusaoPalette.GridHairline, RoundedCornerShape(8.dp))
-                                .padding(12.dp)
-                        ) {
-                            if (st.hooks.isEmpty()) {
-                                Text(
-                                    text = "—",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                    color = FusaoPalette.TextMuted,
-                                )
-                            } else {
-                                SelectionContainer {
-                                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                        st.hooks.forEachIndexed { idx, h ->
-                                            val highlighted = remember(h) { highlightTelemetryLine(h) }
-                                            Row(
-                                                verticalAlignment = Alignment.Top,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            ) {
-                                                Text(
-                                                    text = (idx + 1).toString().padStart(2, '0'),
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = FusaoPalette.TextMuted,
-                                                )
-                                                Text(
-                                                    text = highlighted,
-                                                    style = MaterialTheme.typography.bodySmall.copy(
-                                                        fontFamily = FontFamily.Monospace,
-                                                        fontSize = 11.5.sp,
-                                                        lineHeight = 16.sp,
-                                                    ),
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -1228,7 +1125,7 @@ class MainActivity : ComponentActivity() {
                 StatusPulseDot(color = dotColor, active = running)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "$name: $statusText",
+                        text = name,
                         style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
                         color = FusaoPalette.TextPrimary,
                         maxLines = 1,
@@ -1250,7 +1147,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun daemonText(running: Boolean): String = if (running) "vivo" else "parado"
+    private fun daemonText(running: Boolean): String = if (running) "rodando" else "parado"
 
     // =========================================================================
     // 2. ÁREA DE FLAGS — OS 7 CONTROLES DE SUBSISTEMA
@@ -1297,15 +1194,13 @@ class MainActivity : ComponentActivity() {
                     !available -> "INDISPONÍVEL"
                     isThisFlagBusy -> "PROCESSANDO"
                     spec.cmd == "dnd" && checked && st.inGame -> "ATIVO EM JOGO"
-                    spec.cmd == "dnd" && checked -> "ARMADO (PRÓX. JOGO)"
-                    spec.cmd == "dnd" && !checked -> "DESARMADO"
-                    spec.cmd == "gos" && checked -> "KILLER ATIVO"
+                    spec.cmd == "dnd" && checked -> "PRÓXIMO JOGO"
                     spec.cmd == "gos" && !checked -> "PAUSADO"
-                    spec.cmd == "fas" && checked && !st.fasBinOk -> "SEM BINÁRIO"
+                    spec.cmd == "fas" && checked && !st.fasBinOk -> "NÃO INSTALADO"
                     spec.cmd == "fas" && checked && st.fasState == "working" -> "CONTROLANDO"
                     // fas-rs vivo sem controlar: aquecendo (~10 s após o enter) ou jogo saiu do foco
                     spec.cmd == "fas" && checked && st.fasState == "waiting" -> "AGUARDANDO"
-                    spec.cmd == "fas" && checked -> "ARMADO (PRÓX. JOGO)"
+                    spec.cmd == "fas" && checked -> "PRÓXIMO JOGO"
                     checked -> "ATIVO"
                     else -> "INATIVO"
                 }
@@ -1397,14 +1292,14 @@ class MainActivity : ComponentActivity() {
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 HudSectionHeader(
-                    title = "FAS · fas-rs",
+                    title = "FAS",
                     subtitle = "A CPU mais baixa que ainda segura o fps do jogo, frame a frame",
                     accentColor = accent,
                     trailing = {
                         TelemetryPill(
                             text = when {
                                 !st.fas -> "DESLIGADO"
-                                !st.fasBinOk -> "SEM BINÁRIO"
+                                !st.fasBinOk -> "NÃO INSTALADO"
                                 working -> "CONTROLANDO"
                                 st.fasState == "waiting" -> "AGUARDANDO"
                                 else -> "ARMADO"
@@ -1437,7 +1332,7 @@ class MainActivity : ComponentActivity() {
                         if (st.fasGpu == "saturated") {
                             // a trava do fork: GPU >= 95% ocupada = frame lento é da GPU, a CPU não sobe
                             TelemetryPill(
-                                text = "GPU SATURADA · SEM BOOST",
+                                text = "GPU NO LIMITE",
                                 color = FusaoPalette.IgnisAmber,
                                 filled = true,
                             )
@@ -1446,7 +1341,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Text(
-                    text = "MODO · MARGEM ABAIXO DO ALVO",
+                    text = "MODO",
                     style = MaterialTheme.typography.labelSmall,
                     color = FusaoPalette.TextSecondary,
                     maxLines = 1,
@@ -1460,8 +1355,8 @@ class MainActivity : ComponentActivity() {
                         rowModes.forEach { mode ->
                             val selected = st.fasMode == mode
                             TacticalButton(
-                                text = mode,
-                                subtitle = if (selected) "ATIVO" else FAS_MODE_LABELS[mode],
+                                text = FAS_MODE_LABELS[mode] ?: mode,
+                                subtitle = if (selected) "ATIVO" else null,
                                 onClick = { vm.setFasMode(mode) },
                                 // o selecionado fica habilitado (filled = destaque); tocar de novo só regrava o modo
                                 enabled = state.rooted && !busy,
@@ -1475,9 +1370,8 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Text(
-                    text = "Medido no Bleach (gráficos mínimos, limite 45): −10% de bateria e CPU 3,5 °C mais fria " +
-                        "com o mesmo fps, em troca de ~1 frame lento a cada 3 s. Limite de fps por jogo: aba Jogos, " +
-                        "toque no FAS de cada jogo.",
+                    text = "Menos bateria e CPU mais fria com o mesmo fps. Limite de fps por jogo: aba Jogos, " +
+                        "toque no FAS do jogo.",
                     style = MaterialTheme.typography.bodySmall,
                     color = FusaoPalette.TextSecondary,
                 )
@@ -1584,7 +1478,7 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
                                 Text(
-                                    text = "POLÍTICA GLOBAL DE PRELOAD",
+                                    text = "PRELOAD AO ENTRAR NO JOGO",
                                     style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
                                     color = FusaoPalette.TextPrimary,
                                 )
@@ -1592,7 +1486,7 @@ class MainActivity : ComponentActivity() {
                                     text = if (preloadTelemetry.lastResult.isNotEmpty()) {
                                         "Último resultado: ${preloadTelemetry.lastResult}"
                                     } else {
-                                        "Aplica a todos os pacotes elegíveis instalados de gamelist.txt"
+                                        "Vale para os jogos da lista"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = FusaoPalette.TextSecondary,
@@ -1613,19 +1507,13 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             MetricMiniCard(
-                                label = "ESTADO REAL",
-                                value = preloadTelemetry.preloadState.uppercase(),
-                                accent = preloadBadgeColor,
-                                modifier = Modifier.weight(1f),
-                            )
-                            MetricMiniCard(
-                                label = "ELEGÍVEIS / PACKS",
+                                label = "JOGOS / PACKS",
                                 value = "${maxOf(preloadTelemetry.eligibleCount, eligibleGames.size)} / ${preloadTelemetry.packCount}",
                                 accent = FusaoPalette.CryoCyan,
                                 modifier = Modifier.weight(1f),
                             )
                             MetricMiniCard(
-                                label = "ALVO SELECIONADO",
+                                label = "ALVO",
                                 value = when {
                                     state.selectedPreloadPkg.isNotEmpty() -> state.labelFor(state.selectedPreloadPkg)
                                     state.status.inGame -> state.labelFor(state.status.gameActive)
@@ -1639,7 +1527,7 @@ class MainActivity : ComponentActivity() {
                         // Seletor de pacote alvo a partir da gamelist (funciona sem jogo em primeiro plano)
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = "ALVO DA POLÍTICA (GAMELIST.TXT — INDEPENDENTE DE FOCO)",
+                                text = "ESCOLHA O JOGO",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = FusaoPalette.TextSecondary,
                                 maxLines = 1,
@@ -1669,7 +1557,7 @@ class MainActivity : ComponentActivity() {
                                         .padding(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
                                     Text(
-                                        text = "Todos elegíveis",
+                                        text = "Todos",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = if (allSelected) FusaoPalette.ElectricOrchid else FusaoPalette.TextSecondary,
                                         maxLines = 1,
@@ -1730,12 +1618,12 @@ class MainActivity : ComponentActivity() {
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     Text(
-                                        text = "MAPEANDO PACK DE PRELOAD",
+                                        text = "GRAVANDO O PACK",
                                         style = MaterialTheme.typography.titleSmall,
                                         color = FusaoPalette.IgnisAmber,
                                     )
                                     Text(
-                                        text = "Gerando manifesto .pack em /data/adb/fusao/preload/ para os pacotes elegíveis.",
+                                        text = "Anotando quais arquivos carregar no próximo preload.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = FusaoPalette.TextPrimary,
                                     )
@@ -1767,7 +1655,7 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.weight(1f),
                             )
                             TacticalButton(
-                                text = "Preparar Packs",
+                                text = "Preparar packs",
                                 onClick = { vm.preloadPrepare() },
                                 enabled = state.rooted && !busy,
                                 isLoading = state.isBusy(Busy.PRELOAD) && state.activeTarget == "preload_prepare",
@@ -1791,9 +1679,9 @@ class MainActivity : ComponentActivity() {
                             )
                             TacticalButton(
                                 text = if (state.isBusy(Busy.RECORD)) {
-                                    "Mapeando... (${state.recordRemainingSec}s)"
+                                    "Gravando... (${state.recordRemainingSec}s)"
                                 } else {
-                                    "Record Pack"
+                                    "Gravar pack"
                                 },
                                 onClick = { vm.preloadRecord() },
                                 enabled = state.rooted && !busy,
@@ -1825,7 +1713,7 @@ class MainActivity : ComponentActivity() {
                         accentColor = FusaoPalette.BioEmerald,
                         trailing = {
                             TelemetryPill(
-                                text = if (state.status.ramclean) "HOOK ON" else "HOOK OFF",
+                                text = if (state.status.ramclean) "LIGADO" else "DESLIGADO",
                                 color = if (state.status.ramclean) FusaoPalette.BioEmerald else FusaoPalette.TextMuted,
                                 filled = state.status.ramclean,
                             )
@@ -1838,22 +1726,16 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             MetricMiniCard(
-                                label = "MEMFREE (KB)",
-                                value = ramcleanTelemetry.lastTransition.ifEmpty { "—" },
+                                label = "RAM LIVRE",
+                                value = ramTransitionMb(ramcleanTelemetry.lastTransition),
                                 accent = FusaoPalette.BioEmerald,
                                 modifier = Modifier.weight(1.35f),
                             )
                             MetricMiniCard(
-                                label = "MEMAVAIL (KB)",
-                                value = ramcleanTelemetry.lastAvailKb.ifEmpty { "—" },
+                                label = "DISPONÍVEL",
+                                value = kbToMb(ramcleanTelemetry.lastAvailKb),
                                 accent = FusaoPalette.CryoCyan,
                                 modifier = Modifier.weight(1f),
-                            )
-                            MetricMiniCard(
-                                label = "STATUS RC",
-                                value = ramcleanTelemetry.lastRc.ifEmpty { "—" },
-                                accent = FusaoPalette.MintPulse,
-                                modifier = Modifier.weight(0.65f),
                             )
                         }
                     }
@@ -1888,6 +1770,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** "123456" (kB) -> "121 MB"; vazio ou inválido -> "—". */
+    private fun kbToMb(kb: String): String =
+        kb.trim().toLongOrNull()?.let { "${it / 1024} MB" } ?: "—"
+
+    /** "123456->234567" (kB, saída do ramclean) -> "121 → 229 MB". */
+    private fun ramTransitionMb(transition: String): String {
+        val parts = transition.split("->").mapNotNull { it.trim().toLongOrNull() }
+        return if (parts.size == 2) "${parts[0] / 1024} → ${parts[1] / 1024} MB" else "—"
     }
 
     @Composable
@@ -2021,7 +1913,7 @@ class MainActivity : ComponentActivity() {
                         accentColor = FusaoPalette.CryoCyan,
                         trailing = {
                             TelemetryPill(
-                                text = "${state.games.size} ALVOS",
+                                text = "${state.games.size} JOGOS",
                                 color = FusaoPalette.CryoCyan,
                                 filled = true,
                             )
@@ -2059,7 +1951,7 @@ class MainActivity : ComponentActivity() {
                             onValueChange = { filterQuery = it },
                             placeholder = {
                                 Text(
-                                    "Filtrar na gamelist por nome ou pacote...",
+                                    "Filtrar por nome...",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = FusaoPalette.TextMuted,
                                 )
@@ -2098,9 +1990,9 @@ class MainActivity : ComponentActivity() {
                         )
                         Text(
                             text = if (state.games.isEmpty()) {
-                                "Nenhum jogo listado em gamelist.txt"
+                                "Nenhum jogo na lista"
                             } else {
-                                "Nenhum pacote corresponde ao filtro \"$filterQuery\""
+                                "Nenhum jogo encontrado para \"$filterQuery\""
                             },
                             style = MaterialTheme.typography.titleSmall,
                             color = FusaoPalette.TextSecondary,
@@ -2198,7 +2090,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                         if (!isInstalled && state.apps.isNotEmpty()) {
                                             Text(
-                                                text = "Registrado em gamelist.txt (não instalado)",
+                                                text = "Não instalado",
                                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.5.sp),
                                                 color = FusaoPalette.TextMuted,
                                                 maxLines = 1,
@@ -2307,7 +2199,7 @@ class MainActivity : ComponentActivity() {
                         value = query,
                         onValueChange = { query = it },
                         label = { Text("Buscar") },
-                        placeholder = { Text("Nome do jogo ou com.exemplo.app") },
+                        placeholder = { Text("Nome do jogo") },
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium.copy(color = FusaoPalette.TextPrimary),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -2406,7 +2298,7 @@ class MainActivity : ComponentActivity() {
                                             )
                                         }
                                         TelemetryPill(
-                                            text = "+ ADD",
+                                            text = "+ ADICIONAR",
                                             color = FusaoPalette.CryoCyan,
                                             filled = true,
                                         )
@@ -2474,7 +2366,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     HudSectionHeader(
-                        title = if (state.logFusaod) "fusaod.log (writer)" else "fusao.log (ganchos)",
+                        title = if (state.logFusaod) "fusaod.log" else "fusao.log",
                         subtitle = "Registro do módulo; o bugreport vai para a pasta Download",
                         accentColor = FusaoPalette.CryoCyan,
                         trailing = {
@@ -2558,8 +2450,8 @@ class MainActivity : ComponentActivity() {
 
                         listOf(
                             0 to "TODOS",
-                            1 to "HOOKS/OK",
-                            2 to "CONTENDA/ERRO",
+                            1 to "EVENTOS",
+                            2 to "ERROS",
                         ).forEach { (sKey, sLabel) ->
                             val sel = severityFilter == sKey
                             Box(
@@ -2615,7 +2507,7 @@ class MainActivity : ComponentActivity() {
                         onValueChange = { logFilter = it },
                         placeholder = {
                             Text(
-                                "Filtrar linhas do log (ex.: preload, dnd, p0, verify-fail)...",
+                                "Filtrar linhas do log...",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = FusaoPalette.TextMuted,
                             )

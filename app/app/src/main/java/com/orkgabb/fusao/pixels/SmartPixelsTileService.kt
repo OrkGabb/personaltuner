@@ -8,8 +8,9 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 
 /**
- * Bloco "Smart Pixels" das Configurações rápidas. Liga/desliga a mesma [SmartPixelsConfig]
- * da aba Pixels; sem a permissão de acessibilidade, abre a tela de acessibilidade.
+ * Bloco "Smart Pixels" das Configurações rápidas. O toque liga/desliga a chave manual da
+ * aba Pixels; o estado aceso segue a visibilidade efetiva (manual ou perfil battery). Sem a
+ * permissão de acessibilidade, abre a tela de acessibilidade.
  */
 class SmartPixelsTileService : TileService() {
 
@@ -27,20 +28,22 @@ class SmartPixelsTileService : TileService() {
             if (isLocked) unlockAndRun(openSettingsAction) else openAccessibilitySettings()
             return
         }
-        store.setEnabled(!store.config.value.enabled)
+        // o toque mexe só na chave manual; o automático do perfil battery segue valendo
+        store.setEnabled(!store.state.value.config.enabled)
         render()
     }
 
     private fun render() {
         val tile: Tile = qsTile ?: return
         val store: SmartPixelsStore = SmartPixelsStore.get(this)
-        val cfg: SmartPixelsConfig = store.config.value
+        val snapshot: SmartPixelsSnapshot = store.state.value
         val granted: Boolean = store.accessibilityGranted()
-        tile.state = if (granted && cfg.enabled) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        tile.state = if (granted && snapshot.active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.subtitle = when {
             !granted -> "Sem permissão"
-            !cfg.enabled -> "Desligado"
-            else -> "${cfg.litPercent}% acesos"
+            snapshot.activation == PixelsActivation.OFF -> "Desligado"
+            snapshot.activation == PixelsActivation.AUTO_BATTERY -> "Auto · ${snapshot.config.litPercent}% acesos"
+            else -> "${snapshot.config.litPercent}% acesos"
         }
         tile.updateTile()
     }

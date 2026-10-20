@@ -15,6 +15,18 @@ enum class PixelPattern(val key: String, val label: String) {
     }
 }
 
+/** Por que a máscara está (ou não) ligada. */
+enum class PixelsActivation {
+    /** Chave manual desligada e o automático não se aplica agora. */
+    OFF,
+
+    /** Chave manual ligada (vale em qualquer perfil). */
+    MANUAL,
+
+    /** Chave manual desligada, automático ligado e perfil em vigor do módulo == battery. */
+    AUTO_BATTERY,
+}
+
 /** Opção de intervalo de movimento oferecida na UI. */
 data class ShiftPreset(val millis: Long, val label: String)
 
@@ -24,7 +36,10 @@ data class ShiftPreset(val millis: Long, val label: String)
  * Toda instância que sai de [SmartPixelsStore] já passou por [normalized].
  */
 data class SmartPixelsConfig(
+    /** Chave manual da aba Pixels e do bloco das Configurações rápidas. */
     val enabled: Boolean = false,
+    /** Liga a máscara sozinho enquanto o perfil em vigor do módulo for battery. */
+    val autoBattery: Boolean = DEFAULT_AUTO_BATTERY,
     val litPercent: Int = DEFAULT_LIT_PERCENT,
     val cellPx: Int = DEFAULT_CELL_PX,
     val pattern: PixelPattern = PixelPattern.UNIFORM,
@@ -32,6 +47,16 @@ data class SmartPixelsConfig(
 ) {
     /** 100% aceso = nada a apagar: o serviço nem cria a janela. */
     val masksNothing: Boolean get() = litPercent >= MAX_LIT_PERCENT
+
+    /**
+     * Regra única de visibilidade: chave manual OU (automático E perfil em vigor == battery).
+     * [effectiveProfile] é o perfil que o módulo aplicou de fato (battery vira game em jogo).
+     */
+    fun activation(effectiveProfile: String): PixelsActivation = when {
+        enabled -> PixelsActivation.MANUAL
+        autoBattery && effectiveProfile == PROFILE_BATTERY -> PixelsActivation.AUTO_BATTERY
+        else -> PixelsActivation.OFF
+    }
 
     /** true quando o desenho do bloco (não o deslocamento) é o mesmo. */
     fun sameTile(other: SmartPixelsConfig?): Boolean =
@@ -52,22 +77,40 @@ data class SmartPixelsConfig(
         const val DEFAULT_LIT_PERCENT: Int = 50
         const val LIT_STEP_PERCENT: Int = 5
 
+        /** Acima de 3 px a grade fica visível e atrapalha ler a tela. */
         const val MIN_CELL_PX: Int = 1
-        const val MAX_CELL_PX: Int = 8
+        const val MAX_CELL_PX: Int = 3
         const val DEFAULT_CELL_PX: Int = 2
 
-        /** 0 = parado. Abaixo de 80 ms vira 80 ms (troca mais rápida só gasta GPU e pisca). */
+        const val DEFAULT_AUTO_BATTERY: Boolean = true
+
+        /** Perfis que o módulo publica; só battery liga o automático. */
+        const val PROFILE_GAME: String = "game"
+        const val PROFILE_BALANCED: String = "balanced"
+        const val PROFILE_BATTERY: String = "battery"
+        val PROFILES: Set<String> = setOf(PROFILE_GAME, PROFILE_BALANCED, PROFILE_BATTERY)
+
+        /** Aceita só um perfil conhecido (sem espaço, minúsculo); qualquer outra coisa vira "". */
+        fun sanitizeProfile(raw: String?): String {
+            val clean: String = raw?.trim()?.lowercase().orEmpty()
+            return if (clean in PROFILES) clean else ""
+        }
+
+        /**
+         * 0 = parado. Cada passo troca de lugar TODOS os pontos apagados: a troca é visível (o dono viu
+         * "piscando sem parar" com 1 s). Mínimo 1 min: contra marca na tela basta, e o olho vê no máximo
+         * uma troca por minuto. Valor antigo menor (1 s / 10 s do 1.1.5) sobe para o mínimo ao carregar.
+         */
         const val STATIC_SHIFT_MILLIS: Long = 0L
-        const val MIN_SHIFT_MILLIS: Long = 80L
-        const val MAX_SHIFT_MILLIS: Long = 600_000L
+        const val MIN_SHIFT_MILLIS: Long = 60_000L
+        const val MAX_SHIFT_MILLIS: Long = 900_000L
         const val DEFAULT_SHIFT_MILLIS: Long = 60_000L
 
         val SHIFT_PRESETS: List<ShiftPreset> = listOf(
             ShiftPreset(STATIC_SHIFT_MILLIS, "Parado"),
-            ShiftPreset(1_000L, "1 s"),
-            ShiftPreset(10_000L, "10 s"),
             ShiftPreset(60_000L, "1 min"),
             ShiftPreset(300_000L, "5 min"),
+            ShiftPreset(900_000L, "15 min"),
         )
 
         val CELL_SIZES: List<Int> = (MIN_CELL_PX..MAX_CELL_PX).toList()
@@ -77,6 +120,24 @@ data class SmartPixelsConfig(
             else -> millis.coerceIn(MIN_SHIFT_MILLIS, MAX_SHIFT_MILLIS)
         }
     }
+}
+
+/**
+ * Foto única do Smart Pixels: config do dono + último perfil em vigor recebido do módulo.
+ * Publicada por [SmartPixelsStore.state]; UI, serviço e bloco derivam a visibilidade daqui.
+ */
+data class SmartPixelsSnapshot(
+    val config: SmartPixelsConfig = SmartPixelsConfig(),
+    /** "" = ainda não recebido; senão game, balanced ou battery. */
+    val effectiveProfile: String = "",
+) {
+    val activation: PixelsActivation get() = config.activation(effectiveProfile)
+
+    /** Ligado por qualquer motivo (a 100% aceso fica ligado sem desenhar nada). */
+    val active: Boolean get() = activation != PixelsActivation.OFF
+
+    /** A máscara deve estar desenhada na tela. */
+    val drawsMask: Boolean get() = active && !config.masksNothing
 }
 
 /** Estado do serviço que desenha a máscara, publicado por ele mesmo em [SmartPixelsStore]. */

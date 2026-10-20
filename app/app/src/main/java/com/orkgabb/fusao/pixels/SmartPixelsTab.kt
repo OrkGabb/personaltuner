@@ -51,7 +51,8 @@ private enum class AccessState { NO_PERMISSION, SERVICE_STOPPED, READY }
 fun SmartPixelsTab() {
     val context = LocalContext.current
     val store: SmartPixelsStore = remember(context) { SmartPixelsStore.get(context) }
-    val cfg: SmartPixelsConfig by store.config.collectAsStateWithLifecycle()
+    val snapshot: SmartPixelsSnapshot by store.state.collectAsStateWithLifecycle()
+    val cfg: SmartPixelsConfig = snapshot.config
     val serviceState: SmartPixelsServiceState by store.serviceState.collectAsStateWithLifecycle()
 
     // a permissão é dada fora do app: relê ao voltar das configurações
@@ -81,10 +82,11 @@ fun SmartPixelsTab() {
     ) {
         item(key = "pixels_header") {
             HeaderPanel(
-                cfg = cfg,
+                snapshot = snapshot,
                 access = access,
                 masking = serviceState == SmartPixelsServiceState.MASKING,
                 onToggle = store::setEnabled,
+                onToggleAuto = store::setAutoBattery,
             )
         }
         if (access != AccessState.READY) {
@@ -103,29 +105,44 @@ fun SmartPixelsTab() {
 
 @Composable
 private fun HeaderPanel(
-    cfg: SmartPixelsConfig,
+    snapshot: SmartPixelsSnapshot,
     access: AccessState,
     masking: Boolean,
     onToggle: (Boolean) -> Unit,
+    onToggleAuto: (Boolean) -> Unit,
 ) {
+    val cfg: SmartPixelsConfig = snapshot.config
+    val active: Boolean = snapshot.active
+    val auto: Boolean = snapshot.activation == PixelsActivation.AUTO_BATTERY
     val pillText: String = when {
         access == AccessState.NO_PERMISSION -> "SEM PERMISSÃO"
         access == AccessState.SERVICE_STOPPED -> "SERVIÇO PARADO"
-        !cfg.enabled -> "DESLIGADO"
+        !active -> "DESLIGADO"
         cfg.masksNothing -> "100% ACESOS"
+        masking && auto -> "NA TELA · AUTO (BATTERY)"
         masking -> "NA TELA"
         else -> "LIGANDO"
     }
     val pillColor: Color = when {
         access == AccessState.NO_PERMISSION -> FusaoPalette.CrimsonCore
         access == AccessState.SERVICE_STOPPED -> FusaoPalette.IgnisAmber
-        cfg.enabled -> PixelsAccent
+        active -> PixelsAccent
         else -> FusaoPalette.TextMuted
+    }
+    val stateText: String = when (snapshot.activation) {
+        PixelsActivation.MANUAL -> "Ligado · ${cfg.litPercent}% dos pixels acesos"
+        PixelsActivation.AUTO_BATTERY -> "Ligado pelo perfil battery · ${cfg.litPercent}% acesos"
+        PixelsActivation.OFF -> "Desligado"
+    }
+    val profileText: String = when (snapshot.effectiveProfile) {
+        "" -> "Perfil ainda não lido. Abra o app ou troque de perfil uma vez."
+        SmartPixelsConfig.PROFILE_BATTERY -> "Perfil agora: battery. Em jogo vira game e a máscara sai sozinha."
+        else -> "Perfil agora: ${snapshot.effectiveProfile}. Volta sozinha quando o perfil for battery."
     }
 
     TacticalPanel(
         modifier = Modifier.fillMaxWidth(),
-        accentColor = if (cfg.enabled) PixelsAccent else FusaoPalette.BorderSubtle,
+        accentColor = if (active) PixelsAccent else FusaoPalette.BorderSubtle,
         highlighted = masking,
         contentPadding = PaddingValues(14.dp),
     ) {
@@ -138,37 +155,54 @@ private fun HeaderPanel(
                     TelemetryPill(
                         text = pillText,
                         color = pillColor,
-                        filled = cfg.enabled || access != AccessState.READY,
+                        filled = active || access != AccessState.READY,
                         pulsingDot = masking,
                     )
                 },
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
+            SwitchRow(
+                text = stateText,
+                checked = cfg.enabled,
+                onCheckedChange = onToggle,
+            )
+            SwitchRow(
+                text = "Ligar sozinho no perfil battery",
+                checked = cfg.autoBattery,
+                onCheckedChange = onToggleAuto,
+            )
+            if (cfg.autoBattery) {
                 Text(
-                    text = if (cfg.enabled) {
-                        "Ligado · ${cfg.litPercent}% dos pixels acesos"
-                    } else {
-                        "Desligado"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = FusaoPalette.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 12.dp),
-                )
-                CyberSwitch(
-                    checked = cfg.enabled,
-                    onCheckedChange = onToggle,
-                    accentColor = PixelsAccent,
+                    text = profileText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FusaoPalette.TextSecondary,
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SwitchRow(text: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = FusaoPalette.TextPrimary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp),
+        )
+        CyberSwitch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            accentColor = PixelsAccent,
+        )
     }
 }
 
@@ -364,8 +398,8 @@ private fun snapLit(value: Float): Int {
 private val LIT_SLIDER_STEPS: Int =
     (SmartPixelsConfig.MAX_LIT_PERCENT - SmartPixelsConfig.MIN_LIT_PERCENT) / SmartPixelsConfig.LIT_STEP_PERCENT - 1
 
-private const val CELL_COLUMNS: Int = 4
-private const val SHIFT_COLUMNS: Int = 3
+private const val CELL_COLUMNS: Int = 3
+private const val SHIFT_COLUMNS: Int = 4
 private val CELL_ROWS: List<List<Int>> = SmartPixelsConfig.CELL_SIZES.chunked(CELL_COLUMNS)
 private val SHIFT_ROWS: List<List<ShiftPreset>> = SmartPixelsConfig.SHIFT_PRESETS.chunked(SHIFT_COLUMNS)
 
@@ -377,5 +411,7 @@ private val ABOUT_LINES: List<String> = listOf(
         "mais que os outros. A troca para com a tela desligada.",
     "Permissão: usa a acessibilidade só para desenhar a máscara por cima de tudo em preto total " +
         "(janela comum fica limitada a 80%). Não lê a tela e não usa root.",
+    "Automático: com \"Ligar sozinho no perfil battery\" ligado, a máscara aparece enquanto o " +
+        "módulo estiver no perfil battery e sai sozinha no jogo (lá o perfil vira game).",
     "Atalho: bloco \"Smart Pixels\" nas Configurações rápidas (editar os blocos e arrastar).",
 )

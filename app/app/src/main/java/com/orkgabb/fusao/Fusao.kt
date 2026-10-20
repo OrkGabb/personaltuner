@@ -61,7 +61,7 @@ object FusaoBridge {
         val c = cli()
         if (c.isEmpty()) return "módulo ausente"
         val r = RootShell.run("\"$c\" $cmd ${if (on) "on" else "off"} 2>&1")
-        if (!r.isSuccess && r.output.isEmpty()) return "FALHOU: comando $cmd retornou código ${r.exitCode}"
+        if (!r.isSuccess && r.output.isEmpty()) return "FALHOU: o módulo não respondeu ao $cmd"
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
@@ -74,27 +74,19 @@ object FusaoBridge {
         }
         val r = RootShell.run("\"$c\" profile $safe 2>&1")
         if (!r.isSuccess && r.output.isEmpty()) {
-            return "FALHOU ao aplicar perfil $safe (rc=${r.exitCode})"
+            return "FALHOU: o módulo não aplicou o perfil $safe"
         }
-        var pState = ""
-        var pVerify = ""
-        var pMis = ""
-        var pExt = ""
-        for (line in r.output) {
-            val t = line.trim()
-            when {
-                t.startsWith("profile_state=") -> pState = t.removePrefix("profile_state=")
-                t.startsWith("profile_verify=") -> pVerify = t.removePrefix("profile_verify=")
-                t.startsWith("profile_mismatch=") -> pMis = t.removePrefix("profile_mismatch=")
-                t.startsWith("profile_external=") -> pExt = t.removePrefix("profile_external=")
-            }
-        }
+        // detalhe por nó (profile_mismatch/verify) fica no fusao.log da aba Log
+        val pState = r.output.map { it.trim() }
+            .firstOrNull { it.startsWith("profile_state=") }
+            ?.removePrefix("profile_state=")
+            .orEmpty()
         return when (pState) {
-            "failed" -> "FALHOU: perfil $safe não pôde ser confirmado ($pVerify) ${pMis.takeIf { it.isNotEmpty() } ?: ""}".trim()
-            "partial" -> "profile=$safe [PARCIAL $pVerify] ${pMis.takeIf { it.isNotEmpty() } ?: ""}".trim()
-            "pending" -> "profile=$safe [AGUARDANDO $pVerify] piso/teto externo: $pExt".trim()
-            "applied" -> "profile=$safe [APLICADO $pVerify]"
-            else -> r.output.firstOrNull()?.trim().orEmpty().ifEmpty { "profile=$safe" }
+            "failed" -> "FALHOU: perfil $safe não ficou valendo no aparelho"
+            "partial" -> "Perfil $safe aplicado em parte"
+            "pending" -> "Perfil $safe pedido; o sistema ainda segura a CPU (calor ou boost)"
+            "applied" -> "Perfil $safe aplicado"
+            else -> "Perfil $safe enviado"
         }
     }
 
@@ -257,6 +249,9 @@ data class FusaoStatus(
     val observerRunning: Boolean = false,
 ) {
     val inGame: Boolean get() = gameActive.isNotEmpty()
+
+    /** Perfil aplicado de fato agora (módulo antigo sem profile_effective: o escolhido). */
+    val effectiveProfile: String get() = profileEffective.ifEmpty { profile }
 
     val isProfileConfirmed: Boolean
         get() = profile.isNotEmpty() && profileState != "failed"
