@@ -1,7 +1,7 @@
 From 24fed832240fbc95f82eda2573d1c35e0576c4f4 Mon Sep 17 00:00:00 2001
 From: OrkGabb <gabrielribeiroggv@gmail.com>
 Date: Sun, 18 Oct 2026 21:54:08 -0300
-Subject: [PATCH 2/3] looper: log when FAS starts/stops controlling
+Subject: [PATCH 2/9] looper: log when FAS starts/stops controlling
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---

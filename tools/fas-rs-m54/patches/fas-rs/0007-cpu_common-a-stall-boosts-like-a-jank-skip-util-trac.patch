@@ -1,0 +1,29 @@
+From a7523ee44add3331e085709abc008f3c40ab45fa Mon Sep 17 00:00:00 2001
+From: OrkGabb <ork@Gabriel.localdomain>
+Date: Tue, 20 Oct 2026 18:36:38 -0300
+Subject: [PATCH 7/9] cpu_common: a stall boosts like a jank (skip util
+ tracking of the stopped thread)
+
+---
+ src/cpu_common/mod.rs | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu_common/mod.rs b/src/cpu_common/mod.rs
+index 2932058..07e669a 100644
+--- a/src/cpu_common/mod.rs
++++ b/src/cpu_common/mod.rs
+@@ -167,7 +167,10 @@ impl Controller {
+ 
+     // stalled = no frame for >= 100 ms: boost as upstream does, the GPU guard never holds a frozen game
+     pub fn fas_update_freq(&mut self, control: isize, is_janked: bool, stalled: bool) {
+-        let (control, is_janked) = if !stalled && self.gpu_guard.saturated() {
++        // a stopped thread reads ~0% util: tracking it would keep the clock pinned through the stall
++        let (control, is_janked) = if stalled {
++            (control, true)
++        } else if self.gpu_guard.saturated() {
+             (control.min(0), false)
+         } else {
+             (control, is_janked)
+-- 
+2.53.0
+

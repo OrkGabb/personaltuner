@@ -1,7 +1,7 @@
 From 6b03c41dc6d1737535190238b20c8a509230c1f1 Mon Sep 17 00:00:00 2001
 From: OrkGabb <gabrielribeiroggv@gmail.com>
 Date: Sun, 18 Oct 2026 22:29:31 -0300
-Subject: [PATCH 3/3] cpu_common: hold CPU boost while the GPU is saturated
+Subject: [PATCH 3/9] cpu_common: hold CPU boost while the GPU is saturated
  (Mali gpu_busy >= 95%)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

@@ -1223,3 +1223,24 @@ Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%,
 - Segue aberto: `framework.stock` contaminado (desligar não devolve o padrão exato da ROM) e as tríades
   (jobs/standby) nunca medidas (futuro.md §3). Módulo 2.11.4 STAGED (framework.sh vivo = release), APK
   1.1.4 `964e2278...`.
+
+## 2.11.5/1608: fas-rs sem as paradas e sem a trava de GPU falsa (2026-10-20, WiFi `:41273`)
+- **Queixa do dono (Roblox)**: fps bom (19-21 ms) com pico de ~50 ms a cada ~3 s e congelamentos de alguns
+  segundos. `fas.log` da sessão (2026-10-19 02:28): FAS parou e voltou 6x em 2,5 min ("FAS stopped" -> 9-23 s
+  sem controle) e a trava de GPU do patch 0003 alternou ~120 vezes.
+- **Causas lidas no fonte e confirmadas no trace** (feature `m54-trace`, só em build de experimento):
+  (1) a trava usava só `gpu_busy` >= 95%: ativou com a GPU a **221 MHz** (Forgotton Anne), e enquanto ativa a CPU
+  só podia descer; (2) uma travada de ~0,3 s derrubava o fps médio para o degrau de baixo e cada troca de alvo
+  zerava o buffer e parava o FAS; (3) na travada a thread parada lê 0% de uso e o rastreio por uso segurava a CPU
+  em 533 MHz por ~400 ms; (4) ao voltar, o FAS começava cravado no último clock (muitas vezes o mínimo).
+- **Patches 0005-0009** (`tools/fas-rs-m54/README.md`): trava só com a GPU no teto por 500 ms + histerese e nunca
+  na travada; troca de alvo só depois de 2 s e nunca durante travada < 5 s; troca entre dois alvos sem zerar o
+  buffer; travada = jank; retomada do clock do governor. Binário `dfed4255...`.
+- **Prova (NTE, 4 travadas de 0,5 s com SIGSTOP + as naturais do carregamento, mesmo roteiro, n=1/braço)**: antigo
+  = 1 "FAS stopped" após travada natural de 839 ms (~20 s sem controle), 10 alternâncias da trava; novo = 0 paradas,
+  0 alternâncias, CPU no máximo em <= 100 ms de travada e mantida por 2,8 s, trocas 60 -> 45 -> 30 sem parar.
+  Binário de produção (sem trace) repetiu: 0 paradas, saída limpa (fas off -> battery 9/9).
+- **Não provado ainda**: o pico de 3 s no Roblox. Inferência: é a trava alternando (no log ela mudava a cada 1-3 s
+  e cada ativação corta a subida da CPU). Precisa de uma sessão do dono no Roblox com o binário novo.
+- Binário novo VIVO em `/data/adb/modules/encore/system/bin/fas-rs` (o original 2.11.4 em
+  `/data/local/tmp/fas-rs.orig`); zip `_releases/fusao-v2.11.5-M54.zip`.

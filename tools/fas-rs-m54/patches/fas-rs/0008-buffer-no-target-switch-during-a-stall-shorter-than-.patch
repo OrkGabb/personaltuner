@@ -1,0 +1,46 @@
+From f7bf689d15883addb51d2c340ed737c1cda4a101 Mon Sep 17 00:00:00 2001
+From: OrkGabb <ork@Gabriel.localdomain>
+Date: Tue, 20 Oct 2026 18:41:19 -0300
+Subject: [PATCH 8/9] buffer: no target switch during a stall shorter than 5 s
+
+---
+ src/framework/scheduler/looper/buffer/calculate.rs | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/framework/scheduler/looper/buffer/calculate.rs b/src/framework/scheduler/looper/buffer/calculate.rs
+index ecf2c01..ba744ff 100644
+--- a/src/framework/scheduler/looper/buffer/calculate.rs
++++ b/src/framework/scheduler/looper/buffer/calculate.rs
+@@ -24,6 +24,7 @@ use log::debug;
+ use super::Buffer;
+ 
+ const TARGET_SWITCH_DELAY: Duration = Duration::from_secs(2);
++const STALL_IS_PAUSE: Duration = Duration::from_secs(5);
+ use crate::{Extension, api::trigger_target_fps_change, framework::config::TargetFps};
+ 
+ impl Buffer {
+@@ -101,6 +102,8 @@ impl Buffer {
+     // M54: switch the target only after the new one holds for TARGET_SWITCH_DELAY, not on one 100 ms
+     // sample. A 0.3 s hitch drags fps_long under the next step down; every switch empties the buffer
+     // and stops FAS for ~10 s (Roblox: 6 stops in 2.5 min), right when the game needs the boost.
++    // A stall shorter than STALL_IS_PAUSE is not a new fps level either: no frame means no switch
++    // (NTE: a 2.9 s load hitch outlasted the 2 s hold). Longer = paused game, let it stop FAS.
+     fn target_switch_due(&mut self, new_target_fps: Option<u32>) -> bool {
+         let current = self.target_fps_state.target_fps;
+         if current.is_none() || current == new_target_fps {
+@@ -108,6 +111,12 @@ impl Buffer {
+             return true;
+         }
+ 
++        let stall = self.frametime_state.additional_frametime;
++        if stall > Duration::ZERO && stall < STALL_IS_PAUSE {
++            self.target_fps_state.pending = None;
++            return false;
++        }
++
+         match self.target_fps_state.pending {
+             Some((candidate, since)) if candidate == new_target_fps => {
+                 since.elapsed() >= TARGET_SWITCH_DELAY
+-- 
+2.53.0
+

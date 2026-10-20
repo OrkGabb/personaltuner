@@ -1,0 +1,110 @@
+From 1dd9c2ccf7277eb84619dce77acf7cde1dea2bd4 Mon Sep 17 00:00:00 2001
+From: OrkGabb <ork@Gabriel.localdomain>
+Date: Tue, 20 Oct 2026 18:32:11 -0300
+Subject: [PATCH 6/9] buffer: switch target fps only after it holds 2 s;
+ init_game resumes from the governor clock
+
+---
+ src/cpu_common/mod.rs                         |  5 ++++
+ .../scheduler/looper/buffer/calculate.rs      | 28 ++++++++++++++++++-
+ src/framework/scheduler/looper/buffer/mod.rs  |  2 ++
+ 3 files changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu_common/mod.rs b/src/cpu_common/mod.rs
+index 95f4ba3..2932058 100644
+--- a/src/cpu_common/mod.rs
++++ b/src/cpu_common/mod.rs
+@@ -149,6 +149,11 @@ impl Controller {
+     pub fn init_game(&mut self, pid: i32, extension: &Extension) {
+         trigger_init_cpu_freq(extension);
+         self.reset_all_cpu_freq();
++        // M54: start from where the governor is; cur_fas_freq kept the last pinned clock of the
++        // previous working period, so every restart opened with a pin at that (often minimum) clock
++        for cpu in &mut self.cpu_infos {
++            cpu.cur_fas_freq = cpu.read_freq();
++        }
+         self.process_monitor.set_pid(Some(pid));
+         self.util_max = None;
+     }
+diff --git a/src/framework/scheduler/looper/buffer/calculate.rs b/src/framework/scheduler/looper/buffer/calculate.rs
+index 98230b3..ecf2c01 100644
+--- a/src/framework/scheduler/looper/buffer/calculate.rs
++++ b/src/framework/scheduler/looper/buffer/calculate.rs
+@@ -15,13 +15,15 @@
+ // You should have received a copy of the GNU General Public License along
+ // with fas-rs. If not, see <https://www.gnu.org/licenses/>.
+ 
+-use std::time::Duration;
++use std::time::{Duration, Instant};
+ 
+ use likely_stable::unlikely;
+ #[cfg(debug_assertions)]
+ use log::debug;
+ 
+ use super::Buffer;
++
++const TARGET_SWITCH_DELAY: Duration = Duration::from_secs(2);
+ use crate::{Extension, api::trigger_target_fps_change, framework::config::TargetFps};
+ 
+ impl Buffer {
+@@ -74,6 +76,9 @@ impl Buffer {
+ 
+     pub fn calculate_target_fps(&mut self, extension: &Extension) {
+         let new_target_fps = self.target_fps();
++        if !self.target_switch_due(new_target_fps) {
++            return;
++        }
+         if self.target_fps_state.target_fps != new_target_fps || new_target_fps.is_none() {
+             #[cfg(feature = "m54-trace")]
+             if self.target_fps_state.target_fps != new_target_fps {
+@@ -93,6 +98,27 @@ impl Buffer {
+         }
+     }
+ 
++    // M54: switch the target only after the new one holds for TARGET_SWITCH_DELAY, not on one 100 ms
++    // sample. A 0.3 s hitch drags fps_long under the next step down; every switch empties the buffer
++    // and stops FAS for ~10 s (Roblox: 6 stops in 2.5 min), right when the game needs the boost.
++    fn target_switch_due(&mut self, new_target_fps: Option<u32>) -> bool {
++        let current = self.target_fps_state.target_fps;
++        if current.is_none() || current == new_target_fps {
++            self.target_fps_state.pending = None;
++            return true;
++        }
++
++        match self.target_fps_state.pending {
++            Some((candidate, since)) if candidate == new_target_fps => {
++                since.elapsed() >= TARGET_SWITCH_DELAY
++            }
++            _ => {
++                self.target_fps_state.pending = Some((new_target_fps, Instant::now()));
++                false
++            }
++        }
++    }
++
+     fn reset_frametime_state(&mut self) {
+         self.frametime_state.frametimes.clear();
+     }
+diff --git a/src/framework/scheduler/looper/buffer/mod.rs b/src/framework/scheduler/looper/buffer/mod.rs
+index faf08ed..8db353d 100644
+--- a/src/framework/scheduler/looper/buffer/mod.rs
++++ b/src/framework/scheduler/looper/buffer/mod.rs
+@@ -66,6 +66,7 @@ impl FrameTimeState {
+ pub struct TargetFpsState {
+     pub target_fps: Option<u32>,
+     target_fps_config: TargetFps,
++    pending: Option<(Option<u32>, Instant)>,
+ }
+ 
+ impl TargetFpsState {
+@@ -73,6 +74,7 @@ impl TargetFpsState {
+         Self {
+             target_fps: None,
+             target_fps_config,
++            pending: None,
+         }
+     }
+ }
+-- 
+2.53.0
+

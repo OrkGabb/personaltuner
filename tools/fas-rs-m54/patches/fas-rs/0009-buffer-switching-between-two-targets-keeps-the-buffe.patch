@@ -1,0 +1,40 @@
+From 36b620f33e6f27c1c5957407861e22b6c7307b25 Mon Sep 17 00:00:00 2001
+From: OrkGabb <ork@Gabriel.localdomain>
+Date: Tue, 20 Oct 2026 18:44:12 -0300
+Subject: [PATCH 9/9] buffer: switching between two targets keeps the buffer
+ and FAS working
+
+---
+ src/framework/scheduler/looper/buffer/calculate.rs | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/framework/scheduler/looper/buffer/calculate.rs b/src/framework/scheduler/looper/buffer/calculate.rs
+index ba744ff..2c3ca6b 100644
+--- a/src/framework/scheduler/looper/buffer/calculate.rs
++++ b/src/framework/scheduler/looper/buffer/calculate.rs
+@@ -90,12 +90,20 @@ impl Buffer {
+                     self.frametime_state.additional_frametime.as_secs_f64() * 1000.0,
+                 );
+             }
+-            self.reset_frametime_state();
++            // M54: one step to another keeps the buffer (the frames are still real; push_frametime
++            // trims it to the new window) and FAS keeps working. Upstream emptied it on every switch:
++            // ~300 frames + 1 s + 3 s without control each time (NTE: 14 s after a 60 -> 45 drop).
++            let seamless = self.target_fps_state.target_fps.is_some() && new_target_fps.is_some();
++            if !seamless {
++                self.reset_frametime_state();
++            }
+             if let Some(target_fps) = new_target_fps {
+                 self.trigger_target_fps_change(extension, target_fps);
+             }
+             self.target_fps_state.target_fps = new_target_fps;
+-            self.unusable();
++            if !seamless {
++                self.unusable();
++            }
+         }
+     }
+ 
+-- 
+2.53.0
+

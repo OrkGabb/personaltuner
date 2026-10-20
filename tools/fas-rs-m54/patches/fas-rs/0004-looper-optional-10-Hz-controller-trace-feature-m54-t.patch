@@ -1,0 +1,150 @@
+From 5e5c9fc1a15865014ce4739a39093f27e13f8139 Mon Sep 17 00:00:00 2001
+From: OrkGabb <ork@Gabriel.localdomain>
+Date: Tue, 20 Oct 2026 18:19:33 -0300
+Subject: [PATCH 4/9] looper: optional 10 Hz controller trace (feature
+ m54-trace, experiment builds only)
+
+---
+ Cargo.toml                                    |  4 +++
+ src/cpu_common/gpu_guard.rs                   |  5 +++
+ src/cpu_common/mod.rs                         | 14 ++++++++
+ .../scheduler/looper/buffer/calculate.rs      |  9 ++++++
+ src/framework/scheduler/looper/mod.rs         | 32 +++++++++++++++++++
+ 5 files changed, 64 insertions(+)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index f020697..d564d19 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -48,6 +48,10 @@ mimalloc = { version = "0.1.48", features = ["no_thp", "override"] }
+ num_cpus = "1.17.0"
+ nix = { version = "0.31.1", features = ["sched"] }
+ 
++[features]
++# M54 experiment builds: 10 Hz controller trace in the log (never in the module binary)
++m54-trace = []
++
+ [build-dependencies]
+ anyhow = "1.0.101"
+ toml = "1.0.3"
+diff --git a/src/cpu_common/gpu_guard.rs b/src/cpu_common/gpu_guard.rs
+index 092b3a7..dda98d4 100644
+--- a/src/cpu_common/gpu_guard.rs
++++ b/src/cpu_common/gpu_guard.rs
+@@ -59,6 +59,11 @@ impl GpuGuard {
+         }
+         self.saturated
+     }
++
++    #[cfg(feature = "m54-trace")]
++    pub const fn held(&self) -> bool {
++        self.saturated
++    }
+ }
+ 
+ fn read_busy_pct() -> Option<u32> {
+diff --git a/src/cpu_common/mod.rs b/src/cpu_common/mod.rs
+index 45c9bce..cc5e210 100644
+--- a/src/cpu_common/mod.rs
++++ b/src/cpu_common/mod.rs
+@@ -429,6 +429,20 @@ impl Controller {
+     pub fn util_max(&self) -> f64 {
+         self.util_max.unwrap_or_default()
+     }
++
++    #[cfg(feature = "m54-trace")]
++    pub const fn gpu_guard_held(&self) -> bool {
++        self.gpu_guard.held()
++    }
++
++    #[cfg(feature = "m54-trace")]
++    pub fn fas_freq_max(&self) -> isize {
++        self.cpu_infos
++            .iter()
++            .map(|cpu| cpu.cur_fas_freq)
++            .max()
++            .unwrap_or_default()
++    }
+ }
+ 
+ fn no_extra_policy() -> bool {
+diff --git a/src/framework/scheduler/looper/buffer/calculate.rs b/src/framework/scheduler/looper/buffer/calculate.rs
+index c54ca06..98230b3 100644
+--- a/src/framework/scheduler/looper/buffer/calculate.rs
++++ b/src/framework/scheduler/looper/buffer/calculate.rs
+@@ -75,6 +75,15 @@ impl Buffer {
+     pub fn calculate_target_fps(&mut self, extension: &Extension) {
+         let new_target_fps = self.target_fps();
+         if self.target_fps_state.target_fps != new_target_fps || new_target_fps.is_none() {
++            #[cfg(feature = "m54-trace")]
++            if self.target_fps_state.target_fps != new_target_fps {
++                log::info!(
++                    "trace target change {:?} -> {new_target_fps:?} (fps_long {:.1}, stall_ms {:.0})",
++                    self.target_fps_state.target_fps,
++                    self.frametime_state.current_fps_long,
++                    self.frametime_state.additional_frametime.as_secs_f64() * 1000.0,
++                );
++            }
+             self.reset_frametime_state();
+             if let Some(target_fps) = new_target_fps {
+                 self.trigger_target_fps_change(extension, target_fps);
+diff --git a/src/framework/scheduler/looper/mod.rs b/src/framework/scheduler/looper/mod.rs
+index 6ac896b..0049a15 100644
+--- a/src/framework/scheduler/looper/mod.rs
++++ b/src/framework/scheduler/looper/mod.rs
+@@ -83,6 +83,8 @@ pub struct Looper {
+     cleaner: Cleaner,
+     fas_state: FasState,
+     controller_state: ControllerState,
++    #[cfg(feature = "m54-trace")]
++    trace_timer: Instant,
+ }
+ 
+ impl Looper {
+@@ -117,6 +119,8 @@ impl Looper {
+                 target_fps_offset: 0.0,
+                 usage_sample_timer: Instant::now(),
+             },
++            #[cfg(feature = "m54-trace")]
++            trace_timer: Instant::now(),
+         }
+     }
+ 
+@@ -230,6 +234,34 @@ impl Looper {
+         self.controller_state
+             .controller
+             .fas_update_freq(control, is_janked);
++
++        #[cfg(feature = "m54-trace")]
++        self.trace(control, is_janked);
++    }
++
++    // M54 experiment builds only: one line per 100 ms with what the controller saw and wrote
++    #[cfg(feature = "m54-trace")]
++    fn trace(&mut self, control: isize, is_janked: bool) {
++        if self.trace_timer.elapsed() < Duration::from_millis(100) {
++            return;
++        }
++        self.trace_timer = Instant::now();
++        let Some(buffer) = &self.fas_state.buffer else {
++            return;
++        };
++        let ft = &buffer.frametime_state;
++        let controller = &self.controller_state.controller;
++        info!(
++            "trace target={:?} fps_long={:.1} fps_short={:.1} last_ms={:.1} stall_ms={:.0} control={control} janked={is_janked} guard={} util={:.2} freq={}",
++            buffer.target_fps_state.target_fps,
++            ft.current_fps_long,
++            ft.current_fps_short,
++            ft.frametimes.front().copied().unwrap_or_default().as_secs_f64() * 1000.0,
++            ft.additional_frametime.as_secs_f64() * 1000.0,
++            controller.gpu_guard_held(),
++            controller.util_max(),
++            controller.fas_freq_max(),
++        );
+     }
+ 
+     pub fn retain_topapp(&mut self) {
+-- 
+2.53.0
+
