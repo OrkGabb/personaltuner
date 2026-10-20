@@ -1244,3 +1244,33 @@ Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%,
   e cada ativação corta a subida da CPU). Precisa de uma sessão do dono no Roblox com o binário novo.
 - Binário novo VIVO em `/data/adb/modules/encore/system/bin/fas-rs` (o original 2.11.4 em
   `/data/local/tmp/fas-rs.orig`); zip `_releases/fusao-v2.11.5-M54.zip`.
+- **Dono, Roblox com o 2.11.5 (mesmo cenário, gráficos no máximo)**: congelamentos e picos de 3 s SUMIRAM
+  (Performance Stats do Roblox). Novo: tempo de CPU por frame passou do de GPU (ex.: CPU 30-33 ms, GPU 20-23 ms):
+  o FAS segura a CPU no mínimo que o alvo pede. A CONFERIR: o fps final (CPU 33 ms = ~30 fps; se antes eram
+  ~50, o alvo pode ter descido para 30/45 e ficado lá).
+
+## battery 4/9 "partial" (2026-10-20 19:53) e Smart Pixels automático — NÃO commitado (pedido do dono)
+- **Lido**: `profile_mismatch=p0_min:2002000!=533000,p4_min:2400000!=533000,gpu_min:351000!=221000,
+  p0_max:2002000!=1728000,p4_max:2400000!=1440000`; às 20:02 os pisos já tinham voltado, mas os TETOS seguiam
+  2002000/2400000 (9+ min). Saída do Roblox com a tela apagada pelo botão às 19:53:36. Fora do jogo o teto
+  segura (60 s, e com o hint de abrir as Configurações o kernel prende o piso no NOSSO teto). UFC (cpufreq_limit,
+  `drivers/soc/samsung/exynos-ufcc.c`) usa pedidos de QoS próprios: não sobe o nosso. `scaling_max_freq` é
+  `system:system 0664` (ueventd.rc): outro escritor regravou o nosso pedido. NÃO identificado; 3 saídas
+  reproduzidas (home, tela apagada + volta, home) fecharam 9/9.
+- **Falha nossa**: teto ACIMA do pedido virava "partial" definitivo (sem reverificação, sem nova tentativa).
+  **Correção** (`tune.sh`): o verify lista os tetos acima do pedido; o apply agenda UM `reassert` em +30 s que
+  relê e, se seguir acima, regrava só esse teto uma vez (nunca agenda outro; teto ABAIXO = térmico, nunca
+  regravado). Harness 243/243; controle negativo (tune.sh antigo) falha os 2 testes novos.
+- **Visto de passagem**: com a tela apagada DENTRO do jogo o observer não vê saída: o perfil game e o fas-rs
+  seguem vivos; ao acordar sem bloqueio, o fas-rs cravou P0/P4 em 533000 (min=max) com o jogo em foco.
+- **Smart Pixels automático**: `tune.sh` avisa o app em todo apply (`am broadcast -a
+  com.orkgabb.fusao.action.PROFILE -p com.orkgabb.fusao -f 0x20 --es profile <perfil>`; receptor exige DUMP).
+  Aparelho: o app gravou game/battery pelos dois caminhos (am à mão e tune.sh). A máscara entrar/sair sozinha
+  NÃO foi vista (a chave manual do dono está ligada e vence; `cmd statusbar click-tile` não age com o bloco
+  fora do painel). Composição da máscara na home: **DEVICE** (plano do HWC, 1080x2400), sem custo de GPU.
+- App 1.1.6/8 instalado (ponto 1-3 px, "Ligar sozinho no perfil battery", textos técnicos limpos);
+  `tune.sh` novo VIVO em /data/adb/fusao (original em /data/local/tmp/tune.sh.orig).
+- **Smart Pixels "piscando sem parar" (dono, 20:25)**: janela estável (mesmos IDs de camada por 10 s, sem
+  recriar); `shift_millis=1000` = o padrão inteiro trocava de lugar a cada 1 s. App 1.1.7/9: movimento só
+  Parado / 1 / 5 / 15 min, mínimo 1 min, valor antigo sobe ao carregar. Aparelho: 1000 -> 60000 lido do
+  shared_prefs depois da instalação, máscara ativa. Testes 15/15; controle negativo (mínimo 80 ms) falha 2.

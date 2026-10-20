@@ -465,6 +465,27 @@ TUNE_NOW=5050 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" ver
 grep -q "^profile_mismatch=p4_max:2400000!=1440000$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=partial$" "$FAKE/fusao/profile.state" && ok "teto acima do alvo: partial" || bad "teto acima do alvo: partial"
 echo 1440000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
 
+# 9e-8b) 2.11.5: teto acima do pedido = o NOSSO pedido regravado por outro escritor (aparelho 2026-10-20 19:53,
+# saída do Roblox: P0/P4 max 2002000/2400000 por 9+ min). O reassert regrava UMA vez; obsoleto não toca.
+P4D="$FAKE/sys/devices/system/cpu/cpufreq/policy4"
+rm -f "$FAKE/fusao/profile.state"; : > "$FLOG"
+TUNE_NOW=7000 probe_at "$FAKE" - - apply_battery
+grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && ok "reassert: parte de applied" || bad "reassert: parte de applied"
+echo 2400000 > "$P4D/scaling_max_freq"
+TUNE_NOW=7005 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1
+grep -q "^profile_mismatch=p4_max:2400000!=1440000$" "$FAKE/fusao/profile.state" && ok "reassert: teto regravado visto" || bad "reassert: teto regravado visto"
+cp "$FAKE/fusao/profile.state" "$FAKE/state.before"
+TUNE_NOW=7030 REASSERT_DELAY_S=0 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" reassert battery 4242 >/dev/null 2>&1
+[ "$(cat "$P4D/scaling_max_freq")" = "2400000" ] && cmp -s "$FAKE/fusao/profile.state" "$FAKE/state.before" && ok "reassert obsoleto nao escreve" || bad "reassert obsoleto nao escreve"
+TUNE_NOW=7030 REASSERT_DELAY_S=0 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" reassert battery 7000 >/dev/null 2>&1
+[ "$(cat "$P4D/scaling_max_freq")" = "1440000" ] && grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && ok "reassert: teto volta ao pedido, applied" || bad "reassert: teto volta ao pedido, applied ($(cat "$P4D/scaling_max_freq"))"
+grep -q "tune: reassert battery (p4_max regravado 1x) -> applied 9/9" "$FLOG" && ok "reassert: loga a regravacao" || bad "reassert: loga a regravacao"
+# teto ABAIXO do pedido (térmico) nunca é regravado
+echo 1344000 > "$P4D/scaling_max_freq"
+TUNE_NOW=7031 REASSERT_DELAY_S=0 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" reassert battery 7000 >/dev/null 2>&1
+[ "$(cat "$P4D/scaling_max_freq")" = "1344000" ] && ok "reassert nao regrava teto termico" || bad "reassert nao regrava teto termico"
+echo 1440000 > "$P4D/scaling_max_freq"
+
 # 9e-9) reverify (só leitura): converge p/ applied quando o hint solta; job obsoleto não toca no state
 echo 1152000 > "$P0D/scaling_min_freq"
 TUNE_NOW=6000 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify battery >/dev/null 2>&1

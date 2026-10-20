@@ -421,6 +421,11 @@ EXT_WINDOW_S=180
 # Reverificações SÓ DE LEITURA depois de um apply pending (s, cumulativo 30/90/185: a última cai fora da
 # janela e dá o veredito final). Nunca reescreve: loop de reescrita contra a ROM é proibido (ver apply_battery).
 REVERIFY_STEPS="${REVERIFY_STEPS:-30 60 95}"
+# Teto de CPU lido ACIMA do pedido não é QoS (o QoS só abaixa teto): é o NOSSO pedido regravado por outro
+# escritor. Aparelho 2026-10-20 19:53 (saída do Roblox com a tela apagando): P0/P4 max 2002000/2400000 com
+# battery pedindo 1728000/1440000, e ficou assim 9+ min. Uma regravação, uma vez, REASSERT_DELAY_S depois do
+# apply; nunca agenda outra (loop de reescrita contra a ROM continua proibido).
+REASSERT_DELAY_S="${REASSERT_DELAY_S:-30}"
 
 now_s() {
   if [ -n "${TUNE_NOW:-}" ]; then echo "$TUNE_NOW"; else cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; fi
@@ -517,6 +522,19 @@ verify_profile() {
   local _ra_node
   _ra_node=$(readahead_nodes | head -n 1)
 
+  # tetos de CPU acima do pedido (rótulos p0_max/p4_max) p/ o reassert único
+  VERIFY_OVER=""
+  local _m _m_cur
+  for _m in $(echo "$mis" | tr ',' ' '); do
+    case "$_m" in
+      p0_max:*|p4_max:*)
+        _m_cur=${_m#*:}; _m_cur=${_m_cur%%!=*}
+        case "$_m_cur" in ''|*[!0-9]*) ;; *)
+          [ "$_m_cur" -gt "${_m##*!=}" ] && VERIFY_OVER="${VERIFY_OVER}${VERIFY_OVER:+ }${_m%%:*}";;
+        esac;;
+    esac
+  done
+
   local state="applied"
   if [ "$tot_cnt" -eq 0 ]; then
     # Ambiente sem sysfs/procfs mapeado: valida se o perfil em vigor é o conferido
@@ -560,16 +578,47 @@ verify_profile() {
   [ "$state" != "failed" ]
 }
 
+# notify_app <perfil> — avisa o app FUSAO do perfil em vigor (Smart Pixels liga sozinho no battery). O
+# receptor exige DUMP (root/shell têm, app de terceiro não); -f 0x20 alcança o app parado à força.
+notify_app() {
+  command -v am >/dev/null 2>&1 || return 0
+  am broadcast -a com.orkgabb.fusao.action.PROFILE -p com.orkgabb.fusao -f 0x20 --es profile "$1" >/dev/null 2>&1 &
+}
+
 # verify_after_apply <perfil> — o verify do fim de um apply_*. Se deu pending, agenda as reverificações
 # só de leitura (TUNE_NO_DEFER=1 desliga: teste offline). Cada job confere o applied_at: um apply novo
 # (outro perfil ou o mesmo de novo) torna o job antigo obsoleto e ele sai sem tocar no state.
 verify_after_apply() {
   APPLIED_AT=$(now_s)
   verify_profile "$1"
+  notify_app "$1"
   if [ "$VERIFY_STATE" = "pending" ]; then
     log "tune: $1 pending (piso/teto de CPU externo: $(state_field profile_external)); reverifica em +30/+90/+185 s"
     [ "${TUNE_NO_DEFER:-0}" = "1" ] || nohup sh "$DIR/tune.sh" reverify "$1" "$APPLIED_AT" >/dev/null 2>&1 &
   fi
+  if [ -n "$VERIFY_OVER" ]; then
+    log "tune: $1 teto de CPU acima do pedido ($VERIFY_OVER); regrava 1x em +${REASSERT_DELAY_S} s se seguir assim"
+    [ "${TUNE_NO_DEFER:-0}" = "1" ] || nohup sh "$DIR/tune.sh" reassert "$1" "$APPLIED_AT" >/dev/null 2>&1 &
+  fi
+}
+
+# reassert <perfil> <applied_at> — UMA regravação dos tetos de CPU que seguem acima do pedido (VERIFY_OVER).
+# Sai sem tocar em nada se outro apply veio depois ou se o teto já voltou. Nunca agenda outra.
+reassert_once() {
+  local _l _over
+  sleep "$REASSERT_DELAY_S"
+  [ "$(state_field applied_at)" = "$2" ] || return 0
+  verify_profile "$1"
+  _over="$VERIFY_OVER"
+  [ -n "$_over" ] || return 0
+  for _l in $_over; do
+    case "$_l" in
+      p0_max) w "$P0_MAX" "$T_P0_MAX";;
+      p4_max) w "$P4_MAX" "$T_P4_MAX";;
+    esac
+  done
+  verify_profile "$1"
+  log "tune: reassert $1 ($_over regravado 1x) -> $VERIFY_STATE $(state_field profile_verify)"
 }
 
 # reverify_loop <perfil> <applied_at> — só leitura; sai assim que o state deixa de ser pending.
@@ -721,6 +770,10 @@ case "$MODE" in
     reverify_loop "$2" "$3"
     exit 0
     ;;
+  reassert)
+    reassert_once "$2" "$3"
+    exit 0
+    ;;
   effective)
     effective_profile
     exit 0
@@ -735,7 +788,7 @@ case "$MODE" in
     exit 0
     ;;
   *)
-    echo "uso: tune.sh [game|balanced|battery|idle|verify|reverify|auto]" >&2
+    echo "uso: tune.sh [game|balanced|battery|idle|verify|reverify|reassert|auto]" >&2
     exit 1
     ;;
 esac
