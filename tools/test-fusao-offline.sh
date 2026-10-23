@@ -58,7 +58,11 @@ grep -q "tune: apply game" "$FAKE/fusao/fusao.log" && ok "framework+tune wire" |
 [ "$(cat "$FAKE/settings/dc__game_overlay__game_default_frame_rate" 2>/dev/null)" = "0" ] && ok "framework game overlay safe-int" || bad "framework game overlay safe-int"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/framework.sh" idle
 [ ! -f "$FAKE/settings/dc__game_overlay__game_default_frame_rate" ] && ok "framework idle dc-revert" || bad "framework idle dc-revert"
-[ ! -s "$FAKE/settings/global__job_scheduler_constants" ] || [ "$(cat "$FAKE/settings/global__job_scheduler_constants")" != "*max_job_count_active=1*" ] && ok "framework idle restore" || bad "framework idle restore"
+# padrão no case (dentro de [ ] o *...* era literal e o teste passava sempre)
+case "$(cat "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null)" in
+  *max_job_count_active=1*) bad "framework idle restore";;
+  *) ok "framework idle restore";;
+esac
 
 # 3) framework battery/balanced
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" battery
