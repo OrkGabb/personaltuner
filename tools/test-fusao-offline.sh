@@ -95,6 +95,14 @@ M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist list | grep -q "com.te
 echo "com.ultimo.item" > "$FAKE/fusao/gamelist.txt"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist del com.ultimo.item >/dev/null 2>&1
 [ ! -s "$FAKE/fusao/gamelist.txt" ] && ok "cli gamelist del-last" || bad "cli gamelist del-last"
+# M11: verbo errado (ou set sem pacote) = rc!=0 e lista intacta; set substitui
+printf 'com.a.jogo\ncom.b.jogo\n' > "$FAKE/fusao/gamelist.txt"; _gl0=$(cksum < "$FAKE/fusao/gamelist.txt")
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist lsit >/dev/null 2>&1 && bad "cli gamelist verbo invalido rc" || ok "cli gamelist verbo invalido rc"
+[ "$(cksum < "$FAKE/fusao/gamelist.txt")" = "$_gl0" ] && ok "cli gamelist verbo invalido nao apaga" || bad "cli gamelist verbo invalido nao apaga"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist set >/dev/null 2>&1
+[ "$(cksum < "$FAKE/fusao/gamelist.txt")" = "$_gl0" ] && ok "cli gamelist set vazio nao apaga" || bad "cli gamelist set vazio nao apaga"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist set com.x.um com.x.dois | grep -q "substituida" &&
+  [ "$(cat "$FAKE/fusao/gamelist.txt")" = "$(printf 'com.x.um\ncom.x.dois')" ] && ok "cli gamelist set substitui" || bad "cli gamelist set substitui"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" dnd on | grep -q "dnd=on" && ok "cli dnd on" || bad "cli dnd on"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" dnd off | grep -q "dnd=off" && ok "cli dnd off" || bad "cli dnd off"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" display show >/dev/null 2>&1 && ok "cli display show" || bad "cli display show"

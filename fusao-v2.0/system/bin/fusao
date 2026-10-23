@@ -5,7 +5,7 @@
 #      fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|30,45,60>|gen]
 #      fusao preload [on|off|prepare [pkg|all]|now [pkg|all]|record [pkg] [s]|status]
 #      fusao display [show|720p|810p|900p|reset]
-#      fusao gamelist [list|add <pkg>|del <pkg>|count|eligible]
+#      fusao gamelist [list|add <pkg>|del <pkg>|count|eligible|set <pkg>...]
 #      fusao gos [on|off] | fusao reseed-stock
 #      fusao status | fusao log | fusao bugreport | fusao kill-switch [on|off]
 M54_DIR=${M54_DIR:-/data/adb/fusao}
@@ -729,7 +729,10 @@ case "$cmd" in
       count) wc -l < "$M54_DIR/gamelist.txt" 2>/dev/null | tr -d '[:space:]'; echo "";;
       add) [ -n "$3" ] && { grep -Fxq "$3" "$M54_DIR/gamelist.txt" 2>/dev/null || echo "$3" >> "$M54_DIR/gamelist.txt"; echo "added $3"; };;
       del) [ -n "$3" ] && { grep -Fxv "$3" "$M54_DIR/gamelist.txt" 2>/dev/null > "$M54_DIR/gamelist.tmp"; [ $? -le 1 ] && mv -f "$M54_DIR/gamelist.tmp" "$M54_DIR/gamelist.txt"; echo "removed $3"; };;
-      *) printf "%s\n" "$arg" "$3" "$4" "$5" "$6" | grep -v "^$" > "$M54_DIR/gamelist.txt"; echo "gamelist substituida";;
+      # substituir a lista exige o verbo: um verbo digitado errado não pode apagar a gamelist
+      set) [ -n "$3" ] || { echo "uso: fusao gamelist set <pkg> [pkg...]" >&2; exit 1; }
+        printf "%s\n" "$3" "$4" "$5" "$6" "$7" | grep -v "^$" > "$M54_DIR/gamelist.txt"; echo "gamelist substituida";;
+      *) echo "fusao gamelist: verbo invalido '$arg' (list|add|del|count|eligible|set); lista intacta" >&2; exit 1;;
     esac;;
   *) echo "fusao: profile|framework|perf|fusaod|fas|dnd|preload|ramclean|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"; exit 1;;
 esac
