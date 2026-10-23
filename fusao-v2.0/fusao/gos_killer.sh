@@ -18,6 +18,7 @@ cleanup_killer() {
   exit 0
 }
 trap cleanup_killer EXIT INT TERM
+nap_init gos
 
 kill_gos() {
   local mark="$1" force_when_absent="${2:-1}" p found=0
@@ -37,10 +38,10 @@ M30=0; M300=0; M600=0; M3600=0; LASTH=$START; LASTGAME=""; PAUSED_LOGGED=0
 log "gos killer v0.4: inicio"
 [ -f "$M54_DIR/gos_killer.paused" ] && { log "gos killer: pausado (fusao gos on p/ retomar)"; PAUSED_LOGGED=1; } || kill_gos boot 1
 while true; do
-  sleep 5
+  nap 5
   if [ -f "$M54_DIR/gos_killer.paused" ]; then
     if [ "$PAUSED_LOGGED" = 0 ]; then PAUSED_LOGGED=1; log "gos killer: pausado (fusao gos on p/ retomar)"; fi
-    sleep 30
+    nap 30
     continue
   fi
   PAUSED_LOGGED=0

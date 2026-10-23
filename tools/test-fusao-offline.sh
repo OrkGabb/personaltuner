@@ -743,6 +743,22 @@ grep -q "| bcp=/x/core-oj.jar sock=$" "$OBS_TRACE" && ok "observer herda o ambie
 grep -q "| bcp=/meu/bcp " "$OBS_TRACE" && ok "observer com BOOTCLASSPATH nao importa" || bad "observer com BOOTCLASSPATH nao importa"
 unset OBS_TRACE
 
+# nap: o FIFO some com o daemon vivo -> a guarda [ -p ] cai para o sleep (sem ela o `<>` cria um arquivo regular e o
+# read volta na hora: laço quente). Roda sob mksh (o shell do aparelho; o bash serve de reserva com KSH_VERSION falso).
+NAPSH=$(command -v mksh || command -v bash)
+cat > "$FAKE/nap_t.sh" <<'NAPEOF'
+. "$M54_DIR/lib.sh"
+nap_init t
+[ -p "$NAP_FIFO" ] || { echo nofifo > "$NAP_OUT"; exit 0; }
+rm -f "$NAP_FIFO"
+i=0; while [ "$i" -lt 50 ]; do nap 1; i=$((i+1)); echo "$i" > "$NAP_OUT"; done
+NAPEOF
+: > "$FAKE/nap.out"
+KSH_VERSION=x NAP_OUT="$FAKE/nap.out" M54_DIR="$FAKE/fusao" timeout 3 "$NAPSH" "$FAKE/nap_t.sh" 2>/dev/null
+_nv=$(cat "$FAKE/nap.out")
+case "$_nv" in [1-4]) ok "nap sem FIFO dorme ($_nv voltas em 3 s)";; *) bad "nap sem FIFO dorme ($_nv voltas em 3 s)";; esac
+[ -e "$FAKE/fusao/.nap.t" ] && bad "nap sem FIFO nao cria arquivo regular" || ok "nap sem FIFO nao cria arquivo regular"
+
 echo "----"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

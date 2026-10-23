@@ -23,6 +23,7 @@ TIMEOUT=$(clamp_int "$(read_cfg thermal_guard_timeout 900)" 60 3600 900)
 [ "$LOW" -ge "$HIGH" ] && LOW=$((HIGH - 8000))
 START=$(uptime_s)
 TIMED_OUT=0
+nap_init guard
 
 set_compute_modes() {
   local mode="$1" z ty
@@ -52,7 +53,7 @@ while [ "$(read_cfg thermal aggressive)" = aggressive ]; do
     set_compute_modes disabled
     echo "aggressive|max=$MAX|battery=$BATT|elapsed=$ELAPSED" | atomic_write "$STATE" 0600
   fi
-  sleep "$INTERVAL"
+  nap "$INTERVAL"
 done
 
 rm -f "$M54_DIR/thermal_guard_forced"

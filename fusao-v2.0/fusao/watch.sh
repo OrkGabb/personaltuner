@@ -22,6 +22,7 @@ cleanup_watch() {
   exit 0
 }
 trap cleanup_watch EXIT INT TERM
+nap_init watch
 
 GAMEFILE="$M54_DIR/game-active.txt"
 GAMELIST="$M54_DIR/gamelist.txt"
@@ -303,7 +304,7 @@ while true; do
         LAST=""
       fi
     fi
-    sleep 2
+    nap 2
     continue
   fi
   if [ "$STANDBY" = 1 ]; then
@@ -313,7 +314,7 @@ while true; do
     relaunch_observer
   fi
   relaunch_observer
-  sleep 5
+  nap 5
   FOCUS=$(current_focus)
   if [ -n "$FOCUS" ] && in_gamelist "$FOCUS"; then
     CUR="$FOCUS"

@@ -98,6 +98,20 @@ boot_id() {
   read -r _b < /proc/sys/kernel/random/boot_id 2>/dev/null && echo "$_b"
 }
 
+# nap <s> — espera sem fork/exec no mksh do aparelho (o sleep do toybox custa ~30 ms de CPU por chamada como
+# root no M54): `read -t` num FIFO aberto em leitura+escrita, que nunca entrega dado nem EOF. nap_init <nome>
+# cria o FIFO uma vez; fora do mksh (harness em dash/bash) ou sem FIFO, nap é o sleep de sempre. Se o FIFO
+# sumir com o daemon vivo, o `<>` criaria um arquivo regular e o read voltaria na hora (laço quente): a guarda
+# [ -p ] cai para o sleep.
+nap() { sleep "$1"; }
+nap_init() {
+  NAP_FIFO="$M54_DIR/.nap.$1"
+  [ -n "${KSH_VERSION:-}" ] || return 0
+  [ -p "$NAP_FIFO" ] || { rm -f "$NAP_FIFO"; mkfifo -m 600 "$NAP_FIFO" 2>/dev/null; }
+  [ -p "$NAP_FIFO" ] || return 0
+  nap() { [ -p "$NAP_FIFO" ] || { sleep "$1"; return 0; }; read -t "$1" -r _nap <>"$NAP_FIFO" 2>/dev/null; return 0; }
+}
+
 # selected_profile — o perfil escolhido no app/CLI (/data/adb/fusao/profile); inválido = balanced.
 selected_profile() {
   local _p="balanced"
