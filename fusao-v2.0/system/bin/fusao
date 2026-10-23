@@ -2,7 +2,7 @@
 # fusao CLI — controle único do módulo.
 # Uso: fusao profile [battery|balanced|game] | fusao framework [on|off|game|balanced|battery|idle]
 #      fusao perf [on|off] | fusao fusaod [on|off] | fusao dnd [on|off]
-#      fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|30,45,60>|gen]
+#      fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|30,45,60>|gen|list]
 #      fusao preload [on|off|prepare [pkg|all]|now [pkg|all]|record [pkg] [s]|status]
 #      fusao display [show|720p|810p|900p|reset]
 #      fusao gamelist [list|add <pkg>|del <pkg>|count|eligible|set <pkg>...]
@@ -413,7 +413,7 @@ case "$cmd" in
         sync_fusaod_for_profile "${_prof:-balanced}"
         echo "fas=off"
         ;;
-      mode|target|gen)
+      mode|target|gen|list)
         M54_DIR="$M54_DIR" sh "$_fas" "$arg" "$3" "$4"
         ;;
       status|"")

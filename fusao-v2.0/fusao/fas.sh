@@ -2,7 +2,7 @@
 # fusao-fas.sh — FAS (fas-rs, fork M54: tools/fas-rs-m54) como dono da CPU na sessão de jogo.
 #   enter <pkg>  gera a lista do fas-rs a partir da gamelist (SSOT) e liga o daemon
 #   exit         desliga; o tune.sh do exit é quem devolve a CPU ao perfil (o fas-rs sai com min=max)
-#   gen | status | mode <powersave|balance|performance|fast> | target <pkg> <auto|30,45,60>
+#   gen | list | status | mode <powersave|balance|performance|fast> | target <pkg> <auto|30,45,60>
 # Medido (kernlab 2026-10-18, Bleach nos gráficos mínimos, limite 45, 6 blocos): bateria -10,4%,
 # fps -1,3%, frames >= 33 ms 0,13% -> 0,79%. Alvo errado (acima do que o jogo alcança) = CPU no
 # máximo à toa; por isso o automático é uma escada e não um número.
@@ -45,8 +45,8 @@ valid_targets() {
   echo "$1" | tr ',' '\n' | awk 'NR > 1 && $1 <= prev { bad = 1 } $1 < 10 || $1 > 240 { bad = 1 } { prev = $1 } END { exit bad }'
 }
 
-fas_gen() {
-  mkdir -p "$FAS_DIR" 2>/dev/null
+# fas_toml — a lista do fas-rs gerada da gamelist (SSOT), só para a saída padrão (fas list: leitura pura).
+fas_toml() {
   {
     echo "# gerado pelo FUSAO (fas.sh) a partir de gamelist.txt — não editar à mão;"
     echo "# alvo por jogo: fusao fas target <pkg> <auto|30,45,60>"
@@ -77,7 +77,12 @@ fas_gen() {
     echo "[balance]"; echo "margin_fps = 1.0"; echo "core_temp_thresh = 90000"; echo ""
     echo "[performance]"; echo "margin_fps = 0.3"; echo "core_temp_thresh = 95000"; echo ""
     echo "[fast]"; echo "margin_fps = 0"; echo "core_temp_thresh = 95000"
-  } | atomic_write "$FAS_TOML" 0644
+  }
+}
+
+fas_gen() {
+  mkdir -p "$FAS_DIR" 2>/dev/null
+  fas_toml | atomic_write "$FAS_TOML" 0644
 }
 
 fas_publish() {
@@ -161,6 +166,8 @@ case "$1" in
   enter) fas_start "$2";;
   exit) fas_stop;;
   gen) fas_gen && cat "$FAS_TOML";;
+  # lê sem regravar: o gen troca o arquivo que o fas-rs vigia e ele recarrega a config à toa (aba Jogos do app)
+  list) fas_toml;;
   status) fas_status;;
   mode)
     case "$2" in
@@ -183,5 +190,5 @@ case "$1" in
     [ -n "$(fas_pids)" ] && fas_publish
     echo "fas_target $2=$(fas_targets_for "$2")"
     ;;
-  *) echo "uso: fas.sh enter <pkg>|exit|gen|status|mode <m>|target <pkg> <alvos>" >&2; exit 1;;
+  *) echo "uso: fas.sh enter <pkg>|exit|gen|list|status|mode <m>|target <pkg> <alvos>" >&2; exit 1;;
 esac

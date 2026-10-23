@@ -684,6 +684,13 @@ M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" gen | grep -Fq '"com.roblox.client
 grep -Fq '"com.hottagames.nte" = [' "$FAKE/fusao/fas/games.toml" && ok "fas gen gamelist ssot" || bad "fas gen gamelist ssot"
 fas target com.roblox.client 60 | grep -Fq "com.roblox.client=60" && ok "fas target set" || bad "fas target set"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" gen | grep -Fq '"com.roblox.client" = [60]' && ok "fas target in toml" || bad "fas target in toml"
+# A15: `fusao fas list` = a saída do gen, sem gravar (o gen troca o arquivo que o fas-rs vigia)
+_fl_g=$(fas gen); _fl_ck=$(cksum < "$FAKE/fusao/fas/games.toml"); _fl_in=$(ls -i "$FAKE/fusao/fas/games.toml")
+[ -n "$_fl_g" ] && [ "$(fas list)" = "$_fl_g" ] && ok "fas list = saída do gen" || bad "fas list = saída do gen"
+[ "$(cksum < "$FAKE/fusao/fas/games.toml")" = "$_fl_ck" ] && [ "$(ls -i "$FAKE/fusao/fas/games.toml")" = "$_fl_in" ] && ok "fas list não regrava a lista" || bad "fas list não regrava a lista"
+mv "$FAKE/fusao/fas/games.toml" "$FAKE/games.toml.bk"; fas list >/dev/null 2>&1
+[ ! -e "$FAKE/fusao/fas/games.toml" ] && ok "fas list não cria a lista" || bad "fas list não cria a lista"
+mv "$FAKE/games.toml.bk" "$FAKE/fusao/fas/games.toml"
 fas target com.roblox.client 90,60 >/dev/null 2>&1 && bad "fas target decrescente recusado" || ok "fas target decrescente recusado"
 fas target com.roblox.client 5 >/dev/null 2>&1 && bad "fas target fora do dominio recusado" || ok "fas target fora do dominio recusado"
 fas target com.roblox.client auto | grep -Fq "com.roblox.client=30, 45, 60, 90, 120" && ok "fas target auto" || bad "fas target auto"
