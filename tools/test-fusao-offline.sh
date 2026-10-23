@@ -904,7 +904,18 @@ o=$(TUNE_NOW=77 now_s_old); n=$(TUNE_NOW=77 now_s); [ "$o" = "$n" ] || { bad=1; 
 exit $bad
 EQEOF
 EQ="$EQ" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/eq-probe.sh" && ok "tune rval/state_field/now_s builtins = pipelines antigos" || bad "tune rval/state_field/now_s builtins = pipelines antigos"
-chmod 600 "$EQ/n0"; rm -rf "$EQ" "$FAKE/fusao/eq-probe.sh"
+# /proc fica no cat (o sysctl só responde na posição 0 e o read do mksh lê byte a byte: no aparelho o
+# swappiness "60" virou "6"); arquivo comum não reproduz isso, então aqui se confere o caminho tomado
+mkdir -p "$EQ/bin" "$EQ/proc/sys/vm" "$EQ/sys/x"; printf '60\n' > "$EQ/proc/sys/vm/swappiness"; printf '60\n' > "$EQ/sys/x/n"
+printf '#!/bin/sh\necho "$1" >> "%s"\nexec /bin/cat "$@"\n' "$EQ/cat.log" > "$EQ/bin/cat"; chmod +x "$EQ/bin/cat"; : > "$EQ/cat.log"
+cat > "$FAKE/fusao/eq-proc.sh" <<'EQEOF'
+TUNE_SOURCE_ONLY=1
+. "$(dirname "$0")/tune.sh"
+a=$(rval "$EQ/proc/sys/vm/swappiness"); b=$(rval "$EQ/sys/x/n"); echo "$a $b"
+EQEOF
+_pr=$(PATH="$EQ/bin:$PATH" EQ="$EQ" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/eq-proc.sh")
+[ "$_pr" = "60 60" ] && grep -qx "$EQ/proc/sys/vm/swappiness" "$EQ/cat.log" && ! grep -q "$EQ/sys/x/n" "$EQ/cat.log" && ok "tune rval: /proc pelo cat, /sys por builtins" || bad "tune rval: /proc pelo cat, /sys por builtins [$_pr $(tr '\n' ' ' < "$EQ/cat.log")]"
+chmod 600 "$EQ/n0"; rm -rf "$EQ" "$FAKE/fusao/eq-probe.sh" "$FAKE/fusao/eq-proc.sh"
 
 echo "----"
 echo "pass=$pass fail=$fail"

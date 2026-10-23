@@ -99,9 +99,12 @@ stock_of() {
 # rval <nó> — o conteúdo do nó sem nenhum espaço/CR/quebra (= cat|tr -d '[:space:]'), rc 1 se ilegível.
 # Só builtins no caso comum (cada exec custa ~27 ms no aparelho e o verify lê ~25 nós); o pipeline antigo
 # fica para espaço interno e para valor com "-" no início ou "\", em que o echo do mksh não é literal.
+# /proc fica sempre no cat: o read do mksh lê byte a byte e o sysctl só responde na posição 0 (aparelho
+# 2026-10-23: /proc/sys/vm/swappiness lido "6" em vez de "60"); os nós de /sys deram leitura idêntica.
 rval() {
   local _l _v=""
   [ -r "$1" ] || return 1
+  case "$1" in */proc/*) cat "$1" 2>/dev/null | tr -d '[:space:]'; return;; esac
   { while IFS= read -r _l || [ -n "$_l" ]; do _v="$_v$_l"; done; } 2>/dev/null < "$1"
   case "$_v" in
     *[[:space:]]*|-*|*\\*) printf '%s' "$_v" | tr -d '[:space:]';;
