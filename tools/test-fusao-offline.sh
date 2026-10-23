@@ -858,6 +858,47 @@ sweep_copy; rm -f "$FAKE/b.zip"
 python3 "$ROOT/tools/fusao-build.py" --stage "$FAKE/swp" --out "$FAKE/b.zip" > /dev/null 2>&1 && [ -s "$FAKE/b.zip" ] && ok "build stage bom grava zip" || bad "build stage bom grava zip"
 rm -rf "$FAKE/swp" "$FAKE/b.zip"
 
+# 19) A3: rval/state_field/now_s do tune.sh por builtins = os pipelines antigos (saída e rc, como os
+# chamadores usam: dentro de $(...)), para qualquer conteúdo: bordas, tab, CR, quebra, espaço interno,
+# "-n", barra invertida, vazio, sem quebra final, ilegível, ausente; state_field com chave repetida,
+# prefixo parecido, valor com "=", chave fora de palavra simples.
+EQ="$FAKE/eq"; mkdir -p "$EQ"
+cat > "$EQ/ref.sh" <<'EQEOF'
+rval_old() { [ -r "$1" ] && cat "$1" 2>/dev/null | tr -d '[:space:]'; }
+state_field_old() { grep -E "^$1=" "$STATE_F" 2>/dev/null | tail -n 1 | cut -d= -f2-; }
+now_s_old() { if [ -n "${TUNE_NOW:-}" ]; then echo "$TUNE_NOW"; else cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; fi; }
+EQEOF
+_i=0
+for _c in '533000' '533000\n' '  533000 \n' '\t533000\r\n' '53 3000\n' 'a\nb\n' 'a\nb' '' '\n' '-n' '-n\n' '-e x\n' 'a\\tb\n' '\\\n' ' -n \n' '1\r\n2\r\n'; do
+  _i=$((_i + 1)); printf -- "$_c" > "$EQ/n$_i"
+done
+: > "$EQ/n0"; chmod 000 "$EQ/n0"
+printf 'profile=game\nprofile_state=applied\nprofile_verify=5/5\nprofile_state=partial\napplied_at=123\nx=a=b\nsp=a b \nneg=-n\nbs=a\\b\ncr=1\r\nempty=\nlast=nonl' > "$EQ/st"
+cat > "$FAKE/fusao/eq-probe.sh" <<'EQEOF'
+. "$EQ/ref.sh"
+TUNE_SOURCE_ONLY=1
+. "$(dirname "$0")/tune.sh"
+bad=0
+for f in "$EQ"/n* "$EQ/ausente"; do
+  # como os chamadores usam: $(rval) sozinho, o rc, e a forma do sysfs_summary (tune.sh: [ ] && rval || echo -)
+  o="$(rval_old "$f")|$(rval_old "$f" >/dev/null; echo $?)|$( [ -n "$f" ] && rval_old "$f" || echo "-" )k"
+  n="$(rval "$f")|$(rval "$f" >/dev/null; echo $?)|$( [ -n "$f" ] && rval "$f" || echo "-" )k"
+  [ "$o" = "$n" ] || { bad=1; echo "  rval $f: antigo=[$o] novo=[$n]"; }
+done
+for sf in "$EQ/st" "$EQ/ausente"; do
+  STATE_F="$sf"
+  for k in profile profile_state profile_verify applied_at x sp neg bs cr empty last nada 'a.b' 'profile_s.*'; do
+    o=$(state_field_old "$k"); n=$(state_field "$k")
+    [ "$o" = "$n" ] || { bad=1; echo "  state_field $sf $k: antigo=[$o] novo=[$n]"; }
+  done
+done
+o=$(now_s_old); n=$(now_s); [ "${o%?}" = "${n%?}" ] || { bad=1; echo "  now_s: antigo=[$o] novo=[$n]"; }
+o=$(TUNE_NOW=77 now_s_old); n=$(TUNE_NOW=77 now_s); [ "$o" = "$n" ] || { bad=1; echo "  now_s TUNE_NOW: [$o] [$n]"; }
+exit $bad
+EQEOF
+EQ="$EQ" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/eq-probe.sh" && ok "tune rval/state_field/now_s builtins = pipelines antigos" || bad "tune rval/state_field/now_s builtins = pipelines antigos"
+chmod 600 "$EQ/n0"; rm -rf "$EQ" "$FAKE/fusao/eq-probe.sh"
+
 echo "----"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

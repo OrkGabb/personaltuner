@@ -96,8 +96,17 @@ stock_of() {
   grep -F "$1 " "$STOCK" 2>/dev/null | cut -d' ' -f2- | tail -1
 }
 
+# rval <nó> — o conteúdo do nó sem nenhum espaço/CR/quebra (= cat|tr -d '[:space:]'), rc 1 se ilegível.
+# Só builtins no caso comum (cada exec custa ~27 ms no aparelho e o verify lê ~25 nós); o pipeline antigo
+# fica para espaço interno e para valor com "-" no início ou "\", em que o echo do mksh não é literal.
 rval() {
-  [ -r "$1" ] && cat "$1" 2>/dev/null | tr -d '[:space:]'
+  local _l _v=""
+  [ -r "$1" ] || return 1
+  { while IFS= read -r _l || [ -n "$_l" ]; do _v="$_v$_l"; done; } 2>/dev/null < "$1"
+  case "$_v" in
+    *[[:space:]]*|-*|*\\*) printf '%s' "$_v" | tr -d '[:space:]';;
+    *) echo "$_v";;
+  esac
 }
 
 # Primitivo de escrita isolado: o teste offline o troca por um driver falso que clampa
@@ -125,7 +134,8 @@ w() {
     return "$rc"
   fi
   [ -r "$1" ] || return 0
-  want=$(printf '%s' "$2" | tr -d '[:space:]')
+  want=$2
+  case "$want" in *[[:space:]]*) want=$(printf '%s' "$want" | tr -d '[:space:]');; esac
   got=$(rval "$1")
   if [ "$got" != "$want" ]; then
     log "WARN tune: clamp $1 pedido=$want lido=$got"
@@ -427,13 +437,22 @@ REVERIFY_STEPS="${REVERIFY_STEPS:-30 60 95}"
 # apply; nunca agenda outra (loop de reescrita contra a ROM continua proibido).
 REASSERT_DELAY_S="${REASSERT_DELAY_S:-30}"
 
+# now_s — segundos inteiros de uptime (= cut -d. -f1 /proc/uptime, 0 se ilegível), por builtins.
 now_s() {
-  if [ -n "${TUNE_NOW:-}" ]; then echo "$TUNE_NOW"; else cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; fi
+  local _l=""
+  if [ -n "${TUNE_NOW:-}" ]; then echo "$TUNE_NOW"; return; fi
+  [ -r /proc/uptime ] || { echo 0; return; }
+  { IFS= read -r _l || :; } 2>/dev/null < /proc/uptime
+  echo "${_l%%.*}"
 }
 
-# state_field <campo> — valor do campo no profile.state atual (vazio se não houver).
+# state_field <campo> — valor do campo no profile.state atual (vazio se não houver; a última linha vence).
+# = grep -E "^campo=" | tail -n 1 | cut -d= -f2-, por builtins quando o campo é uma palavra simples.
 state_field() {
-  grep -E "^$1=" "$STATE_F" 2>/dev/null | tail -n 1 | cut -d= -f2-
+  local _l _v=""
+  case "$1" in ''|*[!A-Za-z0-9_]*) grep -E "^$1=" "$STATE_F" 2>/dev/null | tail -n 1 | cut -d= -f2-; return;; esac
+  { while IFS= read -r _l || [ -n "$_l" ]; do case "$_l" in "$1="*) _v=${_l#*=};; esac; done; } 2>/dev/null < "$STATE_F"
+  case "$_v" in -*|*\\*) printf '%s\n' "$_v";; *) echo "$_v";; esac
 }
 
 # Verifica por readback se os nós presentes no sistema refletem o perfil alvo
