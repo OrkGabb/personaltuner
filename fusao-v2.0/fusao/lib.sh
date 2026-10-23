@@ -112,6 +112,32 @@ nap_init() {
   nap() { [ -p "$NAP_FIFO" ] || { sleep "$1"; return 0; }; read -t "$1" -r _nap <>"$NAP_FIFO" 2>/dev/null; return 0; }
 }
 
+# restore_snapshot_nodes — devolve os nós do stock.snapshot. Policy0 exige descida por degraus da tabela REAL do
+# nó (do piso atual p/ baixo; a lista antiga era de outro SoC e começava subindo o piso p/ 1728000). Fallback =
+# tabela lida no aparelho. O CLI (kill-switch/fusaod off) chama esta; cleanup.sh e uninstall.sh mantêm o bloco
+# inline porque podem rodar com um lib.sh de outra versão.
+restore_snapshot_nodes() {
+  local _p _v _cur _tab _step
+  [ -f "$M54_DIR/stock.snapshot" ] || return 0
+  while read -r _p _v; do
+    case "$_p" in \#*|"") continue;; esac
+    if [ -f "$_p" ]; then
+      chmod 644 "$_p" 2>/dev/null
+      case "$_p" in
+        */cpufreq/policy0/scaling_min_freq)
+          _cur=$(cat "$_p" 2>/dev/null)
+          _tab=$(cat "${_p%/*}/scaling_available_frequencies" 2>/dev/null)
+          [ -n "$_tab" ] || _tab="533000 672000 768000 864000 960000 1056000 1152000 1248000 1344000 1440000 1536000 1632000 1728000 1824000 1920000 2002000"
+          for _step in $(printf '%s\n' $_tab | sort -rn); do
+            [ "$_step" -lt "${_cur:-0}" ] 2>/dev/null && [ "$_step" -gt "$_v" ] 2>/dev/null && echo "$_step" > "$_p" 2>/dev/null
+          done
+          ;;
+      esac
+      echo "$_v" > "$_p" 2>/dev/null
+    fi
+  done < "$M54_DIR/stock.snapshot"
+}
+
 # selected_profile — o perfil escolhido no app/CLI (/data/adb/fusao/profile); inválido = balanced.
 selected_profile() {
   local _p="balanced"

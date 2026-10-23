@@ -513,6 +513,18 @@ printf '# stock\n%s 533000\n' "$P0D/scaling_min_freq" > "$FAKE/fusao/stock.snaps
 ( . "$FAKE/restore_fn.sh"; M54_DIR="$FAKE/fusao" restore_snapshot_nodes )
 [ "$(cat "$P0D/scaling_min_freq")" = "533000" ] && ok "restore snapshot: p0 min volta ao stock" || bad "restore snapshot: p0 min volta ao stock"
 rm -f "$FAKE/fusao/stock.snapshot"
+# CLI novo + lib.sh antiga (sem restore_snapshot_nodes; o vivo só é atualizado pelo service.sh): falha explícita,
+# rc=1, sem recursão de subshells e sem mexer no nó. Limitado por ulimit -u e timeout (mata o grupo) se regredir.
+OLDL="$FAKE/oldlib"; mkdir -p "$OLDL"
+sed '/^restore_snapshot_nodes() {/,/^}/d' "$FAKE/fusao/lib.sh" > "$OLDL/lib.sh"
+echo 1152000 > "$P0D/scaling_min_freq"
+printf '# stock\n%s 533000\n' "$P0D/scaling_min_freq" > "$OLDL/stock.snapshot"
+( ulimit -u $(( $(ps -u "$(id -u)" -o pid= | wc -l) + 60 )) 2>/dev/null
+  M54_DIR="$OLDL" timeout 5 sh -c '. "$1"; restore_snapshot_nodes' _ "$FAKE/restore_fn.sh" ) > "$FAKE/m14.out" 2>&1
+_rc=$?
+[ "$_rc" = 1 ] && grep -q "sem restore_snapshot_nodes" "$FAKE/m14.out" && ok "restore com lib antiga falha explicita (rc=1)" || bad "restore com lib antiga falha explicita (rc=$_rc)"
+[ "$(cat "$P0D/scaling_min_freq")" = "1152000" ] && ok "restore com lib antiga nao mexe no no" || bad "restore com lib antiga nao mexe no no"
+echo 533000 > "$P0D/scaling_min_freq"
 
 # restaura o fake principal p/ as seções seguintes
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" idle
