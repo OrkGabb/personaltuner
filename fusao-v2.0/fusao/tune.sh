@@ -327,7 +327,7 @@ restore_stock() {
   s_p0min=$(stock_of "$P0_MIN"); [ -z "$s_p0min" ] && s_p0min=533000
   s_p0max=$(stock_of "$P0_MAX"); [ -z "$s_p0max" ] && s_p0max=2002000
   s_p4min=$(stock_of "$P4_MIN"); [ -z "$s_p4min" ] && s_p4min=533000
-  s_p4max=$(stock_of "$P4_MAX"); [ -z "$s_p4max" ] && s_p4max=1824000
+  s_p4max=$(stock_of "$P4_MAX"); [ -z "$s_p4max" ] && s_p4max=2400000
   s_gmin=$(stock_of "$GPU_MIN"); [ -z "$s_gmin" ] && s_gmin=221000
   s_gmax=$(stock_of "$GPU_MAX"); [ -z "$s_gmax" ] && s_gmax=949000
   set_policy0 "$s_p0min" "$s_p0max"

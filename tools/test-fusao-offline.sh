@@ -287,6 +287,22 @@ M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" idle
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "150" ] && ok "tune idle restore" || bad "tune idle restore"
 [ "$(cat "$FAKE/proc/sys/net/ipv4/tcp_congestion_control")" = "cubic" ] && ok "tune idle tcp" || bad "tune idle tcp"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune idle p4_max restore" || bad "tune idle p4_max restore"
+# N11: tune.stock sem linhas de CPU (o do aparelho, capturado em 13/10 por versão antiga) -> o teto do P4
+# volta ao stock real 2400000 (cpuinfo_max), não ao falso "teto rígido" 1824000
+cp "$FAKE/fusao/tune.stock" "$FAKE/tune.stock.bk"
+grep -v cpufreq "$FAKE/tune.stock.bk" > "$FAKE/fusao/tune.stock"
+echo 1440000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" idle >/dev/null 2>&1
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "2400000" ] && ok "tune idle p4_max sem stock = 2400000" || bad "tune idle p4_max sem stock = 2400000"
+cp "$FAKE/tune.stock.bk" "$FAKE/fusao/tune.stock"
+echo 1824000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+# reseed-stock do CLI = bloco canônico do service.sh (mesmas linhas), com o P4 em 2400000
+cp "$FAKE/fusao/stock.snapshot" "$FAKE/stock.snapshot.bk" 2>/dev/null
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" reseed-stock >/dev/null 2>&1
+grep -qx "/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq 2400000" "$FAKE/fusao/stock.snapshot" && ok "reseed-stock p4_max = 2400000" || bad "reseed-stock p4_max = 2400000"
+sed -n '/_stock_bad" = 1/,/stock.snapshot"/p' "$STAGE/service.sh" | sed -n 's/^[[:space:]]*echo "\(\/sys[^"]*\)"$/\1/p' > "$FAKE/svc.canon"
+[ -s "$FAKE/svc.canon" ] && grep -v '^#' "$FAKE/fusao/stock.snapshot" | cmp -s - "$FAKE/svc.canon" && ok "reseed-stock = canônico do service.sh" || bad "reseed-stock = canônico do service.sh"
+if [ -f "$FAKE/stock.snapshot.bk" ]; then cp "$FAKE/stock.snapshot.bk" "$FAKE/fusao/stock.snapshot"; else rm -f "$FAKE/fusao/stock.snapshot"; fi
 
 # 9e) 2.9.7: tabela LIDA do nó + snap + readback. O probe carrega só as funções do tune.sh
 # (TUNE_SOURCE_ONLY=1) e roda o comando recebido, com um driver falso opcional:
