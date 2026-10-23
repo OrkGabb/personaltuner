@@ -1,7 +1,7 @@
 id=encore
 name=FUSAO-M54
-version=2.11.7-fusao (M54-single)
-versionCode=1610
+version=2.11.8-fusao (M54-single)
+versionCode=1611
 author=OrkGabb
 description=Special performance module for your Device. [Single-module M54: writer fusaod + observer event-driven + tune/DND/downscale + FAS (fas-rs) + CLI/APK.]
 banner=banner.webp
