@@ -819,6 +819,9 @@ sweep_copy; echo 'rm -rf /data/adb/fusao' >> "$FAKE/swp/fusao/watch.sh"
 sweep_run && bad "sweep acusa rm -rf em dado real" || ok "sweep acusa rm -rf em dado real"
 sweep_copy; echo '  # rm -rf /data/adb/fusao (exemplo)' >> "$FAKE/swp/fusao/watch.sh"
 sweep_run && ok "sweep ignora rm -rf comentado" || bad "sweep ignora rm -rf comentado"
+# o CLI não tem sufixo: era tratado como binário e pulava as checagens de texto
+sweep_copy; echo 'X=202.155.143.189' >> "$FAKE/swp/system/bin/fusao"
+sweep_run && bad "sweep confere o CLI sem sufixo" || ok "sweep confere o CLI sem sufixo"
 rm -rf "$FAKE/swp"
 
 echo "----"

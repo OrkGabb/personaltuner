@@ -28,7 +28,15 @@ ALLOW_IP_FILES = {".md", ".html", ".json"}  # docs + poster? json não deve ter 
 TEXT_EXTS = {".sh", ".json", ".prop", ".txt", ".html", ".js", ".css", ".xml"}
 
 def is_text(p: Path) -> bool:
-    return p.suffix.lower() in TEXT_EXTS or p.name in {"service.sh", "customize.sh", "uninstall.sh", "cleanup.sh", "action.sh"}
+    # sem extensão e não-ELF = script/texto (ex.: o CLI system/bin/fusao)
+    return p.suffix.lower() in TEXT_EXTS or p.suffix == "" or p.name in {"service.sh", "customize.sh", "uninstall.sh", "cleanup.sh", "action.sh"}
+
+def is_elf(p: Path) -> bool:
+    try:
+        with p.open("rb") as fh:
+            return fh.read(4) == b"ELF"
+    except OSError:
+        return False
 
 def scan():
     for f in sorted(STAGE.rglob("*")):
@@ -38,10 +46,10 @@ def scan():
             continue
         if f.suffix.lower() in {".webp", ".avif", ".apk", ".zip", ".webm", ".woff2"}:
             continue
-        # binários ELF: checa strings por nomes banidos
-        if f.suffix == "" or ".so" in f.suffixes or f.name in {"encored", "fusaod", "encore_profiler", "encore_utility", "stellar-daemon"}:
+        # binários ELF (pelo cabeçalho, não pelo sufixo): checa strings por nomes banidos
+        if is_elf(f):
             try:
-                raw = f.read_bytes()[:200000]
+                raw = f.read_bytes()
             except OSError:
                 continue
             txt = raw.decode("utf-8", "ignore")
@@ -72,7 +80,7 @@ def scan():
         low = t.lower()
         for pat in ["serialno", "tamper", "access denied", "engine-main", "202.155.143.189",
                     "generativelanguage.googleapis.com", "gmail.com"]:
-            if pat in low and f.suffix == ".sh":
+            if pat in low and f.suffix in {".sh", ""}:
                 # gmail permitido em changelog? não temos. falha.
                 fails.append(f"{rel}: string proibida '{pat}'")
         if "rm -rf" in t and f.name not in {"uninstall.sh", "cleanup.sh"}:
