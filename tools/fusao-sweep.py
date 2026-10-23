@@ -75,17 +75,13 @@ def scan():
             if pat in low and f.suffix == ".sh":
                 # gmail permitido em changelog? não temos. falha.
                 fails.append(f"{rel}: string proibida '{pat}'")
-        if "rm -rf" in t and f.name not in {"uninstall.sh", "cleanup.sh", "fusao-sweep.py", "fusao-build.py", "customize.sh", "bugreport.sh", "action.sh"}:
-            # customize/bugreport/action usam rm -rf em TMPDIR/MODPATH/TMPD (instalador) — permite.
-            # Só falha se mirar dados reais fora de uninstall/cleanup.
-            import re as _re
+        if "rm -rf" in t and f.name not in {"uninstall.sh", "cleanup.sh"}:
+            # Só uninstall/cleanup apagam dados reais; nos demais o alvo tem de ser temporário
+            # (TMPDIR/MODPATH/TMPD do instalador e do bugreport). Comentário inteiro não conta.
             for line in t.splitlines():
-                if "rm -rf" not in line:
+                if "rm -rf" not in line or line.lstrip().startswith("#"):
                     continue
-                if any(k in line for k in ["$MODPATH", "$TMPDIR", "$TMPD", "/data/local/tmp", "#"]):
-                    continue
-                if "rm -rf" in line and f.name in {"customize.sh", "bugreport.sh"}:
-                    # exige alvo temporário; se não tem marcador, acusa
+                if not any(k in line for k in ["$MODPATH", "$TMPDIR", "$TMPD", "/data/local/tmp"]):
                     fails.append(f"{rel}: 'rm -rf' suspeito: {line.strip()[:90]}")
                     break
         if "$MOD/" in t or "${MOD}" in t:

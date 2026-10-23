@@ -811,6 +811,16 @@ _m1r=$(PATH="$FAKE/m1bin:$PATH" OBSERVER_FAKE_ALIVE= sh "$FAKE/m1_t.sh" "$FAKE/m
 kill "$_m1h" 2>/dev/null; wait "$_m1h" 2>/dev/null
 [ "$_m1r" = "001" ] && [ "$(wc -l < "$FAKE/m1_pgn")" = 2 ] && ok "observer_alive cache (pgrep 1x vivo, morto=1)" || bad "observer_alive cache [$_m1r pgrep=$(wc -l < "$FAKE/m1_pgn")]"
 
+# 18) tools: kill-list em cópias do stage (o stage limpo passa; cada injeção tem de ser acusada)
+sweep_copy() { rm -rf "$FAKE/swp"; cp -r "$STAGE" "$FAKE/swp"; }
+sweep_run() { python3 "$ROOT/tools/fusao-sweep.py" --stage "$FAKE/swp" > "$FAKE/swp.out" 2>&1; }
+sweep_copy; sweep_run && ok "sweep stage limpo" || { bad "sweep stage limpo"; cat "$FAKE/swp.out"; }
+sweep_copy; echo 'rm -rf /data/adb/fusao' >> "$FAKE/swp/fusao/watch.sh"
+sweep_run && bad "sweep acusa rm -rf em dado real" || ok "sweep acusa rm -rf em dado real"
+sweep_copy; echo '  # rm -rf /data/adb/fusao (exemplo)' >> "$FAKE/swp/fusao/watch.sh"
+sweep_run && ok "sweep ignora rm -rf comentado" || bad "sweep ignora rm -rf comentado"
+rm -rf "$FAKE/swp"
+
 echo "----"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
