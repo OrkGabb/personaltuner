@@ -100,7 +100,12 @@ list_eligible_games() {
   [ -f "$M54_DIR/gamelist.txt" ] || return 0
   local _line
   while IFS= read -r _line || [ -n "$_line" ]; do
-    _line=$(printf "%s" "$_line" | tr -d '[:space:]')
+    # só builtins: printf|tr por linha custava 17 s de parede e 29 s de CPU com os 533 jogos (aparelho 2026-10-22).
+    # Bordas (espaço, tab, CR) saem por expansão; espaço INTERNO cai no tr de sempre, que junta os pedaços
+    # ("com.a.b # jogo" -> "com.a.b#jogo"): mesma saída de antes para qualquer linha.
+    _line=${_line#"${_line%%[![:space:]]*}"}
+    _line=${_line%"${_line##*[![:space:]]}"}
+    case "$_line" in *[[:space:]]*) _line=$(printf "%s" "$_line" | tr -d '[:space:]');; esac
     case "$_line" in ""|\#*) continue;; esac
     if pkg_has_data "$_line"; then
       echo "$_line"

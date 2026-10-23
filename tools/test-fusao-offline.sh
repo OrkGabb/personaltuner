@@ -601,6 +601,13 @@ echo "asset_nte_1" > "$FAKE/predata/data/media/0/Android/obb/com.hottagames.nte/
 grep -Fxq "com.hottagames.nte" "$FAKE/fusao/gamelist.txt" || echo "com.hottagames.nte" >> "$FAKE/fusao/gamelist.txt"
 
 PRELOAD_DATA_ROOT="$FAKE/predata" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload status | grep -q "eligible_count=2" && ok "preload eligible discovery" || bad "preload eligible discovery"
+# M3: elegíveis por builtins = mesma saída do printf|tr antigo para bordas, tab, CR e espaço INTERNO (tr junta os
+# pedaços: "com.k l" -> com.kl; "com.m.n # jogo" -> com.m.n#jogo, sem dados). com.k/com.m.n/com.o.p são iscas.
+mkdir -p "$FAKE/m3"
+printf 'com.a.b\n  com.c.d\ncom.e.f  \n\tcom.g.h\t\ncom.i.j\r\ncom.k l\ncom.m.n # jogo\n  # c\n\n   \n#com.x\ncom.o.p\tx' > "$FAKE/m3/gamelist.txt"
+for _p in com.a.b com.c.d com.e.f com.g.h com.i.j com.kl com.o.px com.k com.m.n com.o.p; do mkdir -p "$FAKE/m3data/data/data/$_p"; done
+_m3=$(PRELOAD_DATA_ROOT="$FAKE/m3data" M54_DIR="$FAKE/m3" sh "$FAKE/fusao/fusao-cli" gamelist eligible | tr '\n' ' ')
+[ "$_m3" = "com.a.b com.c.d com.e.f com.g.h com.i.j com.kl com.o.px " ] && ok "eligible builtins = printf|tr antigo" || bad "eligible builtins = printf|tr antigo [$_m3]"
 PRELOAD_DATA_ROOT="$FAKE/predata" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload prepare | grep -q "preload-prepare ok prepared=2/2" && ok "preload prepare without fg game" || bad "preload prepare without fg game"
 [ -s "$FAKE/fusao/preload/com_roblox_client.pack" ] && [ -s "$FAKE/fusao/preload/com_hottagames_nte.pack" ] && ok "preload packs created" || bad "preload packs created"
 PRELOAD_DATA_ROOT="$FAKE/predata" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload now | grep -q "preload ok pkg=" && ok "preload now without fg game" || bad "preload now without fg game"
