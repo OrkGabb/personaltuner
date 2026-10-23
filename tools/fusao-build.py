@@ -21,6 +21,18 @@ for i, a in enumerate(sys.argv):
     if a == "--out" and i + 1 < len(sys.argv):
         OUT = Path(sys.argv[i + 1])
 
+# 0) self-check ANTES de gravar: customize.sh deve citar cada executável novo (falhou = nem .sha256 nem zip)
+cust = (STAGE / "customize.sh").read_text(encoding="utf-8", errors="ignore")
+need = ["system/bin/fusaod", "system/bin/fusao", "fusao/watch.sh", "fusao/framework.sh",
+        "fusao/perf.sh", "fusao/bugreport.sh", "fusao/tune.sh", "fusao/dnd.sh",
+        "fusao/display.sh", "fusao/observer.sh",
+        "fusao/observer.dex", "fusao/gamelist.txt", "system/bin/fas-rs", "fusao/fas.sh"]
+missing = [n for n in need if n not in cust]
+if missing:
+    print("SELF-CHECK FALHOU, customize.sh não cita:", missing)
+    sys.exit(1)
+print(f"self-check OK: customize cobre os {len(need)}")
+
 SKIP_DIRS = {"__pycache__"}
 files = []
 for f in sorted(STAGE.rglob("*")):
@@ -49,14 +61,3 @@ with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(f, arc)
 print(f"zip: {OUT.name} ({OUT.stat().st_size} bytes, {len(allfiles)} entries)")
 
-# 3) self-check: customize.sh deve citar cada executável novo
-cust = (STAGE / "customize.sh").read_text(encoding="utf-8", errors="ignore")
-need = ["system/bin/fusaod", "system/bin/fusao", "fusao/watch.sh", "fusao/framework.sh",
-        "fusao/perf.sh", "fusao/bugreport.sh", "fusao/tune.sh", "fusao/dnd.sh",
-        "fusao/display.sh", "fusao/observer.sh",
-        "fusao/observer.dex", "fusao/gamelist.txt", "system/bin/fas-rs", "fusao/fas.sh"]
-missing = [n for n in need if n not in cust]
-if missing:
-    print("SELF-CHECK FALHOU, customize.sh não cita:", missing)
-    sys.exit(1)
-print(f"self-check OK: customize cobre os {len(need)}")

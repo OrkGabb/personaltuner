@@ -826,7 +826,13 @@ sweep_run && ok "sweep ignora rm -rf comentado" || bad "sweep ignora rm -rf come
 # o CLI não tem sufixo: era tratado como binário e pulava as checagens de texto
 sweep_copy; echo 'X=202.155.143.189' >> "$FAKE/swp/system/bin/fusao"
 sweep_run && bad "sweep confere o CLI sem sufixo" || ok "sweep confere o CLI sem sufixo"
-rm -rf "$FAKE/swp"
+# build: self-check antes de gravar (customize sem fas.sh = rc!=0 e nenhum zip no disco)
+sweep_copy; sed -i 's#fusao/fas\.sh#fusao/FAS_X#g' "$FAKE/swp/customize.sh"; rm -f "$FAKE/b.zip"
+python3 "$ROOT/tools/fusao-build.py" --stage "$FAKE/swp" --out "$FAKE/b.zip" > /dev/null 2>&1 && bad "build self-check falho nao grava zip" || {
+  [ -e "$FAKE/b.zip" ] && bad "build self-check falho nao grava zip" || ok "build self-check falho nao grava zip"; }
+sweep_copy; rm -f "$FAKE/b.zip"
+python3 "$ROOT/tools/fusao-build.py" --stage "$FAKE/swp" --out "$FAKE/b.zip" > /dev/null 2>&1 && [ -s "$FAKE/b.zip" ] && ok "build stage bom grava zip" || bad "build stage bom grava zip"
+rm -rf "$FAKE/swp" "$FAKE/b.zip"
 
 echo "----"
 echo "pass=$pass fail=$fail"
