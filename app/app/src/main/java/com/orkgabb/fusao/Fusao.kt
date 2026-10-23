@@ -120,11 +120,14 @@ object FusaoBridge {
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
-    /** Alvos em vigor por jogo, lidos da lista que o módulo gera para o fas-rs (`fusao fas gen`). */
+    /**
+     * Alvos em vigor por jogo: `fusao fas list` (módulo >= 2.11.9) imprime a lista do fas-rs sem regravá-la; o
+     * `fas gen` trocava o arquivo que o fas-rs vigia e ele recarregava a config a cada abertura da aba Jogos.
+     */
     suspend fun fasTargets(): Map<String, List<Int>> {
         val c = cli()
         if (c.isEmpty()) return emptyMap()
-        return parseFasToml(RootShell.run("\"$c\" fas gen 2>/dev/null").output)
+        return parseFasToml(RootShell.run("\"$c\" fas list 2>/dev/null").output)
     }
 
     suspend fun preloadStatus(): List<String> {
@@ -553,7 +556,7 @@ fun fasTargetsForCap(cap: Int?): String =
 fun fasCapOf(targets: List<Int>?): Int? =
     if (targets == null || targets.isEmpty() || targets == FAS_AUTO_STEPS) null else targets.last()
 
-/** `"pkg" = [30, 45, 60]` (saída de `fusao fas gen`) -> pkg -> [30, 45, 60]. */
+/** `"pkg" = [30, 45, 60]` (saída de `fusao fas list`/`gen`) -> pkg -> [30, 45, 60]. */
 fun parseFasToml(lines: List<String>): Map<String, List<Int>> {
     val rx = Regex("""^\s*"([A-Za-z0-9_.]+)"\s*=\s*\[([0-9,\s]*)]""")
     val out = LinkedHashMap<String, List<Int>>()

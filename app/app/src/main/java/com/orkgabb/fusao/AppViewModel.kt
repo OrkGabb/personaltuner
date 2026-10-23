@@ -102,7 +102,7 @@ data class FusaoUiState(
     val selectedPreloadPkg: String = "",
     val ramcleanInfo: List<String> = emptyList(),
     val games: List<String> = emptyList(),
-    /** Alvos do FAS por jogo (pkg -> lista), lidos de `fusao fas gen`. */
+    /** Alvos do FAS por jogo (pkg -> lista), lidos de `fusao fas list` (sem regravar a lista do fas-rs). */
     val fasTargets: Map<String, List<Int>> = emptyMap(),
     val logLines: List<String> = emptyList(),
     val logFusaod: Boolean = false,
