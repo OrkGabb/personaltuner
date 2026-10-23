@@ -77,6 +77,16 @@ object AppIconCache {
     }
 }
 
+/** Aviso fixo de módulo ausente (banner do MainActivity); a limpeza do aviso compara com este texto. */
+const val MODULE_ABSENT_NOTICE = "Módulo FUSAO ausente."
+
+/**
+ * Aviso depois de checar o módulo: some o de root/módulo (o banner fixo já mostra o módulo ausente, então
+ * ele nunca vira aviso também: um aviso só), o resto fica.
+ */
+fun noticeAfterModuleCheck(current: String): String =
+    current.takeIf { !it.startsWith("Sem root") && !it.startsWith(MODULE_ABSENT_NOTICE) }.orEmpty()
+
 @Immutable
 data class FusaoUiState(
     val ready: Boolean = false,
@@ -155,11 +165,7 @@ class FusaoViewModel : ViewModel() {
                     games = games,
                     busy = Busy.NONE,
                     activeTarget = "",
-                    notice = if (present) {
-                        if (it.notice.startsWith("Sem root") || it.notice.startsWith("Módulo encore")) "" else it.notice
-                    } else {
-                        "Módulo encore ausente."
-                    },
+                    notice = noticeAfterModuleCheck(it.notice),
                 )
             }
         }
@@ -212,11 +218,7 @@ class FusaoViewModel : ViewModel() {
                     logLines = lLines,
                     busy = Busy.NONE,
                     activeTarget = "",
-                    notice = if (!present) {
-                        "Módulo encore ausente."
-                    } else {
-                        it.notice.takeIf { n -> !n.startsWith("Sem root") && !n.startsWith("Módulo encore") }.orEmpty()
-                    },
+                    notice = noticeAfterModuleCheck(it.notice),
                 )
             }
         }

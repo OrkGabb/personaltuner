@@ -584,7 +584,7 @@ class MainActivity : ComponentActivity() {
                 )
             } else if (!state.moduleInstalled) {
                 Banner(
-                    text = "Módulo encore ausente.",
+                    text = MODULE_ABSENT_NOTICE,
                     accentColor = FusaoPalette.IgnisAmber,
                     tag = "MOD AUSENTE",
                 )
