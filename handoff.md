@@ -45,6 +45,13 @@ Estado atual: módulo autoral FUSAO-M54 v2.9.4/1596 (stage em `fusao-v2.0/`, rel
 `_releases/`) + app autoral FUSAO v1 (fontes no WSL `~/FusaoApp`, cópia em `fusao-apk/`,
 única interface — WebUI extinta por decisão). Detalhes ao vivo em `status.md`.
 
+**Identidade e licença do módulo.** O `id=encore` do `module.prop` é herdado do chassi Encore Tweaks
+(Rem01Gaming, Apache 2.0) e é mantido de propósito por continuidade de upgrade: o KernelSU identifica o
+módulo pelo `id`, e o upgrade por cima da instalação existente depende dele (o módulo vive em
+`/data/adb/modules/encore/`). Não trocar o `id`. O `NOTICE.md` (em `fusao-v2.0/`) é obrigatório em toda
+distribuição — a Apache 2.0 do Encore e as licenças de terceiros (KTweak, RapidJSON, spdlog, fmt, fas-rs/GPLv3
+etc.) exigem que ele acompanhe o zip; não remover nem editar sem rever essas licenças.
+
 ## 3. Como trabalhar comigo
 
 - Prove no aparelho (`adb -s <host:porta-atual> shell ...`), não teoriza.
