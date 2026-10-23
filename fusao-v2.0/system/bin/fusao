@@ -7,7 +7,7 @@
 #      fusao display [show|720p|810p|900p|reset]
 #      fusao gamelist [list|add <pkg>|del <pkg>|count|eligible|set <pkg>...]
 #      fusao gos [on|off] | fusao reseed-stock
-#      fusao status | fusao log | fusao bugreport | fusao kill-switch [on|off]
+#      fusao status [quick] | fusao log | fusao bugreport | fusao kill-switch [on|off]
 M54_DIR=${M54_DIR:-/data/adb/fusao}
 MODDIR_FUSAO=/data/adb/modules/encore/fusao
 [ -d "$M54_DIR" ] || M54_DIR="$MODDIR_FUSAO"
@@ -665,8 +665,10 @@ case "$cmd" in
   status)
     _cur_prof=$(cat "$M54_DIR/profile" 2>/dev/null | tr -d '[:space:]')
     [ -z "$_cur_prof" ] && _cur_prof="balanced"
-    # confere o perfil EM VIGOR (battery em jogo = game), não o escolhido: senão em jogo daria partial falso
-    if [ -f "$M54_DIR/tune.sh" ]; then
+    # confere o perfil EM VIGOR (battery em jogo = game), não o escolhido: senão em jogo daria partial falso.
+    # `status quick` pula a conferência e mostra o último profile.state: o app usa depois de uma ação que já
+    # conferiu (perfil, framework on, fusaod) ou que não mexe no perfil; abrir/atualizar seguem com a completa.
+    if [ "$arg" != quick ] && [ -f "$M54_DIR/tune.sh" ]; then
       M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/tune.sh" verify >/dev/null 2>&1
     fi
     echo "profile=$_cur_prof"

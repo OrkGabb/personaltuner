@@ -917,6 +917,17 @@ _pr=$(PATH="$EQ/bin:$PATH" EQ="$EQ" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/eq-pro
 [ "$_pr" = "60 60" ] && grep -qx "$EQ/proc/sys/vm/swappiness" "$EQ/cat.log" && ! grep -q "$EQ/sys/x/n" "$EQ/cat.log" && ok "tune rval: /proc pelo cat, /sys por builtins" || bad "tune rval: /proc pelo cat, /sys por builtins [$_pr $(tr '\n' ' ' < "$EQ/cat.log")]"
 chmod 600 "$EQ/n0"; rm -rf "$EQ" "$FAKE/fusao/eq-probe.sh" "$FAKE/fusao/eq-proc.sh"
 
+# 20) `fusao status quick` (app, depois de uma ação): mesma saída do status logo após uma conferência, e não
+# confere de novo (mostra o profile.state gravado; o status completo reconfere e o regrava)
+st() { M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" status "$@" 2>/dev/null; }
+_sq_full=$(st); _sq_quick=$(st quick)
+[ -n "$_sq_full" ] && [ "$_sq_quick" = "$_sq_full" ] && ok "status quick = status após conferência" || bad "status quick = status após conferência"
+cp "$FAKE/fusao/profile.state" "$FAKE/profile.state.bk"
+printf 'profile=balanced\nprofile_state=applied\nprofile_verify=77/77\nsysfs_summary=SENTINELA\n' > "$FAKE/fusao/profile.state"
+st quick | grep -qx "profile_verify=77/77" && ok "status quick não reconfere" || bad "status quick não reconfere"
+st | grep -qx "profile_verify=77/77" && bad "status completo reconfere" || ok "status completo reconfere"
+cp "$FAKE/profile.state.bk" "$FAKE/fusao/profile.state"
+
 echo "----"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
