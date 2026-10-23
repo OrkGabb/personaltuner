@@ -49,10 +49,14 @@ object FusaoBridge {
         return r.output.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" | ").ifEmpty { "—" }
     }
 
-    suspend fun status(): FusaoStatus {
+    /**
+     * `fusao status`; [quick] = `status quick` (módulo >= 2.11.10): sem reconferir o perfil (~0,9 s a menos),
+     * mostra o último resultado gravado. Módulo antigo ignora o argumento e faz o status completo.
+     */
+    suspend fun status(quick: Boolean = false): FusaoStatus {
         val c = cli()
         if (c.isEmpty()) return FusaoStatus(moduleInstalled = false)
-        val r = RootShell.run("\"$c\" status 2>&1")
+        val r = RootShell.run(if (quick) "\"$c\" status quick 2>&1" else "\"$c\" status 2>&1")
         return FusaoStatus.parse(r.output, moduleInstalled = true)
     }
 

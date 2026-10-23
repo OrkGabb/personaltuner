@@ -84,6 +84,12 @@ const val MODULE_ABSENT_NOTICE = "Módulo FUSAO ausente."
  * Aviso depois de checar o módulo: some o de root/módulo (o banner fixo já mostra o módulo ausente, então
  * ele nunca vira aviso também: um aviso só), o resto fica.
  */
+/**
+ * Depois de uma ação, o status rápido basta (a ação já reconferiu o perfil ou não mexe nele), exceto
+ * `framework off`: ele devolve a CPU ao stock sem regravar a conferência, então só a completa mostra o real.
+ */
+fun quickStatusAfterFlag(cmd: String, on: Boolean): Boolean = !(cmd == "framework" && !on)
+
 fun noticeAfterModuleCheck(current: String): String =
     current.takeIf { !it.startsWith("Sem root") && !it.startsWith(MODULE_ABSENT_NOTICE) }.orEmpty()
 
@@ -229,7 +235,7 @@ class FusaoViewModel : ViewModel() {
         viewModelScope.launch {
             _state.update { it.copy(busy = Busy.FLAG, activeTarget = cmd) }
             val out = FusaoBridge.setFlag(cmd, on)
-            val st = FusaoBridge.status()
+            val st = FusaoBridge.status(quick = quickStatusAfterFlag(cmd, on))
             val cur = _state.value
             val pInfo = if (cmd == "preload") {
                 FusaoBridge.preloadStatus()
@@ -259,7 +265,7 @@ class FusaoViewModel : ViewModel() {
         viewModelScope.launch {
             _state.update { it.copy(busy = Busy.FLAG, activeTarget = "profile:$profile") }
             val out = FusaoBridge.setProfile(profile)
-            val st = FusaoBridge.status()
+            val st = FusaoBridge.status(quick = true)
             _state.update { it.copy(status = st, busy = Busy.NONE, activeTarget = "", notice = out) }
         }
     }
@@ -269,7 +275,7 @@ class FusaoViewModel : ViewModel() {
         viewModelScope.launch {
             _state.update { it.copy(busy = Busy.FLAG, activeTarget = "display:$mode") }
             val out = FusaoBridge.setDisplay(mode)
-            val st = FusaoBridge.status()
+            val st = FusaoBridge.status(quick = true)
             _state.update {
                 it.copy(
                     status = st,
@@ -323,7 +329,7 @@ class FusaoViewModel : ViewModel() {
             _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_prepare") }
             val out = FusaoBridge.preloadPrepare(targetPkg)
             val info = FusaoBridge.preloadStatus()
-            val st = FusaoBridge.status()
+            val st = FusaoBridge.status(quick = true)
             _state.update {
                 it.copy(
                     preloadInfo = info + listOf("---") + out,
@@ -342,7 +348,7 @@ class FusaoViewModel : ViewModel() {
             _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_now") }
             val out = FusaoBridge.preloadNow(targetPkg)
             val info = FusaoBridge.preloadStatus()
-            val st = FusaoBridge.status()
+            val st = FusaoBridge.status(quick = true)
             _state.update {
                 it.copy(
                     preloadInfo = info + listOf("---") + out,
@@ -385,7 +391,7 @@ class FusaoViewModel : ViewModel() {
             val out = FusaoBridge.preloadRecord(targetPkg, secs)
             recordCountdownJob?.cancel()
             val info = FusaoBridge.preloadStatus()
-            val st = FusaoBridge.status()
+            val st = FusaoBridge.status(quick = true)
             _state.update {
                 it.copy(
                     preloadInfo = info + listOf("---") + out,
@@ -405,7 +411,7 @@ class FusaoViewModel : ViewModel() {
             _state.update { it.copy(busy = Busy.RAMCLEAN, activeTarget = "ramclean_now") }
             val out = FusaoBridge.ramcleanNow()
             val info = FusaoBridge.ramcleanStatus()
-            val st = FusaoBridge.status()
+            val st = FusaoBridge.status(quick = true)
             _state.update {
                 it.copy(
                     ramcleanInfo = info + listOf("---") + out,
@@ -443,7 +449,7 @@ class FusaoViewModel : ViewModel() {
         viewModelScope.launch {
             _state.update { it.copy(busy = Busy.FLAG, activeTarget = "fas_mode:$mode") }
             val out = FusaoBridge.setFasMode(mode)
-            val st = FusaoBridge.status()
+            val st = FusaoBridge.status(quick = true)
             _state.update { it.copy(status = st, busy = Busy.NONE, activeTarget = "", notice = out) }
         }
     }
