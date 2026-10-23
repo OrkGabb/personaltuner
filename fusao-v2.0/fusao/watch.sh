@@ -32,11 +32,14 @@ LAST_HEAVY_PKG=""
 LAST_HEAVY_TS=0
 log "watch v2.0: inicio (gamelist=$GAMELIST)"
 
+# read_gamefile — pacote em foco (game-active.txt) em CUR, só com builtins: era $(...) + printf|tr a cada 2 s
+# (~55 ms de CPU por volta como root no aparelho). Espaço INTERNO cai no tr de sempre: mesma saída de antes.
 read_gamefile() {
-  local _g=""
-  [ -r "$GAMEFILE" ] && IFS= read -r _g < "$GAMEFILE" 2>/dev/null
-  _g=$(printf "%s" "$_g" | tr -d '[:space:]')
-  echo "$_g"
+  CUR=""
+  [ -r "$GAMEFILE" ] && IFS= read -r CUR < "$GAMEFILE" 2>/dev/null
+  CUR=${CUR#"${CUR%%[![:space:]]*}"}
+  CUR=${CUR%"${CUR##*[![:space:]]}"}
+  case "$CUR" in *[[:space:]]*) CUR=$(printf "%s" "$CUR" | tr -d '[:space:]');; esac
 }
 
 # Perfil ESCOLHIDO (selected_profile do lib.sh, SSOT). Subshell: o watch não carrega a lib (umask/log
@@ -111,9 +114,29 @@ write_state() {
   printf "%s" "$1" | atomic_write "$GAMEFILE" 0644
 }
 
+# observer_alive — identidade do observer (pid + início do /proc/PID/stat) em cache; o pgrep -f (varre ~700
+# processos: ~75 ms de CPU como root no aparelho) só roda quando o pid em cache some ou troca de dono.
+OBS_PID=""
+OBS_START=""
 observer_alive() {
+  local _st
   [ -n "$OBSERVER_FAKE_ALIVE" ] && return 0
-  pgrep -f "[f]usao.observer" >/dev/null 2>&1
+  if [ -n "$OBS_PID" ] && IFS= read -r _st < "/proc/$OBS_PID/stat" 2>/dev/null; then
+    _st=${_st##*) }
+    set -- $_st
+    # zumbi (morto, pai ainda não colheu) mantém o stat: o pgrep antigo não o casava (cmdline vazio)
+    [ "$1" != Z ] && [ "${20}" = "$OBS_START" ] && return 0
+  fi
+  OBS_PID=""
+  OBS_START=""
+  set -- $(pgrep -f "[f]usao.observer" 2>/dev/null)
+  [ -n "$1" ] || return 1
+  IFS= read -r _st < "/proc/$1/stat" 2>/dev/null || return 1
+  OBS_PID=$1
+  _st=${_st##*) }
+  set -- $_st
+  OBS_START=${20}
+  return 0
 }
 
 STANDBY=0
@@ -274,7 +297,7 @@ while true; do
       STANDBY=1
       log "watch: observer ativo, standby (consome game-active, sem poll)"
     fi
-    CUR=$(read_gamefile)
+    read_gamefile
     if [ "$CUR" != "$LAST" ]; then
       if [ -n "$CUR" ] && ! in_gamelist "$CUR"; then
         LAST="$CUR"
@@ -287,7 +310,7 @@ while true; do
         # exit causado por subprocessos ou telas de loading do NTE).
         if [ -n "$LAST" ] && pidof "$LAST" >/dev/null 2>&1; then
           sleep 2
-          CUR=$(read_gamefile)
+          read_gamefile
           if [ -n "$CUR" ] && in_gamelist "$CUR"; then
             [ "$CUR" != "$LAST" ] && { fire_enter "$CUR"; LAST="$CUR"; }
             sleep 2

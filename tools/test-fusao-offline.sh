@@ -778,6 +778,39 @@ _nv=$(cat "$FAKE/nap.out")
 case "$_nv" in [1-4]) ok "nap sem FIFO dorme ($_nv voltas em 3 s)";; *) bad "nap sem FIFO dorme ($_nv voltas em 3 s)";; esac
 [ -e "$FAKE/fusao/.nap.t" ] && bad "nap sem FIFO nao cria arquivo regular" || ok "nap sem FIFO nao cria arquivo regular"
 
+# M1: read_gamefile por builtins = printf|tr antigo (bordas, tab, CR, espaço interno); observer_alive com cache:
+# o pgrep roda 1x enquanto o pid em cache vive, e o observer morto volta a 1 — inclusive ZUMBI (o pai do pid em
+# cache é um exec sleep que nunca colhe; o stat continua com o mesmo início).
+sed -n '/^read_gamefile() {/,/^}/p' "$STAGE/fusao/watch.sh" > "$FAKE/m1_rg.sh"
+sed -n '/^OBS_PID=""/,/^}/p' "$STAGE/fusao/watch.sh" > "$FAKE/m1_oa.sh"
+_m1=0
+for _c in 'com.a.b' '  com.a.b' 'com.a.b  ' "$(printf '\tcom.a.b\r')" 'com.a b' 'com.a.b # jogo' '   ' ''; do
+  printf '%s\n' "$_c" > "$FAKE/m1_gf"
+  _old=$(printf "%s" "$_c" | tr -d '[:space:]')
+  _new=$(GAMEFILE="$FAKE/m1_gf" sh -c '. "$1"; read_gamefile; printf "%s" "$CUR"' _ "$FAKE/m1_rg.sh")
+  [ "$_old" = "$_new" ] || { _m1=1; echo "  read_gamefile [$_c]: antigo=[$_old] novo=[$_new]"; }
+done
+[ "$_m1" = 0 ] && ok "read_gamefile builtins = printf|tr antigo" || bad "read_gamefile builtins = printf|tr antigo"
+mkdir -p "$FAKE/m1bin"
+printf '#!/bin/sh\necho x >> "%s"\n[ -s "%s" ] && cat "%s"\n' "$FAKE/m1_pgn" "$FAKE/m1_pg" "$FAKE/m1_pg" > "$FAKE/m1bin/pgrep"; chmod +x "$FAKE/m1bin/pgrep"
+: > "$FAKE/m1_pg"; : > "$FAKE/m1_pgn"
+sh -c 'sleep 30 & echo $! > "$1"; exec sleep 60' _ "$FAKE/m1_pg" & _m1h=$!
+_i=0; while [ ! -s "$FAKE/m1_pg" ] && [ $_i -lt 50 ]; do sleep 0.1; _i=$((_i+1)); done
+_m1p=$(cat "$FAKE/m1_pg")
+cat > "$FAKE/m1_t.sh" <<'M1EOF'
+. "$1"
+observer_alive; a=$?
+: > "$2"
+observer_alive; b=$?
+kill "$3" 2>/dev/null; i=0
+while ! grep -q '^State:.*Z' "/proc/$3/status" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+observer_alive; c=$?
+echo "$a$b$c"
+M1EOF
+_m1r=$(PATH="$FAKE/m1bin:$PATH" OBSERVER_FAKE_ALIVE= sh "$FAKE/m1_t.sh" "$FAKE/m1_oa.sh" "$FAKE/m1_pg" "$_m1p")
+kill "$_m1h" 2>/dev/null; wait "$_m1h" 2>/dev/null
+[ "$_m1r" = "001" ] && [ "$(wc -l < "$FAKE/m1_pgn")" = 2 ] && ok "observer_alive cache (pgrep 1x vivo, morto=1)" || bad "observer_alive cache [$_m1r pgrep=$(wc -l < "$FAKE/m1_pgn")]"
+
 echo "----"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
