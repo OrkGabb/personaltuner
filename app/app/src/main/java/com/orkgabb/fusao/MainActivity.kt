@@ -140,7 +140,7 @@ private val FLAG_SPECS = listOf(
     FlagSpec(
         cmd = "ramclean",
         title = "ramclean",
-        desc = "Libera RAM ao entrar no jogo, antes do pré-carregamento",
+        desc = "Limpava a RAM ao entrar no jogo (módulo 2.12.0 tirou: travava o carregamento). Desligue; limpar agora: aba Preload",
         accent = FusaoPalette.BioEmerald,
     ),
     FlagSpec(
@@ -1156,8 +1156,11 @@ class MainActivity : ComponentActivity() {
     private fun FlagsTab(state: FusaoUiState) {
         val st = state.status
         val busy = state.anyBusy()
-        // módulo < 2.11.0 não tem FAS: a chave nem aparece (o CLI antigo recusaria `fas on`)
-        val specs = remember(st.fasSupported) { FLAG_SPECS.filter { it.cmd != "fas" || st.fasSupported } }
+        // módulo < 2.11.0 não tem FAS: a chave nem aparece (o CLI antigo recusaria `fas on`). ramclean saiu do jogo
+        // no módulo 2.12.0: a chave só aparece ligada (módulo antigo), para poder desligar
+        val specs = remember(st.fasSupported, st.ramclean) {
+            FLAG_SPECS.filter { (it.cmd != "fas" || st.fasSupported) && (it.cmd != "ramclean" || st.ramclean) }
+        }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -1701,7 +1704,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // PAINEL SECUNDÁRIO: RAM CLEAN (ANTES DO PRELOAD)
+            // PAINEL SECUNDÁRIO: RAM CLEAN (SÓ MANUAL DESDE O MÓDULO 2.12.0)
             TacticalPanel(
                 modifier = Modifier.fillMaxWidth(),
                 accentColor = FusaoPalette.BioEmerald,
@@ -1709,11 +1712,11 @@ class MainActivity : ComponentActivity() {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     HudSectionHeader(
                         title = "Limpeza de RAM",
-                        subtitle = "Libera memória antes do pré-carregamento",
+                        subtitle = "Só manual, fora do jogo: ao entrar travava o carregamento",
                         accentColor = FusaoPalette.BioEmerald,
                         trailing = {
                             TelemetryPill(
-                                text = if (state.status.ramclean) "LIGADO" else "DESLIGADO",
+                                text = if (state.status.ramclean) "LIGADO NO JOGO" else "MANUAL",
                                 color = if (state.status.ramclean) FusaoPalette.BioEmerald else FusaoPalette.TextMuted,
                                 filled = state.status.ramclean,
                             )
@@ -2076,13 +2079,14 @@ class MainActivity : ComponentActivity() {
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                         if (state.status.fas && state.status.fasSupported) {
-                                            // toque avança o limite de fps do jogo: AUTO -> 30 -> 40 -> ... -> 144 -> AUTO
+                                            // toque avança o limite de fps do jogo: AUTO -> 30 -> 40 -> ... -> 144 -> OFF -> AUTO
                                             val fasCap = fasCapOf(state.fasTargets[pkg])
                                             val isFasBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "fas_target:$pkg"
+                                            val fasOff = fasCap == FAS_CAP_OFF
                                             TelemetryPill(
-                                                text = if (isFasBusy) "FAS · …" else "FAS · ${fasCap?.let { "$it FPS" } ?: "AUTO"}",
-                                                color = FusaoPalette.MintPulse,
-                                                filled = fasCap != null,
+                                                text = if (isFasBusy) "FAS · …" else "FAS · ${fasCapLabel(fasCap)}",
+                                                color = if (fasOff) FusaoPalette.TextMuted else FusaoPalette.MintPulse,
+                                                filled = fasCap != null && !fasOff,
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(6.dp))
                                                     .clickable(enabled = state.rooted && !busy) { vm.cycleFasCap(pkg) },

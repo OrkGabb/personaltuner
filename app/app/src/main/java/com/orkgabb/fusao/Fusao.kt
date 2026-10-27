@@ -266,9 +266,12 @@ data class FusaoStatus(
     val activeFlagsCount: Int
         get() = listOf(fusaod, framework, perf, dnd, preload, ramclean, gos, fas && fasSupported).count { it }
 
-    /** Total de chaves que este módulo expõe (o FAS só existe a partir do 2.11.0). */
+    /**
+     * Total de chaves na aba Flags: 6 fixas + o FAS (módulo >= 2.11.0) + o ramclean só enquanto ligado (saiu do
+     * game-enter no módulo 2.12.0; a chave aparece só para desligar a flag de um módulo antigo).
+     */
     val flagsTotal: Int
-        get() = if (fasSupported) 8 else 7
+        get() = 6 + (if (fasSupported) 1 else 0) + (if (ramclean) 1 else 0)
 
     val runningDaemonsCount: Int
         get() = listOf(fusaodRunning, watchRunning, observerRunning).count { it }
@@ -549,22 +552,51 @@ val FAS_MODES = listOf("powersave", "balance", "performance", "fast")
 /** Escada automática do módulo (fas.sh FAS_AUTO): o fas-rs mira o primeiro alvo >= fps atual - 3. */
 val FAS_AUTO_STEPS = listOf(30, 45, 60, 90, 120)
 
-/** Limites de fps que o app oferece por jogo; null = automático. */
-val FAS_CAP_PRESETS: List<Int?> = listOf(null, 30, 40, 45, 60, 90, 120, 144)
+/** Jogo fora do FAS (`fusao fas target <pkg> off`, módulo >= 2.12.0): a CPU fica com o perfil. */
+const val FAS_CAP_OFF = 0
 
-/** Lista do fas-rs para um jogo travado em [cap]: os degraus da escada abaixo dele + o próprio limite. */
-fun fasTargetsForCap(cap: Int?): String =
-    if (cap == null) "auto" else (FAS_AUTO_STEPS.filter { it < cap } + cap).joinToString(",")
+/** Limites de fps que o app oferece por jogo; null = automático, [FAS_CAP_OFF] = fora do FAS. */
+val FAS_CAP_PRESETS: List<Int?> = listOf(null, 30, 40, 45, 60, 90, 120, 144, FAS_CAP_OFF)
 
-/** Limite que uma lista representa: null quando é a escada automática. */
-fun fasCapOf(targets: List<Int>?): Int? =
-    if (targets == null || targets.isEmpty() || targets == FAS_AUTO_STEPS) null else targets.last()
+/**
+ * Lista do fas-rs para um jogo travado em [cap]: só o próprio limite. A escada abaixo dele (30,45,60) era uma
+ * catraca: depois de 2 s abaixo do limite o fas-rs desce para o degrau de baixo e freia a CPU nele, e o fps não
+ * volta. Com um alvo só, abaixo dele - 10 o fas-rs solta a CPU em vez de descer.
+ */
+fun fasTargetsForCap(cap: Int?): String = when (cap) {
+    null -> "auto"
+    FAS_CAP_OFF -> "off"
+    else -> cap.toString()
+}
 
-/** `"pkg" = [30, 45, 60]` (saída de `fusao fas list`/`gen`) -> pkg -> [30, 45, 60]. */
+/** Limite que uma lista representa: null = escada automática, [FAS_CAP_OFF] = lista vazia (fora do FAS). */
+fun fasCapOf(targets: List<Int>?): Int? = when {
+    targets == null || targets == FAS_AUTO_STEPS -> null
+    targets.isEmpty() -> FAS_CAP_OFF
+    else -> targets.last()
+}
+
+/** Texto do limite na aba Jogos: AUTO, OFF ou "60 FPS". */
+fun fasCapLabel(cap: Int?): String = when (cap) {
+    null -> "AUTO"
+    FAS_CAP_OFF -> "OFF"
+    else -> "$cap FPS"
+}
+
+/**
+ * `"pkg" = [30, 45, 60]` (saída de `fusao fas list`/`gen`) -> pkg -> [30, 45, 60]; `# "pkg" = off` (jogo fora do
+ * FAS, comentado na lista do fas-rs) -> pkg -> lista vazia.
+ */
 fun parseFasToml(lines: List<String>): Map<String, List<Int>> {
     val rx = Regex("""^\s*"([A-Za-z0-9_.]+)"\s*=\s*\[([0-9,\s]*)]""")
+    val rxOff = Regex("""^\s*#\s*"([A-Za-z0-9_.]+)"\s*=\s*off\s*$""")
     val out = LinkedHashMap<String, List<Int>>()
     for (line in lines) {
+        val off = rxOff.find(line)
+        if (off != null) {
+            out[off.groupValues[1]] = emptyList()
+            continue
+        }
         val m = rx.find(line) ?: continue
         out[m.groupValues[1]] = m.groupValues[2].split(",").mapNotNull { it.trim().toIntOrNull() }
     }
