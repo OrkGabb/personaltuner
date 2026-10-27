@@ -62,8 +62,9 @@ O FAS está adotado e provado no Bleach (gráficos mínimos, limite 45): bateria
    com o mesmo fps. Sem a trava, o fas-rs jogava o A78 a 2,4 GHz por 0 fps.
 2. **FAS em outros jogos**: `tools/kernlab/experiments/cpu-controle-nte.json` e `cpu-controle-roblox.json`
    (FUSAO × teto solto × fas-rs, regra de decisão declarada no JSON). Rodar nos gráficos que o dono usa;
-   bateria ≥ 30%, sem carregador, ~16-20 min cada. Se um jogo piorar, tirar só ele: `fusao fas target`
-   não desliga por jogo — precisa de opção nova ou tirar da gamelist.
+   bateria ≥ 30%, sem carregador, ~16-20 min cada. Se um jogo piorar, tirar só ele: **feito no 2.12.0**,
+   `fusao fas target <pkg> off` (app: FAS · OFF); o Roblox já sai fora do FAS uma vez no boot. O
+   `cpu-controle-roblox.json` continua sendo a prova (FUSAO × p4_2400 × fasrs) que falta.
 3. **Separar a taxa de tela do `framework`**: hoje ligar o framework traz junto a trava de 60 Hz do
    battery (o "agarrado") e 120 Hz fixo em jogo. Opção: o framework aplicar só as tríades (jobs/standby)
    e deixar a tela no stock 120/60. Medir antes no kernlab (scroll e jogo, pbat) — as tríades nunca foram
