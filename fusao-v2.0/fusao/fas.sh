@@ -2,10 +2,15 @@
 # fusao-fas.sh — FAS (fas-rs, fork M54: tools/fas-rs-m54) como dono da CPU na sessão de jogo.
 #   enter <pkg>  gera a lista do fas-rs a partir da gamelist (SSOT) e liga o daemon
 #   exit         desliga; o tune.sh do exit é quem devolve a CPU ao perfil (o fas-rs sai com min=max)
-#   gen | list | status | mode <powersave|balance|performance|fast> | target <pkg> <auto|30,45,60>
+#   gen | list | status | mode <powersave|balance|performance|fast> | target <pkg> <auto|off|30,45,60>
 # Medido (kernlab 2026-10-18, Bleach nos gráficos mínimos, limite 45, 6 blocos): bateria -10,4%,
 # fps -1,3%, frames >= 33 ms 0,13% -> 0,79%. Alvo errado (acima do que o jogo alcança) = CPU no
 # máximo à toa; por isso o automático é uma escada e não um número.
+# A escada é uma catraca: o fas-rs mira o primeiro alvo >= fps_long - 3 e freia a CPU até o alvo, então
+# depois de 2 s abaixo de 48 fps (cena pesada, carregamento) o alvo desce p/ 45 e o controle segura o fps
+# perto de 45: ele não passa de 48 p/ o alvo voltar a 60 (fonte upstream 09ba876, buffer/calculate.rs +
+# policy/controll.rs; NTE 2.11.5: 60 -> 45 -> 30). Jogo sem limite de fps fixo (Roblox) fica no degrau de
+# baixo: alvo off = fora do FAS, a CPU fica com o perfil. Alvo único (60) não desce: abaixo de 50 solta a CPU.
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -28,19 +33,20 @@ fas_mode() {
   case "$_m" in powersave|balance|performance|fast) echo "$_m";; *) echo "balance";; esac
 }
 
-# fas_targets_for <pkg> — "30, 45, 60" do override (fas.targets: pkg=30,45,60) ou o automático
+# fas_targets_for <pkg> — "30, 45, 60" do override (fas.targets: pkg=30,45,60), "off" ou o automático
 fas_targets_for() {
   local _t
   _t=$(awk -F= -v p="$1" '$1 == p { v = $2 } END { print v }' "$FAS_TARGETS" 2>/dev/null)
   case "$_t" in
     ''|auto) echo "$FAS_AUTO";;
+    off) echo off;;
     *) echo "$_t" | tr -d ' ' | sed 's/,/, /g';;
   esac
 }
 
-# valid_targets <lista> — só "auto" ou inteiros 10..240 crescentes separados por vírgula
+# valid_targets <lista> — só "auto", "off" ou inteiros 10..240 crescentes separados por vírgula
 valid_targets() {
-  [ "$1" = auto ] && return 0
+  case "$1" in auto|off) return 0;; esac
   echo "$1" | grep -Eq '^[0-9]{2,3}(,[0-9]{2,3})*$' || return 1
   echo "$1" | tr ',' '\n' | awk 'NR > 1 && $1 <= prev { bad = 1 } $1 < 10 || $1 > 240 { bad = 1 } { prev = $1 } END { exit bad }'
 }
@@ -49,7 +55,7 @@ valid_targets() {
 fas_toml() {
   {
     echo "# gerado pelo FUSAO (fas.sh) a partir de gamelist.txt — não editar à mão;"
-    echo "# alvo por jogo: fusao fas target <pkg> <auto|30,45,60>"
+    echo "# alvo por jogo: fusao fas target <pkg> <auto|off|30,45,60>; off = linha comentada (fora do FAS)"
     echo "[config]"
     echo "keep_std = false"
     echo "scene_game_list = false"
@@ -57,6 +63,8 @@ fas_toml() {
     echo "[game_list]"
     # um awk só: no aparelho a gamelist tem 533 jogos e um subshell + awk por jogo levava > 30 s
     # dentro do game-enter (2026-10-18). Override por jogo: fas.targets (pkg=30,45,60; o último vale).
+    # off: o jogo sai da lista (o fas-rs só controla o que está nela; keep_std = false) e fica comentado,
+    # para o app ler o estado em `fusao fas list`.
     awk -v tf="$FAS_TARGETS" -v auto="$FAS_AUTO" '
       BEGIN {
         while ((getline line < tf) > 0) {
@@ -69,6 +77,7 @@ fas_toml() {
         if ($0 == "" || $0 ~ /^#/) next
         v = (($0 in t) && t[$0] != "auto") ? t[$0] : auto
         gsub(/ /, "", v)
+        if (v == "off") { printf "# \"%s\" = off\n", $0; next }
         gsub(/,/, ", ", v)
         printf "\"%s\" = [%s]\n", $0, v
       }' "$M54_DIR/gamelist.txt"
@@ -105,6 +114,11 @@ fas_start() {
   local _bin _pkg="$1"
   [ -f "$M54_DIR/fas.enabled" ] || return 1
   [ -f "$M54_DIR/disable" ] && return 1
+  # fora do FAS: nem sobe o daemon (o watch já parou o de um jogo anterior antes de aplicar o perfil)
+  if fas_game_off "$_pkg"; then
+    log "fas: fora do FAS [$_pkg] (alvo off: a CPU fica com o perfil)"
+    return 1
+  fi
   _bin=$(fas_bin) || { log "fas: binário fas-rs ausente"; return 1; }
   fas_publish
   if [ -n "$(fas_pids)" ]; then
@@ -181,7 +195,7 @@ case "$1" in
     ;;
   target)
     if [ -z "$2" ] || ! valid_targets "$3"; then
-      echo "uso: fas.sh target <pkg> <auto|30,45,60> (crescente, 10..240)" >&2
+      echo "uso: fas.sh target <pkg> <auto|off|30,45,60> (crescente, 10..240)" >&2
       exit 1
     fi
     { awk -F= -v p="$2" '$1 != p' "$FAS_TARGETS" 2>/dev/null

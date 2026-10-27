@@ -12,6 +12,28 @@ DIR=$(dirname "$0")
 STOCK_F="$M54_DIR/framework.stock"
 MODE="${1:-auto}"
 
+# Tríades do FUSAO por perfil (activity_manager / job_scheduler / app_standby).
+TRIAD_AM_GAME="service_restart_duration=86400000,service_reset_run_duration=120000,background_settle_time=10000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
+TRIAD_JS_GAME="max_job_count_active=1,min_ready_jobs_count=32,bg_normal_job_count=0,bg_moderate_job_count=0,bg_low_job_count=0,enable_adaptive_scheduling=false,min_ready_cpu_only_jobs_count=32,min_ready_non_active_jobs_count=32,heavy_use_factor=0.95,moderate_use_factor=0.8"
+TRIAD_SB_GAME="strong_usage_duration=10000,system_interaction_duration=5000,initial_foreground_service_start_duration=60000,prediction_timeout=60000,sync_adapter_duration=10000"
+TRIAD_AM_BATTERY="service_restart_duration=1800000,service_reset_run_duration=60000,background_settle_time=15000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
+TRIAD_JS_BATTERY="max_job_count_active=2,min_ready_jobs_count=8,bg_normal_job_count=1,bg_moderate_job_count=1,enable_adaptive_scheduling=true,min_ready_cpu_only_jobs_count=8,min_ready_non_active_jobs_count=8,heavy_use_factor=0.85,moderate_use_factor=0.7"
+TRIAD_SB_BATTERY="strong_usage_duration=30000,system_interaction_duration=10000,initial_foreground_service_start_duration=120000,prediction_timeout=300000,sync_adapter_duration=30000"
+TRIAD_AM_BALANCED="service_restart_duration=3600000,service_reset_run_duration=60000,background_settle_time=30000,power_check_max_cpu_1=15,power_check_max_cpu_2=25,content_provider_retain_time=15000"
+TRIAD_JS_BALANCED="max_job_count_active=4,min_ready_jobs_count=16,bg_normal_job_count=2,bg_moderate_job_count=1,enable_adaptive_scheduling=true,min_ready_cpu_only_jobs_count=16,min_ready_non_active_jobs_count=16,heavy_use_factor=0.9,moderate_use_factor=0.75"
+TRIAD_SB_BALANCED="strong_usage_duration=20000,system_interaction_duration=10000,initial_foreground_service_start_duration=90000,prediction_timeout=180000,sync_adapter_duration=20000"
+
+# own_triad <valor> — é uma tríade do próprio FUSAO. Um framework.stock capturado com o FUSAO já aplicado
+# (versão antiga por cima, status.md "framework.stock contaminado") guardava ESTES como padrão da ROM e o
+# framework off não voltava ao padrão: no snapshot e no restore eles contam como "sem valor" (= delete).
+own_triad() {
+  case "$1" in
+    "$TRIAD_AM_GAME"|"$TRIAD_JS_GAME"|"$TRIAD_SB_GAME"|"$TRIAD_AM_BATTERY"|"$TRIAD_JS_BATTERY"|"$TRIAD_SB_BATTERY"|\
+    "$TRIAD_AM_BALANCED"|"$TRIAD_JS_BALANCED"|"$TRIAD_SB_BALANCED") return 0;;
+  esac
+  return 1
+}
+
 # --- backend settings/device_config (real ou fake) ---
 sget() {
   if [ -n "$FAKE_SETTINGS_DIR" ]; then
@@ -58,12 +80,20 @@ dget() {
   fi
 }
 
+# triad_stock <chave> — o valor atual da chave global, "null" se for tríade do próprio FUSAO
+triad_stock() {
+  local _v
+  _v=$(sget global "$1")
+  own_triad "$_v" && _v="null"
+  echo "$_v"
+}
+
 snapshot_stock() {
   [ -s "$STOCK_F" ] && return 0
   {
-    echo "activity_manager_constants=$(sget global activity_manager_constants)"
-    echo "job_scheduler_constants=$(sget global job_scheduler_constants)"
-    echo "app_standby_constants=$(sget global app_standby_constants)"
+    echo "activity_manager_constants=$(triad_stock activity_manager_constants)"
+    echo "job_scheduler_constants=$(triad_stock job_scheduler_constants)"
+    echo "app_standby_constants=$(triad_stock app_standby_constants)"
     echo "peak_refresh_rate=$(sget system peak_refresh_rate)"
     echo "min_refresh_rate=$(sget system min_refresh_rate)"
     echo "user_refresh_rate=$(sget system user_refresh_rate)"
@@ -74,11 +104,11 @@ snapshot_stock() {
 restore_stock() {
   [ -s "$STOCK_F" ] || return 0
   _v=$(grep "^activity_manager_constants=" "$STOCK_F" 2>/dev/null | cut -d= -f2-)
-  if [ -z "$_v" ] || [ "$_v" = "null" ]; then sdel global activity_manager_constants; else sput global activity_manager_constants "$_v"; fi
+  if [ -z "$_v" ] || [ "$_v" = "null" ] || own_triad "$_v"; then sdel global activity_manager_constants; else sput global activity_manager_constants "$_v"; fi
   _v=$(grep "^job_scheduler_constants=" "$STOCK_F" 2>/dev/null | cut -d= -f2-)
-  if [ -z "$_v" ] || [ "$_v" = "null" ]; then sdel global job_scheduler_constants; else sput global job_scheduler_constants "$_v"; fi
+  if [ -z "$_v" ] || [ "$_v" = "null" ] || own_triad "$_v"; then sdel global job_scheduler_constants; else sput global job_scheduler_constants "$_v"; fi
   _v=$(grep "^app_standby_constants=" "$STOCK_F" 2>/dev/null | cut -d= -f2-)
-  if [ -z "$_v" ] || [ "$_v" = "null" ]; then sdel global app_standby_constants; else sput global app_standby_constants "$_v"; fi
+  if [ -z "$_v" ] || [ "$_v" = "null" ] || own_triad "$_v"; then sdel global app_standby_constants; else sput global app_standby_constants "$_v"; fi
   _v=$(grep "^peak_refresh_rate=" "$STOCK_F" 2>/dev/null | cut -d= -f2-)
   if [ -z "$_v" ] || [ "$_v" = "null" ]; then sdel system peak_refresh_rate; else sput system peak_refresh_rate "$_v"; fi
   _v=$(grep "^min_refresh_rate=" "$STOCK_F" 2>/dev/null | cut -d= -f2-)
@@ -94,18 +124,18 @@ apply_triad() {
   # apply_triad <game|balanced|battery>
   case "$1" in
     game)
-      sput global activity_manager_constants "service_restart_duration=86400000,service_reset_run_duration=120000,background_settle_time=10000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
-      sput global job_scheduler_constants "max_job_count_active=1,min_ready_jobs_count=32,bg_normal_job_count=0,bg_moderate_job_count=0,bg_low_job_count=0,enable_adaptive_scheduling=false,min_ready_cpu_only_jobs_count=32,min_ready_non_active_jobs_count=32,heavy_use_factor=0.95,moderate_use_factor=0.8"
-      sput global app_standby_constants "strong_usage_duration=10000,system_interaction_duration=5000,initial_foreground_service_start_duration=60000,prediction_timeout=60000,sync_adapter_duration=10000"
+      sput global activity_manager_constants "$TRIAD_AM_GAME"
+      sput global job_scheduler_constants "$TRIAD_JS_GAME"
+      sput global app_standby_constants "$TRIAD_SB_GAME"
       sput system peak_refresh_rate "120.0"
       sput system min_refresh_rate "120.0"
       # Inteiro válido '0' (sem override forçado de FPS no GameManagerService)
       dput game_overlay "game_default_frame_rate" "0"
       ;;
     battery)
-      sput global activity_manager_constants "service_restart_duration=1800000,service_reset_run_duration=60000,background_settle_time=15000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
-      sput global job_scheduler_constants "max_job_count_active=2,min_ready_jobs_count=8,bg_normal_job_count=1,bg_moderate_job_count=1,enable_adaptive_scheduling=true,min_ready_cpu_only_jobs_count=8,min_ready_non_active_jobs_count=8,heavy_use_factor=0.85,moderate_use_factor=0.7"
-      sput global app_standby_constants "strong_usage_duration=30000,system_interaction_duration=10000,initial_foreground_service_start_duration=120000,prediction_timeout=300000,sync_adapter_duration=30000"
+      sput global activity_manager_constants "$TRIAD_AM_BATTERY"
+      sput global job_scheduler_constants "$TRIAD_JS_BATTERY"
+      sput global app_standby_constants "$TRIAD_SB_BATTERY"
       # Adaptativo 120/60, não 60 travado (dono, 2026-10-19: "detesto 60 Hz", fluidez vale mais que a
       # economia). Medido no kernlab: 60/60 = metade dos frames e ~6x mais travadas >= 33 ms no scroll.
       sput system peak_refresh_rate "120.0"
@@ -113,9 +143,9 @@ apply_triad() {
       dput game_overlay "game_default_frame_rate" "0"
       ;;
     *) # balanced
-      sput global activity_manager_constants "service_restart_duration=3600000,service_reset_run_duration=60000,background_settle_time=30000,power_check_max_cpu_1=15,power_check_max_cpu_2=25,content_provider_retain_time=15000"
-      sput global job_scheduler_constants "max_job_count_active=4,min_ready_jobs_count=16,bg_normal_job_count=2,bg_moderate_job_count=1,enable_adaptive_scheduling=true,min_ready_cpu_only_jobs_count=16,min_ready_non_active_jobs_count=16,heavy_use_factor=0.9,moderate_use_factor=0.75"
-      sput global app_standby_constants "strong_usage_duration=20000,system_interaction_duration=10000,initial_foreground_service_start_duration=90000,prediction_timeout=180000,sync_adapter_duration=20000"
+      sput global activity_manager_constants "$TRIAD_AM_BALANCED"
+      sput global job_scheduler_constants "$TRIAD_JS_BALANCED"
+      sput global app_standby_constants "$TRIAD_SB_BALANCED"
       sput system peak_refresh_rate "120.0"
       sput system min_refresh_rate "60.0"
       dput game_overlay "game_default_frame_rate" "0"

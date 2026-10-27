@@ -2,7 +2,7 @@
 # fusao CLI — controle único do módulo.
 # Uso: fusao profile [battery|balanced|game] | fusao framework [on|off|game|balanced|battery|idle]
 #      fusao perf [on|off] | fusao fusaod [on|off] | fusao dnd [on|off]
-#      fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|30,45,60>|gen|list]
+#      fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|off|30,45,60>|gen|list]
 #      fusao preload [on|off|prepare [pkg|all]|now [pkg|all]|record [pkg] [s]|status]
 #      fusao display [show|720p|810p|900p|reset]
 #      fusao gamelist [list|add <pkg>|del <pkg>|count|eligible|set <pkg>...]
@@ -397,8 +397,11 @@ case "$cmd" in
         touch "$M54_DIR/fas.enabled"
         sync_fusaod_for_profile "${_prof:-balanced}"
         if [ -n "$_ga" ] && [ -f "$_fas" ]; then
-          M54_DIR="$M54_DIR" sh "$_fas" enter "$_ga" >/dev/null 2>&1
-          echo "fas=on (jogo ativo: ligado agora)"
+          if M54_DIR="$M54_DIR" sh "$_fas" enter "$_ga" >/dev/null 2>&1; then
+            echo "fas=on (jogo ativo: ligado agora)"
+          else
+            echo "fas=on (jogo ativo fora do FAS: alvo off, ou sem binário)"
+          fi
         else
           echo "fas=on (armado: liga no próximo game-enter)"
         fi
@@ -413,14 +416,29 @@ case "$cmd" in
         sync_fusaod_for_profile "${_prof:-balanced}"
         echo "fas=off"
         ;;
-      mode|target|gen|list)
+      mode|gen|list)
         M54_DIR="$M54_DIR" sh "$_fas" "$arg" "$3" "$4"
+        ;;
+      target)
+        M54_DIR="$M54_DIR" sh "$_fas" target "$3" "$4" || exit 1
+        # jogo em foco: off sai do FAS na hora e o perfil volta a escrever a CPU por último (o fas-rs sai com
+        # min=max cravados); outro alvo põe o jogo no FAS (o fas.sh já republicou a lista p/ um fas-rs vivo)
+        if [ -n "$_ga" ] && [ "$3" = "$_ga" ] && [ -f "$M54_DIR/fas.enabled" ] && [ -f "$_fas" ]; then
+          if [ "$4" = off ]; then
+            M54_DIR="$M54_DIR" sh "$_fas" exit >/dev/null 2>&1
+            if [ -f "$M54_DIR/tune.sh" ]; then
+              M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/tune.sh" auto >/dev/null 2>&1
+            fi
+          else
+            M54_DIR="$M54_DIR" sh "$_fas" enter "$_ga" >/dev/null 2>&1 || :
+          fi
+        fi
         ;;
       status|"")
         M54_DIR="$M54_DIR" sh "$_fas" status
         ;;
       *)
-        echo "uso: fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|30,45,60>|gen]"
+        echo "uso: fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|off|30,45,60>|gen|list]"
         exit 1
         ;;
     esac;;
@@ -615,7 +633,9 @@ case "$cmd" in
     esac;;
   ramclean)
     case "$arg" in
-      on) touch "$M54_DIR/ramclean.enabled"; echo "ramclean=on";;
+      # 2.12.0: sem gancho no game-enter (drop_caches no launch faz o jogo reler do disco o que estava em RAM e
+      # a compactação síncrona trava junto); a limpeza fica só manual, fora do jogo
+      on) rm -f "$M54_DIR/ramclean.enabled"; echo "ramclean=off (saiu do game-enter na 2.12.0: trava o carregamento; use fusao ramclean now)";;
       off) rm -f "$M54_DIR/ramclean.enabled"; echo "ramclean=off";;
       now)
         _rf0=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
@@ -629,7 +649,7 @@ case "$cmd" in
         echo "ramclean ok free=${_rf0}->${_rf1} avail=${_ra1} rc=${_rc1}/${_rc2}"
         ;;
       status)
-        [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off (game-enter não limpa)"
+        [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off (só manual: game-enter não limpa)"
         echo "--- último ramclean no log ---"
         { grep "ramclean ok" "$M54_DIR/fusao.log.1" 2>/dev/null; grep "ramclean ok" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 5
         ;;

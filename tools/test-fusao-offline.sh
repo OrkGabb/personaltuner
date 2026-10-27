@@ -74,6 +74,27 @@ grep -q "max_job_count_active=4" "$FAKE/settings/global__job_scheduler_constants
 [ "$(cat "$FAKE/settings/system__min_refresh_rate" 2>/dev/null)" = "60.0" ] && [ "$(cat "$FAKE/settings/system__peak_refresh_rate" 2>/dev/null)" = "120.0" ] && ok "framework balanced adaptive-hz" || bad "framework balanced adaptive-hz"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" idle
 
+# 2.12.0: framework.stock contaminado (capturado com as tríades do FUSAO já aplicadas): a tríade própria não é
+# "padrão da ROM". Snapshot novo por cima dela grava null; stock antigo contaminado não a devolve no idle; valor
+# de ROM de verdade volta (controle). Valores literais de propósito: o teste não lê o framework.sh.
+_am_game="service_restart_duration=86400000,service_reset_run_duration=120000,background_settle_time=10000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
+_js_bal="max_job_count_active=4,min_ready_jobs_count=16,bg_normal_job_count=2,bg_moderate_job_count=1,enable_adaptive_scheduling=true,min_ready_cpu_only_jobs_count=16,min_ready_non_active_jobs_count=16,heavy_use_factor=0.9,moderate_use_factor=0.75"
+cp "$FAKE/fusao/framework.stock" "$FAKE/framework.stock.bk" 2>/dev/null
+rm -f "$FAKE/fusao/framework.stock"
+printf '%s' "$_am_game" > "$FAKE/settings/global__activity_manager_constants"
+printf '%s' "rom_job=1" > "$FAKE/settings/global__job_scheduler_constants"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" game
+grep -qx "activity_manager_constants=null" "$FAKE/fusao/framework.stock" && ok "framework snapshot: tríade própria = null" || bad "framework snapshot: tríade própria = null"
+grep -qx "job_scheduler_constants=rom_job=1" "$FAKE/fusao/framework.stock" && ok "framework snapshot: valor da ROM fica" || bad "framework snapshot: valor da ROM fica"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" idle
+[ ! -f "$FAKE/settings/global__activity_manager_constants" ] && ok "framework idle: tríade própria apagada" || bad "framework idle: tríade própria apagada"
+[ "$(cat "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null)" = "rom_job=1" ] && ok "framework idle: valor da ROM volta (controle)" || bad "framework idle: valor da ROM volta (controle)"
+{ echo "activity_manager_constants=null"; echo "job_scheduler_constants=$_js_bal"; echo "app_standby_constants=null"; } > "$FAKE/fusao/framework.stock"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" idle
+[ ! -f "$FAKE/settings/global__job_scheduler_constants" ] && ok "framework idle: stock antigo contaminado não volta" || bad "framework idle: stock antigo contaminado não volta"
+rm -f "$FAKE/fusao/framework.stock"
+[ -f "$FAKE/framework.stock.bk" ] && mv -f "$FAKE/framework.stock.bk" "$FAKE/fusao/framework.stock"
+
 # 4) perf io-only, exit e proteção NTE (sem cgroup.procs global)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/perf.sh" io-only && ok "perf io-only" || bad "perf io-only"
 grep -q "perf: io aplicado" "$FAKE/fusao/fusao.log" && ok "perf log" || bad "perf log"
@@ -189,7 +210,8 @@ grep -q "profile_verify=9/9" "$FAKE/prof_game.out" && ok "profile game verify 9/
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "1056000" ] && ok "tune game p0_min" || bad "tune game p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "960000" ] && ok "tune game p4_min" || bad "tune game p4_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq")" = "2002000" ] && ok "tune game p0_max" || bad "tune game p0_max"
-[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune game p4_max" || bad "tune game p4_max"
+# 2.12.0: teto do P4 no game = máximo físico 2400000 (o 1824000 era o falso "teto rígido")
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "2400000" ] && ok "tune game p4_max" || bad "tune game p4_max"
 # 2.11.3: game sem piso de GPU (Hyper da Samsung reescreve o gpu_min_clock a cada troca de app)
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_min_clock")" = "221000" ] && ok "tune game gpu_min" || bad "tune game gpu_min"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "949000" ] && ok "tune game gpu_max" || bad "tune game gpu_max"
@@ -211,6 +233,8 @@ grep -q "profile_verify=9/9" "$FAKE/prof_bal.out" && ok "profile balanced verify
 # 858000 não existe na tabela do Mali-G68; o degrau real logo abaixo do máximo (949000) é 845000
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "845000" ] && ok "tune balanced gpu_max" || bad "tune balanced gpu_max"
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "421000" ] && ok "tune balanced mif_min" || bad "tune balanced mif_min"
+# o balanced segue com o P4 em 1824000 (eficiência do perfil casual); a descida 2400000 -> 1824000 tem de colar
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune balanced p4_max" || bad "tune balanced p4_max"
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "120" ] && ok "tune balanced swap" || bad "tune balanced swap"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "100" ] && ok "tune balanced pressure" || bad "tune balanced pressure"
 [ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "128" ] && ok "tune balanced readahead fica no stock" || bad "tune balanced readahead fica no stock"
@@ -235,7 +259,7 @@ GMAXN="$FAKE/sys/kernel/gpu/gpu_max_clock"
 P4MAXN="$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
 echo "com.roblox.client" > "$GA"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" auto >/dev/null 2>&1
-if [ "$(cat "$GMAXN")" = "949000" ] && [ "$(cat "$P4MAXN")" = "1824000" ] && \
+if [ "$(cat "$GMAXN")" = "949000" ] && [ "$(cat "$P4MAXN")" = "2400000" ] && \
    [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "1152000" ]; then
   ok "battery+jogo: hook aplica os tetos do game"
 else
@@ -249,7 +273,7 @@ grep -q "^profile_state=applied$" "$FAKE/st_bat_game.out" && ok "status em jogo 
 # escolher battery COM o jogo aberto aplica game (o CLI aplicava "$arg" direto = battery)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced >/dev/null 2>&1
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile battery > "$FAKE/prof_bat_game.out" 2>&1
-grep -q "^profile_effective=game$" "$FAKE/prof_bat_game.out" && [ "$(cat "$P4MAXN")" = "1824000" ] && \
+grep -q "^profile_effective=game$" "$FAKE/prof_bat_game.out" && [ "$(cat "$P4MAXN")" = "2400000" ] && \
   ok "CLI battery em jogo aplica game" || bad "CLI battery em jogo aplica game"
 # balanced + jogo = balanced (GPU max 845000)
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced > "$FAKE/prof_bal_game.out" 2>&1
@@ -706,6 +730,28 @@ touch "$FAKE/fusao/fas.enabled"; owns && ok "fas owns ligado" || bad "fas owns l
 touch "$FAKE/fusao/disable"; owns && bad "fas owns kill-switch" || ok "fas owns kill-switch"; rm -f "$FAKE/fusao/disable"
 ( FAS_BIN="$FAKE/bin/nao-existe"; export FAS_BIN; owns ) && bad "fas owns sem binario" || ok "fas owns sem binario"
 echo "com.fora.da.lista" > "$FAKE/fusao/game-active.txt"; owns && bad "fas owns jogo fora" || ok "fas owns jogo fora"
+# 2.12.0: alvo off = fora do FAS (a escada vira catraca no Roblox): sai da lista do fas-rs (comentado p/ o app),
+# o fas-rs nem sobe e o jogo volta a ter a CPU conferida; voltar p/ auto devolve o FAS (controle negativo)
+fas target com.roblox.client off | grep -Fq "com.roblox.client=off" && ok "fas target off" || bad "fas target off"
+_fl_off=$(fas list)
+echo "$_fl_off" | grep -Fxq '# "com.roblox.client" = off' && ok "fas off comentado na lista" || bad "fas off comentado na lista"
+echo "$_fl_off" | grep -Fq '"com.roblox.client" = [' && bad "fas off fora da lista" || ok "fas off fora da lista"
+echo "$_fl_off" | grep -Fq '"com.hottagames.nte" = [30, 45, 60, 90, 120]' && ok "fas off só no jogo dele" || bad "fas off só no jogo dele"
+echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
+owns && bad "fas owns jogo off" || ok "fas owns jogo off"
+: > "$FAKE/fusao/fusao.log"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" enter com.roblox.client && bad "fas enter jogo off rc" || ok "fas enter jogo off rc"
+grep -Fq "fas: fora do FAS [com.roblox.client]" "$FAKE/fusao/fusao.log" && ok "fas enter jogo off log" || bad "fas enter jogo off log"
+sleep 1
+pgrep -f "[f]as-rs run" >/dev/null && bad "fas enter jogo off não sobe o daemon" || ok "fas enter jogo off não sobe o daemon"
+fas on | grep -q "jogo ativo fora do FAS" && ok "fas on jogo off avisa" || bad "fas on jogo off avisa"
+pgrep -f "[f]as-rs run" >/dev/null && bad "fas on jogo off sem daemon" || ok "fas on jogo off sem daemon"
+# a última linha do pacote vale (como no awk do fas.sh), e off de outro pacote com o mesmo prefixo não conta
+printf 'com.roblox.client=off\ncom.roblox.client=60\ncom.roblox.client.vnggames=off\n' > "$FAKE/fusao/fas.targets"
+owns && ok "fas owns última linha vale" || bad "fas owns última linha vale"
+fas target com.roblox.client auto >/dev/null
+owns && ok "fas owns volta com auto (controle)" || bad "fas owns volta com auto (controle)"
+rm -f "$FAKE/fusao/fas.targets"
 
 # verify do tune com o FAS dono da CPU: o fas-rs crava min=max (768000); com FAS não é divergência,
 # sem FAS é (controle negativo no próprio teste)
@@ -729,6 +775,9 @@ vfy | grep -Eq "profile_mismatch=.*p4_max" && bad "fas verify pula CPU" || ok "f
 rm -f "$FAKE/fusao/fas.enabled"
 vfy | grep -Eq "profile_mismatch=.*p4_max" && ok "fas verify sem FAS confere CPU (controle)" || bad "fas verify sem FAS confere CPU (controle)"
 touch "$FAKE/fusao/fas.enabled"
+echo "com.roblox.client=off" > "$FAKE/fusao/fas.targets"
+vfy | grep -Eq "profile_mismatch=.*p4_max" && ok "fas verify jogo off confere CPU" || bad "fas verify jogo off confere CPU"
+rm -f "$FAKE/fusao/fas.targets"
 echo "balanced" > "$FAKE/fusao/profile"
 
 # CLI on/status/off com o fas-rs falso
@@ -756,8 +805,41 @@ awk '/watch: enter/ && !e {e=NR} e && /tune: apply/ && !t {t=NR} e && /fas: on/ 
 awk '/watch: exit/ && !x {x=NR} x && NR > x && /fas: off/ && !f {f=NR} x && NR > x && /tune: apply/ && !t {t=NR} END {exit !(f && t && f < t)}' "$FAKE/fusao/fusao.log" && ok "watch exit fas antes do tune" || bad "watch exit fas antes do tune"
 pgrep -f "[f]as-rs run" >/dev/null && bad "watch exit mata o daemon" || ok "watch exit mata o daemon"
 for _p in $(pgrep -f "[f]as-rs run"); do kill "$_p" 2>/dev/null; done
+# watch: jogo off vindo direto de outro jogo com o fas-rs vivo: o fas-rs sai ANTES do perfil e não volta
+echo "com.roblox.client=off" > "$FAKE/fusao/fas.targets"
+( nohup "$FAS_BIN" run "$FAKE/fusao/fas/games.toml" >/dev/null 2>&1 & )
+sleep 1
+: > "$FAKE/fusao/fusao.log"
+echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
+( OBSERVER_FAKE_ALIVE=1 M54_DIR="$FAKE/fusao" timeout 10 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1 ) &
+WPID=$!
+sleep 4
+pgrep -f "[f]as-rs run" >/dev/null && bad "watch enter jogo off para o fas-rs" || ok "watch enter jogo off para o fas-rs"
+: > "$FAKE/fusao/game-active.txt"
+wait "$WPID" 2>/dev/null
+awk '/watch: enter/ && !e {e=NR} e && /fas: off/ && !f {f=NR} e && /tune: apply/ && !t {t=NR} END {exit !(e && f && t && f < t)}' "$FAKE/fusao/fusao.log" && ok "watch enter jogo off: fas sai antes do tune" || bad "watch enter jogo off: fas sai antes do tune"
+grep -q "fas: on" "$FAKE/fusao/fusao.log" && bad "watch enter jogo off não liga o fas" || ok "watch enter jogo off não liga o fas"
+grep -Eq "watch: hooks.* fas( |$)" "$FAKE/fusao/fusao.log" && bad "watch enter jogo off sem hook fas" || ok "watch enter jogo off sem hook fas"
+for _p in $(pgrep -f "[f]as-rs run"); do kill "$_p" 2>/dev/null; done
+rm -f "$FAKE/fusao/fas.targets"
 unset FAS_BIN FAS_NODE FAS_USER_TOML
 rm -f "$FAKE/fusao/fas.enabled"
+
+# 2.12.0: ramclean saiu do game-enter (drop_caches + compact_memory no launch): nem a flag antiga no disco arma
+# nada, e o CLI não arma mais (a limpeza fica só manual, fusao ramclean now)
+touch "$FAKE/fusao/ramclean.enabled"
+: > "$FAKE/fusao/fusao.log"
+echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
+( OBSERVER_FAKE_ALIVE=1 M54_DIR="$FAKE/fusao" timeout 8 sh "$FAKE/fusao/watch.sh" >/dev/null 2>&1 ) &
+WPID=$!
+sleep 3
+: > "$FAKE/fusao/game-active.txt"
+wait "$WPID" 2>/dev/null
+grep -q "watch: hooks" "$FAKE/fusao/fusao.log" && ok "watch enter roda com a flag antiga" || bad "watch enter roda com a flag antiga"
+grep -q "ramclean" "$FAKE/fusao/fusao.log" && bad "watch enter sem ramclean" || ok "watch enter sem ramclean"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" ramclean on | grep -q "^ramclean=off" && [ ! -f "$FAKE/fusao/ramclean.enabled" ] && \
+  ok "ramclean on não arma o game-enter" || bad "ramclean on não arma o game-enter"
+rm -f "$FAKE/fusao/ramclean.enabled"
 
 # 17) observer.sh: sem libnativeloader visível (root reativado após boot completo) entra no mount
 # namespace do zygote64 antes do app_process; com a lib visível vai direto; nunca em laço.

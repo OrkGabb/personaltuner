@@ -5,8 +5,11 @@
 #   (não força framework.sh game no enter nem reseta para idle apagando o perfil no exit).
 # - Coordena fusaod serve (ativo somente em sessão de jogo nos perfis game/balanced,
 #   parado em idle/battery para evitar sobrescrita de sysfs e consumo em background).
-# - Protege o cache de preload recém-aquecido (lê preload.last p/ não rodar drop_caches=3
-#   por cima de um preload manual feito antes de abrir o jogo).
+# - Protege o cache de preload recém-aquecido (lê preload.last p/ não repetir WILLNEED por cima
+#   de um preload manual feito antes de abrir o jogo).
+# - 2.12.0: sem ramclean (sync + drop_caches + compact_memory) no game-enter: esvaziar o pagecache no
+#   launch faz o jogo reler do UFS o que já estava em RAM, e a compactação síncrona trava junto (doutrina
+#   do projeto: drop_caches = stutter, recusado). Limpeza só manual: fusao ramclean now.
 # - Confirma foco via current_focus antes de disparar fire_exit quando o processo do jogo
 #   continua vivo (elimina tempestade de bounce de foco no loading do NTE).
 DIR=$(dirname "$0")
@@ -201,34 +204,8 @@ fire_enter() {
     _skip_heavy=1
   elif recently_preloaded "$_pkg" "$_now_h"; then
     # Se o usuário acabou de aquecer o cache manualmente no app antes de abrir o jogo,
-    # NÃO rodar drop_caches=3 nem repetir WILLNEED por cima.
+    # NÃO repetir WILLNEED por cima.
     _skip_heavy=1
-  fi
-  if [ -f "$M54_DIR/ramclean.enabled" ]; then
-    if [ "$_skip_heavy" = 0 ]; then
-      _rf0=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
-      sync 2>/dev/null
-      # Usa drop_caches=1 (pagecache limpa não mapeada) quando o processo do jogo já
-      # está aberto há mais de 5s para evitar arrancar páginas ativas no meio do loading.
-      _dc_lv=3
-      _gpid=$(pidof "$_pkg" 2>/dev/null | awk '{print $1}')
-      if [ -n "$_gpid" ]; then
-        _pstart=$(proc_start_s "$_gpid")
-        if [ "$_pstart" != "-1" ] && [ $((_now_h - _pstart)) -gt 5 ]; then
-          _dc_lv=1
-        fi
-      fi
-      echo "$_dc_lv" > /proc/sys/vm/drop_caches 2>/dev/null
-      _rc1=$?
-      echo 1 > /proc/sys/vm/compact_memory 2>/dev/null
-      _rc2=$?
-      _rf1=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
-      _ra1=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
-      log "ramclean ok free=${_rf0}->${_rf1} avail=${_ra1} rc=${_rc1}/${_rc2} [${_pkg}]"
-      HOOKS="$HOOKS ramclean"
-    else
-      HOOKS="$HOOKS ramclean(warm)"
-    fi
   fi
   if [ -f "$M54_DIR/preload.enabled" ]; then
     if [ "$_skip_heavy" = 0 ]; then
@@ -247,9 +224,14 @@ fire_enter() {
       HOOKS="$HOOKS preload(warm)"
     fi
   fi
-  if [ "$_skip_heavy" = 0 ] && { [ -f "$M54_DIR/ramclean.enabled" ] || [ -f "$M54_DIR/preload.enabled" ]; }; then
+  if [ "$_skip_heavy" = 0 ] && [ -f "$M54_DIR/preload.enabled" ]; then
     LAST_HEAVY_PKG="$_pkg"
     LAST_HEAVY_TS="$_now_h"
+  fi
+  # Jogo fora do FAS (fas.targets: pkg=off) vindo direto de outro jogo: o fas-rs do anterior sai ANTES do
+  # perfil, que então escreve a CPU por último (mesma ordem do exit: o fas-rs sai com min=max cravados)
+  if fas_game_off "$_pkg" && [ -x "$(dirname "$0")/fas.sh" ]; then
+    M54_DIR="$M54_DIR" sh "$(dirname "$0")/fas.sh" exit 2>/dev/null
   fi
   # Aplica o perfil EM VIGOR (auto = effective_profile: battery + jogo da gamelist = game; balanced fica)
   if [ -f "$M54_DIR/framework.enabled" ] && [ -x "$(dirname "$0")/framework.sh" ]; then

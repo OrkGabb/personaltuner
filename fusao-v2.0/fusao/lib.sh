@@ -154,15 +154,30 @@ fas_bin() {
   return 1
 }
 
+# fas_game_off <pkg> — o jogo está fora do FAS (fas.targets: pkg=off; a última linha do pacote vale, como no
+# awk do fas.sh). Só builtins: o watch pergunta no game-enter e o verify do tune a cada conferência.
+fas_game_off() {
+  local _l _v=""
+  [ -n "$1" ] && [ -r "$M54_DIR/fas.targets" ] || return 1
+  while IFS= read -r _l || [ -n "$_l" ]; do
+    case "$_l" in "$1="*) _v=${_l#*=};; esac
+  done < "$M54_DIR/fas.targets"
+  _v=${_v%%[[:space:]]*}
+  [ "$_v" = off ]
+}
+
 # fas_owns_cpu — o FAS é o dono da CPU: ligado, sem kill-switch, binário presente e jogo da gamelist em
-# foco. SSOT p/ tune.sh (o verify não confere CPU) e watch/CLI (fusaod não sobe: ele escreve piso de CPU).
+# foco que não esteja fora do FAS (fas_game_off). SSOT p/ o verify do tune.sh (não confere CPU). O fusaod
+# segue barrado pela flag fas.enabled inteira (watch/CLI), também em jogo fora do FAS: ele escreve CPU.
 fas_owns_cpu() {
   local _g
   [ -f "$M54_DIR/fas.enabled" ] || return 1
   [ -f "$M54_DIR/disable" ] && return 1
   fas_bin >/dev/null || return 1
   _g=$(tr -d '[:space:]' < "$M54_DIR/game-active.txt" 2>/dev/null)
-  [ -n "$_g" ] && grep -Fxq "$_g" "$M54_DIR/gamelist.txt" 2>/dev/null
+  [ -n "$_g" ] && grep -Fxq "$_g" "$M54_DIR/gamelist.txt" 2>/dev/null || return 1
+  # jogo fora do FAS: quem escreve a CPU é o perfil, então o verify confere piso/teto de CPU
+  ! fas_game_off "$_g"
 }
 
 # effective_profile — o perfil EM VIGOR, SSOT p/ tune/framework/perf/watch/CLI (regra do dono, 2026-10-18):
