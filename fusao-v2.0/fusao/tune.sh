@@ -15,6 +15,7 @@
 # 2.10.0: read_ahead saiu dos perfis (nó errado: sda; no dm certo subir piora) e o battery não capa a GPU.
 # 2.11.0: com o FAS (fas-rs) dono da CPU em jogo, o verify não confere piso/teto de CPU (lib.sh fas_owns_cpu).
 # 2.11.3: game sem piso de GPU (o Hyper da Samsung reescreve o gpu_min_clock em toda troca de app).
+# 2.12.0: game sem teto no P4 (2400000 = cpuinfo_max): o 1824000 vinha do falso "teto rígido" (nodes-m54.md §10).
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -377,9 +378,12 @@ profile_targets() {
   load_domains
   case "$p" in
     game)
-      # P0 piso era 999000 (1104000 com jogo) e P4 889000 (999000): de outro SoC, agora degraus reais
+      # P0 piso era 999000 (1104000 com jogo) e P4 889000 (999000): de outro SoC, agora degraus reais.
+      # Teto do P4 = máximo físico 2400000: o 1824000 era o falso "teto rígido" (o game-tetos mediu 2400000
+      # segurando) e capava os A78 em 24% justo no perfil que é dono da CPU em jogo fora do FAS (Roblox). Quem
+      # baixa o teto com calor é o térmico da Samsung (QoS), e o energy_aware só sobe o clock com carga.
       r_p0min=1056000; r_p0max=2002000
-      r_p4min=960000;  r_p4max=1824000
+      r_p4min=960000;  r_p4max=2400000
       # GPU sem piso (= padrão da Samsung): o Hyper/EPIC é dono do gpu_min_clock (recurso GPUMinFreq,
       # padrão 0# = 221000) e o reescreve a cada abertura/troca de app (AMS_ACT_START/AMS_RESUME...).
       # Medido 2026-10-19: 351000 escrito -> abrir um app -> 455000 -> 351000 -> 221000 em ~2 s, sem o
@@ -405,7 +409,9 @@ profile_targets() {
       T_SWAP=160; T_VFS=150
       ;;
     *)
-      # teto da GPU era 858000 (não existe na tabela); 845000 é o degrau logo abaixo do máximo 949000
+      # teto da GPU era 858000 (não existe na tabela); 845000 é o degrau logo abaixo do máximo 949000.
+      # Teto do P4 1824000 aqui é escolha de eficiência do perfil casual (não limite de hardware): de 1824000 a
+      # 2400000 o A78 ganha 32% de capacidade por 2,2x a potência dinâmica (598 -> 1323, kernlab energy_table).
       r_p0min=533000; r_p0max=2002000
       r_p4min=533000; r_p4max=1824000
       r_gmin=221000;  r_gmax=845000

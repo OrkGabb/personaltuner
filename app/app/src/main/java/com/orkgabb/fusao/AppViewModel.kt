@@ -454,7 +454,7 @@ class FusaoViewModel : ViewModel() {
         }
     }
 
-    /** Toque no FAS de um jogo: avança para o próximo limite (AUTO -> 30 -> 40 -> ... -> 144 -> AUTO). */
+    /** Toque no FAS de um jogo: avança para o próximo limite (AUTO -> 30 -> 40 -> ... -> 144 -> OFF -> AUTO). */
     fun cycleFasCap(pkg: String) {
         if (!guardRoot()) return
         viewModelScope.launch {

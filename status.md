@@ -1274,3 +1274,65 @@ Decisão do dono depois do `cpu-controle-bleach` (bateria −10,4%, fps −1,3%,
   recriar); `shift_millis=1000` = o padrão inteiro trocava de lugar a cada 1 s. App 1.1.7/9: movimento só
   Parado / 1 / 5 / 15 min, mínimo 1 min, valor antigo sobe ao carregar. Aparelho: 1000 -> 60000 lido do
   shared_prefs depois da instalação, máscara ativa. Testes 15/15; controle negativo (mínimo 80 ms) falha 2.
+
+## 2.12.0/1614 + app 1.2.0: auditoria externa do Roblox (15-20 fps + calor) conferida no código (2026-10-27, sem aparelho)
+Queixa do dono: Roblox nos gráficos mínimos a 15-20 fps esquentando; Encore Tweaks sustenta 60. Uma auditoria
+externa (outra IA) apontou cinco causas; cada uma foi conferida no código deste repo e no fonte upstream do fas-rs
+(`09ba876`). Nada aqui foi medido no aparelho.
+- **CERTO, causa principal provável: a escada do FAS é catraca.** `buffer/calculate.rs`: alvo = primeiro degrau com
+  `fps_long <= alvo + 3`; `policy/controll.rs`: o controle freia a CPU até `alvo - margem`. Abaixo de 48 fps por 2 s
+  (patch 0006) o alvo vai a 45 e o fps fica preso perto de 45 (não passa de 48 para voltar a 60); idem 45 -> 30.
+  Bate com o que já estava aqui: NTE 2.11.5 "60 -> 45 -> 30" e Roblox 2.11.5 com CPU 30-33 ms > GPU 20-23 ms. O app
+  piorava: "60 FPS" gravava `30,45,60` (a mesma escada). ERRADO na auditoria: o M54 não fica só no caminho
+  "não crítico" (teto); com as threads do jogo em 0-7 o fas-rs crava min=max nos dois clusters (2.11.1: 672-864 MHz).
+- **CERTO: o perfil game capava o P4 em 1824000** (o falso "teto rígido"). Com o Roblox fora do FAS o perfil é o
+  dono da CPU, então o cap pesa: game -> 2400000. Balanced fica 1824000 de propósito (eficiência: +32% de
+  capacidade custa 2,2x a potência dinâmica, `energy_table`). `fusaod` (.rodata 1824000) segue barrado com FAS ligado.
+- **CERTO no mecanismo, ERRADO no alcance: ramclean/preload no game-enter.** `sync + drop_caches + compact_memory` no
+  launch contraria a doutrina do próprio projeto (drop_caches = stutter, recusado) e o preload já tinha medida nula
+  (NTE). Mas os dois são opt-in (padrão off; preload desligado no aparelho) e mexem no carregamento, não nos 15-20 fps
+  em jogo. Feito: ramclean saiu do game-enter (fica `fusao ramclean now`, manual); preload opt-in mantido.
+- **ERRADO: GpuGuard "com 845000".** Com o térmico baixando o `gpu_max_clock` para 552000 e a GPU a 95%+ nele, a GPU
+  É o gargalo; subir a CPU ali só esquenta. O 0005 está certo como está.
+- **ERRADO/EXAGERADO**: (a) "threads do Roblox nos A55 porque o perf.sh não acha `RBX Worker`": o app em foco já está
+  inteiro no cpuset top-app (0-7) pelo Android; o que falta é só o renice, sem medida de ganho (não mexido); (b)
+  "cadeia fas-rs -> ontime -> 83% de perda": o 83% é do `kl_burst` sintético, não do Roblox; o PELT é invariante em
+  frequência; (c) "+34% de potência pelo 120 Hz em jogo": medido no scroll (2x frames), em jogo nunca; (d)
+  `settings`/`device_config`/`am` = `cmd` nativo no Android 16, não JVM; (e) `nap` vira laço quente: tem a guarda
+  `[ -p ]` e só recebe inteiros; (f) `observer.sh` exporta sem aspas: exporta com aspas; (g) matar o GOS deixa o
+  EMS no modo normal: sem prova, e aqui o GOS vivo deu 12-13 fps × 19 morto; (h) culpa o piso de MIF 1014000 pelo
+  calor e elogia o Encore, que trava MIF e GPU no máximo (mais calor, não menos); (i) Encore a 60 fps no Ultra:
+  contradiz o medido aqui (Roblox no máximo ~28 fps com a GPU cravada a 949 MHz).
+- **NÃO adotado: escrita no EMS (`aio_tuner`) no game-enter.** Dono: o aviso de reboot ligado a escrita no EMS não
+  tem causa provada, mas o risco é tratado como provável (temp-root: panic = root perdido; `aio_tuner` tem off-by-one
+  em `cpu == NR_CPUS`, `kernlab/README.md`). Nem `chmod 444`/travas estilo Encore (proibidos, `nodes-m54.md` §10).
+- Outros pontos achados na conferência: o térmico interno do fas-rs procura `cpu-`/`soc_max`/`mtktscpu` em
+  `/sys/devices/virtual/thermal` e no Exynos não acha nada (`core_temperature: 0`): o `core_temp_thresh` do
+  `games.toml` é inerte (quem protege é o térmico da Samsung). O fas-rs se põe em `cpuset/background` (0-2) e lê o
+  `dumpsys window visible-apps` 1x/s (upstream). `framework.stock` contaminado (tríades do próprio FUSAO capturadas
+  como padrão da ROM): corrigido.
+
+### O que mudou (módulo 2.12.0/1614, app 1.2.0/12)
+- `fas.sh`/`lib.sh`/CLI: alvo **`off`** por jogo (`fusao fas target <pkg> off`): o jogo sai da lista do fas-rs
+  (comentado: `# "pkg" = off`), o fas-rs nem sobe para ele, o verify volta a conferir a CPU (`fas_owns_cpu`) e o
+  watch para o fas-rs de um jogo anterior ANTES do perfil (o perfil escreve a CPU por último). `target` no jogo em
+  foco aplica na hora (off -> fas exit + tune; outro -> fas enter).
+- `service.sh`: Roblox (`com.roblox.client` e `.vnggames`) fora do FAS **uma vez** (`.fas_roblox_seeded`; sobrescreve o
+  limite antigo do app, que era a escada); limpa a flag `ramclean.enabled`.
+- `tune.sh`: game P4 max 2400000. `watch.sh`: sem ramclean no enter; CLI `ramclean on` não arma mais.
+- `framework.sh`: tríades em variáveis; snapshot grava `null` e o restore apaga quando o valor é tríade do FUSAO.
+- App: limite por jogo = alvo único ("60 FPS" grava `60`); ciclo AUTO -> 30 ... 144 -> **OFF** -> AUTO; chave ramclean só
+  aparece ligada (para desligar a de módulo antigo); card de RAM "MANUAL".
+- Validação: harness 297/297; controle negativo = 21 testes novos FALHAM contra o código 2.11.10; testes do app
+  (`FasTargetsTest`, `FlagsTotalTest`) 7/7 com kotlinc 2.1.0 isolado (sem SDK Android aqui: APK NÃO buildado, rodar
+  `./gradlew testDebugUnitTest assembleRelease` no WSL); sweep OK; kernlab 36/36.
+
+### Falta (aparelho)
+1. Flash + soft-reboot; `fusao fas list | grep roblox` = `# "com.roblox.client" = off`; `fusao.log` com
+   `service: Roblox fora do FAS`.
+2. Roblox nos gráficos do dono: Performance Stats (CPU ms × GPU ms) + `fusao status` (P4 max 2400000 ou o que o
+   térmico deixar; sem `fas: on`). Depois `cpu-controle-roblox.json` (FUSAO × p4_2400 × fasrs) para fechar com número.
+3. Escada AUTO dos outros 530 jogos: segue catraca (decisão do dono). Opções: limite explícito por jogo no app
+   (agora alvo único) ou trocar o AUTO para `60, 90, 120` (piso 60; jogos travados em 30/45 ficam sem FAS).
+4. Em jogo fora do FAS o verify confere a CPU: teto do P4 cortado pelo térmico vira `pending` e, depois de 180 s,
+   `partial` (cosmético; o térmico é dono do teto, `game-tetos`).

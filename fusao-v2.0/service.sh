@@ -157,6 +157,23 @@ fi
 if [ ! -f "$FUSAO_DIR/.fas_seeded" ]; then
 	touch "$FUSAO_DIR/fas.enabled" "$FUSAO_DIR/.fas_seeded" 2>/dev/null
 fi
+# 2.12.0: ramclean saiu do game-enter (drop_caches + compact_memory no launch); a flag antiga não arma mais nada
+rm -f "$FUSAO_DIR/ramclean.enabled" 2>/dev/null
+# 2.12.0: Roblox fora do FAS UMA vez (marcador próprio; um "fusao fas target" posterior vale). Sem limite de fps
+# fixo, a escada do fas-rs vira catraca (60 -> 45 -> 30 e não volta: ele freia a CPU no degrau de baixo) e toda
+# sessão do Roblox com o FAS saiu pior (status.md 2.11.5: CPU 30-33 ms por frame > GPU 20-23 ms). Sobrescreve
+# também o limite posto pelo app, que gravava a escada abaixo dele (30,45,60) e caía na mesma catraca.
+if [ ! -f "$FUSAO_DIR/.fas_roblox_seeded" ]; then
+	{
+		grep -v -e '^com\.roblox\.client=' -e '^com\.roblox\.client\.vnggames=' "$FUSAO_DIR/fas.targets" 2>/dev/null
+		echo "com.roblox.client=off"
+		echo "com.roblox.client.vnggames=off"
+	} >"$FUSAO_DIR/fas.targets.tmp" 2>/dev/null &&
+		chmod 0644 "$FUSAO_DIR/fas.targets.tmp" 2>/dev/null &&
+		mv -f "$FUSAO_DIR/fas.targets.tmp" "$FUSAO_DIR/fas.targets" 2>/dev/null &&
+		touch "$FUSAO_DIR/.fas_roblox_seeded" 2>/dev/null &&
+		echo "$(date '+%H:%M:%S') service: Roblox fora do FAS (fas.targets off, 1x)" >>"$FUSAO_DIR/fusao.log" 2>/dev/null
+fi
 
 if [ ! -f "$FUSAO_DIR/disable" ] && grep -q "^thermal=aggressive" "$FUSAO_DIR/config" 2>/dev/null; then
 	M54_DIR="$FUSAO_DIR" nohup sh "$FUSAO_DIR/thermal_guard.sh" >>"$FUSAO_DIR/fusao.log" 2>&1 &
