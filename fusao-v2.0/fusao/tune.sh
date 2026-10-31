@@ -389,11 +389,11 @@ profile_targets() {
       # Medido 2026-10-19: 351000 escrito -> abrir um app -> 455000 -> 351000 -> 221000 em ~2 s, sem o
       # FUSAO agir; em jogo o verify ficava 4/5. Ganho do piso nunca medido; reescrever = briga com a ROM.
       r_gmin=221000;   r_gmax=949000
-      T_MIF_MIN=845000; T_INT_MIN=200000; T_DISP_MIN=200000
+      T_MIF_MIN=845000; T_INT_MIN=266000; T_DISP_MIN=200000
       T_SWAP=60; T_VFS=50
       if [ "$act" = 1 ]; then
         r_p0min=1152000; r_p4min=1056000
-        T_MIF_MIN=1014000; T_INT_MIN=267000
+        T_MIF_MIN=1014000; T_INT_MIN=333000
       fi
       ;;
     battery)
@@ -415,7 +415,7 @@ profile_targets() {
       r_p0min=533000; r_p0max=2002000
       r_p4min=533000; r_p4max=1824000
       r_gmin=221000;  r_gmax=845000
-      T_MIF_MIN=421000; T_INT_MIN=100000; T_DISP_MIN=133000
+      T_MIF_MIN=421000; T_INT_MIN=133000; T_DISP_MIN=133000
       T_SWAP=120; T_VFS=100
       if [ "$act" = 1 ]; then
         r_p0min=672000; r_p4min=672000

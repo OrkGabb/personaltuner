@@ -16,9 +16,9 @@ DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
 PIDF="$M54_DIR/fusao_watch_pid"
-if pid_record_alive "$PIDF" fusao-watch.sh; then exit 0; fi
+if pid_record_alive "$PIDF" watch.sh; then exit 0; fi
 rm -f "$PIDF"
-pid_record_write "$PIDF" fusao-watch.sh || { log "watch: PID publication failed"; exit 1; }
+pid_record_write "$PIDF" watch.sh || { log "watch: PID publication failed"; exit 1; }
 cleanup_watch() {
   trap - EXIT INT TERM
   [ "$(pid_record_pid "$PIDF")" = "$$" ] && rm -f "$PIDF"

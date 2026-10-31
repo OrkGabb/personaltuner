@@ -216,6 +216,7 @@ grep -q "profile_verify=9/9" "$FAKE/prof_game.out" && ok "profile game verify 9/
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_min_clock")" = "221000" ] && ok "tune game gpu_min" || bad "tune game gpu_min"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "949000" ] && ok "tune game gpu_max" || bad "tune game gpu_max"
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "845000" ] && ok "tune game mif_min" || bad "tune game mif_min"
+[ "$(cat "$FAKE/sys/class/devfreq/17000020.devfreq_int/min_freq")" = "266000" ] && ok "tune game int_min" || bad "tune game int_min"
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "60" ] && ok "tune game swap" || bad "tune game swap"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "50" ] && ok "tune game pressure" || bad "tune game pressure"
 # 2.10.0: read_ahead saiu dos perfis (o da sda não chega na leitura de arquivo; no dm subir piora): fica no stock
@@ -233,6 +234,7 @@ grep -q "profile_verify=9/9" "$FAKE/prof_bal.out" && ok "profile balanced verify
 # 858000 não existe na tabela do Mali-G68; o degrau real logo abaixo do máximo (949000) é 845000
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "845000" ] && ok "tune balanced gpu_max" || bad "tune balanced gpu_max"
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "421000" ] && ok "tune balanced mif_min" || bad "tune balanced mif_min"
+[ "$(cat "$FAKE/sys/class/devfreq/17000020.devfreq_int/min_freq")" = "133000" ] && ok "tune balanced int_min" || bad "tune balanced int_min"
 # o balanced segue com o P4 em 1824000 (eficiência do perfil casual); a descida 2400000 -> 1824000 tem de colar
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune balanced p4_max" || bad "tune balanced p4_max"
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "120" ] && ok "tune balanced swap" || bad "tune balanced swap"
@@ -300,6 +302,7 @@ echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" game >/dev/null 2>&1
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "1152000" ] && ok "tune game+jogo p0_min" || bad "tune game+jogo p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "1056000" ] && ok "tune game+jogo p4_min" || bad "tune game+jogo p4_min"
+[ "$(cat "$FAKE/sys/class/devfreq/17000020.devfreq_int/min_freq")" = "333000" ] && ok "tune game+jogo int_min" || bad "tune game+jogo int_min"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" verify game | grep -q "profile_verify=9/9" && ok "tune game+jogo verify 9/9" || bad "tune game+jogo verify 9/9"
 : > "$FAKE/fusao/game-active.txt"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" battery >/dev/null 2>&1
