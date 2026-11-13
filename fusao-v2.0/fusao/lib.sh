@@ -148,7 +148,7 @@ selected_profile() {
 # fas_bin — o fas-rs do módulo (fork M54); FAS_BIN sobrepõe (teste offline).
 fas_bin() {
   local _b
-  for _b in "${FAS_BIN:-}" /data/adb/modules/encore/system/bin/fas-rs /system/bin/fas-rs; do
+  for _b in "${FAS_BIN:-}" /data/adb/modules/fusao/system/bin/fas-rs /data/adb/modules_update/fusao/system/bin/fas-rs /system/bin/fas-rs; do
     [ -n "$_b" ] && [ -x "$_b" ] && { echo "$_b"; return 0; }
   done
   return 1

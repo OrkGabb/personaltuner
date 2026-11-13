@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fusao-build.py — packaging v1.0 (offline, stdlib, forward slashes).
 - stage: fusao-v2.0/ (ativo; v1.0/v0.1 estão em _historico/)
-- regenera .sha256 por arquivo (formato Encore: arquivo com hex puro)
+- regenera .sha256 por arquivo (hex puro por arquivo, LF explícito)
 - zip default: _releases/<versao>-M54.zip, forward slashes, inclui .sha256
 - verifica self-check (customize.sh cobre todos os arquivos novos)
 Uso: python tools/fusao-build.py [--stage STAGE --out ZIP]

@@ -9,7 +9,7 @@
 #      fusao gos [on|off] | fusao reseed-stock
 #      fusao status [quick] | fusao log | fusao bugreport | fusao kill-switch [on|off]
 M54_DIR=${M54_DIR:-/data/adb/fusao}
-MODDIR_FUSAO=/data/adb/modules/encore/fusao
+MODDIR_FUSAO=/data/adb/modules/fusao/fusao
 [ -d "$M54_DIR" ] || M54_DIR="$MODDIR_FUSAO"
 R="${FS_ROOT:-}"
 
@@ -19,7 +19,7 @@ log_msg() {
 
 find_fusaod() {
   local _b
-  for _b in /data/adb/modules/encore/system/bin/fusaod /data/adb/modules/fusao/system/bin/fusaod "$M54_DIR/../system/bin/fusaod" /system/bin/fusaod; do
+  for _b in /data/adb/modules/fusao/system/bin/fusaod /data/adb/modules_update/fusao/system/bin/fusaod "$M54_DIR/../system/bin/fusaod" /system/bin/fusaod; do
     [ -x "$_b" ] && { echo "$_b"; return 0; }
   done
   _b=$(command -v fusaod 2>/dev/null)

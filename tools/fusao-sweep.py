@@ -85,13 +85,19 @@ def scan():
                 fails.append(f"{rel}: string proibida '{pat}'")
         if "rm -rf" in t and f.name not in {"uninstall.sh", "cleanup.sh"}:
             # Só uninstall/cleanup apagam dados reais; nos demais o alvo tem de ser temporário
-            # (TMPDIR/MODPATH/TMPD do instalador e do bugreport). Comentário inteiro não conta.
+            # (TMPDIR/MODPATH/TMPD do instalador e do bugreport) ou remoção explícita dos
+            # diretórios legados do módulo encore durante a migração em customize/service.
             for line in t.splitlines():
                 if "rm -rf" not in line or line.lstrip().startswith("#"):
                     continue
-                if not any(k in line for k in ["$MODPATH", "$TMPDIR", "$TMPD", "/data/local/tmp"]):
-                    fails.append(f"{rel}: 'rm -rf' suspeito: {line.strip()[:90]}")
-                    break
+                if any(k in line for k in ["$MODPATH", "$TMPDIR", "$TMPD", "/data/local/tmp"]):
+                    continue
+                if f.name in {"customize.sh", "service.sh"} and any(
+                    k in line for k in ["$LEGACY_MOD", "$LEGACY_UPD", "/data/adb/modules/encore", "/data/adb/modules_update/encore"]
+                ) and "/data/adb/fusao" not in line:
+                    continue
+                fails.append(f"{rel}: 'rm -rf' suspeito: {line.strip()[:90]}")
+                break
         if "$MOD/" in t or "${MOD}" in t:
             fails.append(f"{rel}: bug $MOD (path Rairin nunca definido)")
         if "extreme2" in t or "lite2" in t:
@@ -125,10 +131,11 @@ def check_elf_strings():
 scan()
 check_absent_bins()
 check_elf_strings()
-# v2.0 single-module: ZERO refs Rairin/Encore-config em shell (sem fallback).
-for f in ["service.sh", "customize.sh", "uninstall.sh", "cleanup.sh", "action.sh",
-          "system/bin/fusao", "fusao/watch.sh", "fusao/perf.sh", "fusao/framework.sh",
-          "fusao/bugreport.sh", "fusao/gos_killer.sh"]:
+# v2.0 single-module: ZERO refs Rairin/Encore/Apache-legado em shell/licença (sem fallback).
+for f in ["service.sh", "customize.sh", "uninstall.sh", "cleanup.sh", "action.sh", "verify.sh",
+          "LICENSE", "NOTICE.md", "module.prop", "system/bin/fusao", "fusao/watch.sh",
+          "fusao/perf.sh", "fusao/framework.sh", "fusao/bugreport.sh", "fusao/gos_killer.sh",
+          "fusao/lib.sh"]:
     p = STAGE / f
     if p.is_file():
         t = p.read_text(encoding="utf-8", errors="ignore")
@@ -136,6 +143,8 @@ for f in ["service.sh", "customize.sh", "uninstall.sh", "cleanup.sh", "action.sh
             fails.append(f"{f}: dependencia Rairin residual (v2.0 = zero)")
         if ".config/encore" in t:
             fails.append(f"{f}: path .config/encore residual (v2.0 = /data/adb/fusao)")
+        if "Rem01Gaming" in t or "Encore Tweaks" in t:
+            fails.append(f"{f}: referencia residual de copyright/marca Encore")
 
 if fails:
     print(f"KILL-LIST FALHOU ({len(fails)}):")

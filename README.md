@@ -8,7 +8,7 @@ are kept out (see `.gitignore`).
 - `app/` — FUSAO app (Kotlin/Compose, `com.orkgabb.fusao`). Build: `cd app && ./gradlew assembleDebug`.
   The SDK is resolved via `local.properties` (`sdk.dir=...`, NOT committed — each machine generates its own)
   or via the `ANDROID_HOME`/`ANDROID_SDK_ROOT` environment variables. Requires a rooted device for actual testing.
-- `fusao-v2.0/` — active KernelSU module stage (v2.9.4/1596, see `module.prop`).
+- `fusao-v2.0/` — active KernelSU module stage (`id=fusao`, see `module.prop`). License: MIT for all FUSAO-M54 code, with aggregated GNU GPL v3.0 binary `system/bin/fas-rs` documented in `fusao-v2.0/NOTICE.md`.
 - `tools/` — `fusao-build.py` (builds the flashable zip), `fusao-sweep.py` (kill-list),
   `test-fusao-offline.sh` (test harness). Commands documented in `INDICE.md`.
 - `fusao-apk/LEIA-ME.md` — interface contract used by the app (`fusao` CLI + flags in

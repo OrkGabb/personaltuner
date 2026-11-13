@@ -41,22 +41,23 @@ evento (`IProcessObserver` + fallback documentado). Do meu repo `github.com/OrkG
 fail-safe térmico adotado intacto, executores de perfil como base da Fase 4, doutrina de
 diagnóstico por `stat`, telemetria como entrada do motor de decisão.
 
-Estado atual: módulo autoral FUSAO-M54 v2.9.4/1596 (stage em `fusao-v2.0/`, releases em
-`_releases/`) + app autoral FUSAO v1 (fontes no WSL `~/FusaoApp`, cópia em `fusao-apk/`,
-única interface — WebUI extinta por decisão). Detalhes ao vivo em `status.md`.
+Estado atual: módulo autoral FUSAO-M54 (`id=fusao`, stage em `fusao-v2.0/`, releases em
+`_releases/`) + app autoral FUSAO (fontes em `app/`, única interface — WebUI extinta por
+decisão). Detalhes ao vivo em `status.md`.
 
-**Identidade e licença do módulo.** O `id=encore` do `module.prop` é herdado do chassi Encore Tweaks
-(Rem01Gaming, Apache 2.0) e é mantido de propósito por continuidade de upgrade: o KernelSU identifica o
-módulo pelo `id`, e o upgrade por cima da instalação existente depende dele (o módulo vive em
-`/data/adb/modules/encore/`). Não trocar o `id`. O `NOTICE.md` (em `fusao-v2.0/`) é obrigatório em toda
-distribuição — a Apache 2.0 do Encore e as licenças de terceiros (KTweak, RapidJSON, spdlog, fmt, fas-rs/GPLv3
-etc.) exigem que ele acompanhe o zip; não remover nem editar sem rever essas licenças.
+**Identidade e licença do módulo.** Todo o código autoral do projeto (app, daemon Rust `fusaod`,
+`observer.dex`, scripts do módulo em `fusao-v2.0/` e ferramentas em `tools/`) é licenciado sob
+**MIT License** (`LICENSE`). O `module.prop` usa `id=fusao` (instalado em
+`/data/adb/modules/fusao/`), com migração automática no `customize.sh` apagando resíduos antigos
+de `/data/adb/modules/encore/` sem tocar em `/data/adb/fusao/`. O `NOTICE.md` (em `fusao-v2.0/`)
+mantém exclusivamente o aviso GNU GPL v3.0 do binário agregado `system/bin/fas-rs` (fork M54,
+fonte/patches em `tools/fas-rs-m54/`).
 
 ## 3. Como trabalhar comigo
 
 - Prove no aparelho (`adb -s <host:porta-atual> shell ...`), não teoriza.
 - Se pedir arquivo, caminhos absolutos do PC; no aparelho, `/data/adb/fusao/` e
-  `/data/adb/modules/encore/` (id histórico do módulo, mantido p/ continuidade de upgrade).
+  `/data/adb/modules/fusao/`.
 - Pode propor e executar comandos adb (tenho root via `su -c`, sem prompt).
 - Quando eu disser "funcionava até 5 min atrás", reconstrói a linha do tempo antes de culpar mudança.
 - Frentes abertas: evoluir o app FUSAO (ver `fusao-apk/LEIA-ME.md`) ou seguir a matriz de

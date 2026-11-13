@@ -50,7 +50,7 @@ selected_profile() {
 
 find_fusaod() {
   local _b
-  for _b in /data/adb/modules/encore/system/bin/fusaod /data/adb/modules/fusao/system/bin/fusaod "$M54_DIR/../system/bin/fusaod" /system/bin/fusaod; do
+  for _b in /data/adb/modules/fusao/system/bin/fusaod /data/adb/modules_update/fusao/system/bin/fusaod "$M54_DIR/../system/bin/fusaod" /system/bin/fusaod; do
     [ -x "$_b" ] && { echo "$_b"; return 0; }
   done
   _b=$(command -v fusaod 2>/dev/null)

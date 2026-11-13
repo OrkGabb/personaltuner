@@ -33,7 +33,7 @@ for s in lib.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh observer.sh d
     bash -n "$STAGE/fusao/$s" 2>"$FAKE/shn.err" && ok "sh-n $s" || { bad "sh-n $s"; cat "$FAKE/shn.err"; }
   fi
 done
-for s in service.sh customize.sh uninstall.sh cleanup.sh action.sh; do
+for s in service.sh customize.sh uninstall.sh cleanup.sh action.sh verify.sh; do
   bash -n "$STAGE/$s" 2>"$FAKE/shn.err" && ok "sh-n $s" || { bad "sh-n $s"; cat "$FAKE/shn.err"; }
 done
 bash -n "$STAGE/system/bin/fusao" 2>"$FAKE/shn.err" && ok "sh-n fusao-cli" || bad "sh-n fusao-cli"
@@ -1553,6 +1553,40 @@ printf '2026-11-13 10:00:00|CALL|08001234567|BLOCK|Tele\n' > "$BK/data/user_de/0
 bk log 5 | grep -q "08001234567|BLOCK" && ok "block log lê o registro do app" || bad "block log lê o registro do app"
 bk nada >/dev/null 2>&1 && bad "block verbo inválido recusa" || ok "block verbo inválido recusa"
 grep -q 'remove-role-holder android.app.role.CALL_SCREENING' "$STAGE/uninstall.sh" && grep -q 'disallow_listener' "$STAGE/uninstall.sh" && ok "uninstall devolve triagem e listener" || bad "uninstall devolve triagem e listener"
+
+# 20) identidade independente MIT (id=fusao, sem Rem01Gaming/Encore no stage, fas-rs GPLv3 agregado)
+# + teste real do customize.sh + verify.sh extraindo zip gerado e migrando /modules/encore -> /modules/fusao.
+grep -qx "id=fusao" "$STAGE/module.prop" && ok "module.prop id=fusao" || bad "module.prop id=fusao"
+grep -q "MIT License" "$STAGE/LICENSE" && ! grep -qi "Apache License" "$STAGE/LICENSE" && ok "stage LICENSE MIT" || bad "stage LICENSE MIT"
+grep -q "GNU GPL v3.0" "$STAGE/NOTICE.md" && ! grep -qi "Encore Tweaks\|Rem01Gaming" "$STAGE/NOTICE.md" && ok "stage NOTICE só fas-rs GPLv3" || bad "stage NOTICE só fas-rs GPLv3"
+[ ! -e "$STAGE/gamelist.txt" ] && ok "gamelist duplicado na raiz ausente" || bad "gamelist duplicado na raiz ausente"
+grep -q 'MODULE_DIR="/data/adb/modules/fusao"' "$STAGE/cleanup.sh" && ok "cleanup MODULE_DIR=fusao" || bad "cleanup MODULE_DIR=fusao"
+
+MIG="$FAKE/mig"; mkdir -p "$MIG/adb/fusao" "$MIG/adb/modules/encore" "$MIG/adb/modules_update/encore" "$MIG/adb/service.d" "$MIG/adb/ksu/bin" "$MIG/mod" "$MIG/tmp"
+printf 'profile=game\n' > "$MIG/adb/fusao/config"
+printf 'com.meu.jogo\n' > "$MIG/adb/fusao/gamelist.txt"
+printf 'game' > "$MIG/adb/fusao/profile"
+printf '#!/bin/sh\ntouch "%s/UNINSTALL_CALLED"\nrm -rf "%s/adb/fusao"\n' "$MIG" "$MIG" > "$MIG/adb/modules/encore/uninstall.sh"
+printf 'old\n' > "$MIG/adb/service.d/.fusao_cleanup.sh"
+cp -r "$STAGE" "$MIG/stage"
+python3 "$ROOT/tools/fusao-build.py" --stage "$MIG/stage" --out "$MIG/test.zip" > /dev/null 2>&1
+sed "s#/data/adb#$MIG/adb#g" "$MIG/stage/customize.sh" > "$MIG/customize.sh"
+(
+  cd "$MIG" || exit 1
+  API=36 ARCH=arm64 KSU=true APATCH=false ZIPFILE="$MIG/test.zip" MODPATH="$MIG/mod" TMPDIR="$MIG/tmp"
+  ui_print() { :; }
+  abort() { echo "ABORT: $*" >&2; exit 1; }
+  set_perm_recursive() { :; }
+  . "$MIG/customize.sh"
+) > "$MIG/cust.out" 2>&1
+_migrc=$?
+[ "$_migrc" = 0 ] && ok "customize+verify zip real OK" || { bad "customize+verify zip real OK (rc=$_migrc)"; cat "$MIG/cust.out"; }
+[ ! -d "$MIG/adb/modules/encore" ] && [ ! -d "$MIG/adb/modules_update/encore" ] && ok "migração apaga encore" || bad "migração apaga encore"
+[ ! -e "$MIG/UNINSTALL_CALLED" ] && ok "migração não dispara uninstall do encore" || bad "migração não dispara uninstall do encore"
+[ ! -e "$MIG/adb/service.d/.fusao_cleanup.sh" ] && ok "migração limpa .fusao_cleanup antigo" || bad "migração limpa .fusao_cleanup antigo"
+[ "$(cat "$MIG/adb/fusao/gamelist.txt" 2>/dev/null)" = "com.meu.jogo" ] && [ "$(cat "$MIG/adb/fusao/profile" 2>/dev/null)" = "game" ] && ok "migração preserva estado em /data/adb/fusao" || bad "migração preserva estado em /data/adb/fusao"
+[ "$(readlink "$MIG/adb/ksu/bin/fusao" 2>/dev/null)" = "$MIG/adb/modules/fusao/system/bin/fusao" ] && ok "symlink ksu aponta para modules/fusao" || bad "symlink ksu aponta para modules/fusao"
+[ -f "$MIG/mod/system/bin/fusaod" ] && [ -f "$MIG/mod/fusao/tune.sh" ] && [ ! -e "$MIG/mod/action.sh" ] && ok "customize KSU extrai tudo e remove action.sh" || bad "customize KSU extrai tudo e remove action.sh"
 
 echo "----"
 echo "pass=$pass fail=$fail"

@@ -1,7 +1,7 @@
-id=encore
+id=fusao
 name=FUSAO-M54
-version=2.13.0-fusao (M54-single)
-versionCode=1616
+version=2.13.1-fusao (M54-single)
+versionCode=1617
 author=OrkGabb
-description=Special performance module for your Device. [Single-module M54: writer fusaod + observer event-driven + tune/DND/downscale + FAS (fas-rs) + bloqueio de chamadas/SMS + CLI/APK.]
+description=Módulo de performance dedicado ao Galaxy M54 (Exynos 1380). [Single-module MIT: writer fusaod + observer event-driven + tune/DND/downscale + FAS (fas-rs GPLv3) + bloqueio de chamadas/SMS + CLI/APK.]
 banner=banner.webp

@@ -1,57 +1,42 @@
-#
-# Copyright (C) 2024-2026 Rem01Gaming
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
+#!/system/bin/sh
+# FUSAO-M54 — verificacao de integridade SHA-256 durante a instalacao (MIT).
 
-TMPDIR_FOR_VERIFY="$TMPDIR/.vunzip"
-mkdir "$TMPDIR_FOR_VERIFY"
+FUSAO_VERIFY_DIR="$TMPDIR/.fusao_verify"
+mkdir -p "$FUSAO_VERIFY_DIR"
 
 abort_verify() {
 	ui_print "*********************************************************"
-	ui_print "! $1"
-	ui_print "! Installation aborted. The module may be corrupted."
-	ui_print "! Please re-download and try again."
+	ui_print "! Falha de integridade: $1"
+	ui_print "! Instalacao cancelada para evitar arquivo corrompido."
 	abort "*********************************************************"
 }
 
-# extract <zip> <file> <target dir>
-extract() {
-	zip=$1
-	file=$2
-	dir=$3
-
-	file_path="$dir/$file"
-	hash_path="$TMPDIR_FOR_VERIFY/$file.sha256"
-
-	unzip -o "$zip" "$file" -d "$dir" >&2
-	[ -f "$file_path" ] || abort_verify "$file does not exists"
-
-	unzip -o "$zip" "$file.sha256" -d "$TMPDIR_FOR_VERIFY" >&2
-	[ -f "$hash_path" ] || abort_verify "Missing checksum for $file"
-
-	(echo "$(cat "$hash_path")  $file_path" | sha256sum -c -s -) || abort_verify "Checksum mismatch for $file"
-	# ui_print "- Verified $file" >&1
+verify_sha256() {
+	_target="$1"
+	_sum_file="$2"
+	[ -f "$_target" ] || abort_verify "ausente: $_target"
+	[ -f "$_sum_file" ] || abort_verify "checksum ausente: $_sum_file"
+	_want=$(tr -d '[:space:]' <"$_sum_file")
+	_got=$(sha256sum "$_target" 2>/dev/null | cut -d ' ' -f 1)
+	[ -n "$_want" ] && [ "$_got" = "$_want" ] || abort_verify "hash divergente: $_target"
 }
 
-file="META-INF/com/google/android/update-binary"
-file_path="$TMPDIR_FOR_VERIFY/$file"
-hash_path="$file_path.sha256"
-unzip -o "$ZIPFILE" "META-INF/com/google/android/*" -d "$TMPDIR_FOR_VERIFY" >&2
-[ -f "$file_path" ] || abort_verify "$file does not exists"
-if [ -f "$hash_path" ]; then
-	(echo "$(cat "$hash_path")  $file_path" | sha256sum -c -s -) || abort_verify "Checksum mismatch for $file"
-	# ui_print "- Verified $file" >&1
-else
-	ui_print "- Download from Magisk app"
+# extract <zip> <relpath> <destdir>
+extract() {
+	_zip="$1"
+	_rel="$2"
+	_dir="$3"
+	_out="$_dir/$_rel"
+	_sha="$FUSAO_VERIFY_DIR/$_rel.sha256"
+
+	unzip -o "$_zip" "$_rel" -d "$_dir" >&2 || abort_verify "erro ao extrair $_rel"
+	unzip -o "$_zip" "$_rel.sha256" -d "$FUSAO_VERIFY_DIR" >&2 || abort_verify "checksum ausente para $_rel"
+	verify_sha256 "$_out" "$_sha"
+}
+
+# Confere o updater do pacote se o zip trouxer o checksum correspondente.
+_upd="META-INF/com/google/android/update-binary"
+unzip -o "$ZIPFILE" "META-INF/com/google/android/*" -d "$FUSAO_VERIFY_DIR" >&2
+if [ -f "$FUSAO_VERIFY_DIR/$_upd.sha256" ]; then
+	verify_sha256 "$FUSAO_VERIFY_DIR/$_upd" "$FUSAO_VERIFY_DIR/$_upd.sha256"
 fi

@@ -1,112 +1,84 @@
-#
-# FUSAO-M54 — instalador single-module.
-# Chassi de higiene (verify.sh + .sha256), resto próprio.
+#!/system/bin/sh
+# FUSAO-M54 — instalador single-module para Galaxy M54 (MIT).
 # shellcheck disable=SC1091,SC2034,SC2317
 SKIPUNZIP=1
 
 FUSAO_SEED="/data/adb/fusao"
+FUSAO_BIN_DIR="/data/adb/modules/fusao/system/bin"
+LEGACY_MOD="/data/adb/modules/encore"
+LEGACY_UPD="/data/adb/modules_update/encore"
+CLEANUP_SCRIPT="/data/adb/service.d/.fusao_cleanup.sh"
 
-abort_unsupported_arch() {
+abort_install() {
 	ui_print "*********************************************************"
-	ui_print "! Unsupported Architecture: $ARCH"
-	ui_print "! FUSAO-M54 needs arm64 (armeabi-v7a legacy only)."
+	ui_print "! $1"
 	abort "*********************************************************"
 }
 
-abort_corrupted() {
-	ui_print "*********************************************************"
-	ui_print "! Unable to extract verify.sh!"
-	ui_print "! Installation aborted. The module may be corrupted."
-	ui_print "! Please re-download and try again."
-	abort "*********************************************************"
-}
-
-abort_android_version() {
-	ui_print "*********************************************************"
-	ui_print "! Your Android Version is not supported!"
-	ui_print "! Please use Android 10 (Q) or higher."
-	ui_print "! Installation aborted."
-	abort "*********************************************************"
-}
-
-# Check Android version
-[ "$API" -lt 29 ] && abort_android_version
-
-# Flashable integrity checkup
-ui_print "- Extracting verify.sh"
-unzip -o "$ZIPFILE" 'verify.sh' -d "$TMPDIR" >&2
-[ ! -f "$TMPDIR/verify.sh" ] && abort_corrupted
-source "$TMPDIR/verify.sh"
-
-# Extract module files
-ui_print "- Extracting module files"
-extract "$ZIPFILE" 'module.prop' "$MODPATH"
-extract "$ZIPFILE" 'service.sh' "$MODPATH"
-extract "$ZIPFILE" 'uninstall.sh' "$MODPATH"
-extract "$ZIPFILE" 'action.sh' "$MODPATH"
-extract "$ZIPFILE" 'cleanup.sh' "$MODPATH"
-extract "$ZIPFILE" 'system/bin/fusaod' "$MODPATH"
-extract "$ZIPFILE" 'system/bin/fusao' "$MODPATH"
-extract "$ZIPFILE" 'system/bin/fas-rs' "$MODPATH"
-extract "$ZIPFILE" 'fusao/thermal_guard.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/thermal_guard_stop.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/lib.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/gos_killer.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/watch.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/framework.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/perf.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/bugreport.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/dnd.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/display.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/tune.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/observer.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/observer.dex' "$MODPATH"
-extract "$ZIPFILE" 'fusao/fas.sh' "$MODPATH"
-extract "$ZIPFILE" 'fusao/gamelist.txt' "$MODPATH"
-extract "$ZIPFILE" 'fusao/config' "$MODPATH"
-cp "$MODPATH/module.prop" "$MODPATH/module.prop.orig"
-
-# Target architecture (fusaod = arm64; v7a mantido p/ futuro)
-case $ARCH in
-"arm64") ;;
-"arm") abort_unsupported_arch ;;
-*) abort_unsupported_arch ;;
+[ "${API:-0}" -ge 29 ] || abort_install "Android 10 (API 29) ou superior e obrigatorio."
+case "$ARCH" in
+arm64) ;;
+*) abort_install "Arquitetura nao suportada ($ARCH). O FUSAO-M54 exige arm64." ;;
 esac
 
-# FUSAO-M54: self-check de extração (lição temp-root: instalador que não
-# desembarca subdir em silêncio). Falha aqui, com nome, em vez de boot capenga.
-for f in service.sh uninstall.sh cleanup.sh action.sh system/bin/fusaod system/bin/fusao system/bin/fas-rs fusao/thermal_guard.sh fusao/thermal_guard_stop.sh fusao/lib.sh fusao/gos_killer.sh fusao/watch.sh fusao/framework.sh fusao/perf.sh fusao/bugreport.sh fusao/tune.sh fusao/dnd.sh fusao/display.sh fusao/observer.sh fusao/observer.dex fusao/fas.sh fusao/gamelist.txt fusao/config; do
+ui_print "- Preparando verificador de integridade"
+unzip -o "$ZIPFILE" 'verify.sh' -d "$TMPDIR" >&2 || abort_install "Nao foi possivel extrair verify.sh."
+[ -f "$TMPDIR/verify.sh" ] || abort_install "verify.sh ausente no pacote."
+. "$TMPDIR/verify.sh"
+
+ui_print "- Extraindo arquivos do modulo FUSAO-M54"
+for _rel in \
+	module.prop service.sh uninstall.sh cleanup.sh action.sh LICENSE NOTICE.md \
+	system/bin/fusaod system/bin/fusao system/bin/fas-rs \
+	fusao/thermal_guard.sh fusao/thermal_guard_stop.sh fusao/lib.sh \
+	fusao/gos_killer.sh fusao/watch.sh fusao/framework.sh fusao/perf.sh \
+	fusao/bugreport.sh fusao/dnd.sh fusao/display.sh fusao/tune.sh \
+	fusao/observer.sh fusao/observer.dex fusao/fas.sh fusao/gamelist.txt fusao/config; do
+	extract "$ZIPFILE" "$_rel" "$MODPATH"
+done
+cp "$MODPATH/module.prop" "$MODPATH/module.prop.orig"
+
+# Self-check pos-extracao: garante que nenhum script/binario sumiu silenciosamente.
+for f in \
+	service.sh uninstall.sh cleanup.sh action.sh system/bin/fusaod system/bin/fusao system/bin/fas-rs \
+	fusao/thermal_guard.sh fusao/thermal_guard_stop.sh fusao/lib.sh fusao/gos_killer.sh \
+	fusao/watch.sh fusao/framework.sh fusao/perf.sh fusao/bugreport.sh fusao/tune.sh \
+	fusao/dnd.sh fusao/display.sh fusao/observer.sh fusao/observer.dex fusao/fas.sh \
+	fusao/gamelist.txt fusao/config; do
 	if [ -f "$MODPATH/$f" ]; then
 		ui_print "- [OK] $f"
 	else
 		ui_print "- [MISSING] $f"
 	fi
 done
-[ -f "$MODPATH/system/bin/fusaod" ] || abort "self-check: fusaod ausente após extração"
+[ -f "$MODPATH/system/bin/fusaod" ] || abort_install "self-check: system/bin/fusaod ausente."
 
-# Skip mountify
+# Migracao automatica de instalacoes antigas com id=encore para id=fusao,
+# removendo apenas o diretorio do modulo antigo (sem chamar uninstall.sh para
+# preservar config, perfil, gamelist e logs em /data/adb/fusao).
+[ -f "$CLEANUP_SCRIPT" ] && rm -f "$CLEANUP_SCRIPT" 2>/dev/null
+if [ -d "$LEGACY_MOD" ] || [ -d "$LEGACY_UPD" ]; then
+	ui_print "- Migrando modulo antigo (encore -> fusao); preservando /data/adb/fusao"
+	rm -rf "$LEGACY_MOD" "$LEGACY_UPD" 2>/dev/null
+fi
+
 touch "$MODPATH/skip_mountify"
 
 if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
-  ui_print "- KSU/AP Detected, skipping module mount (skip_mount)"
-  rm "$MODPATH/action.sh"
-  touch "$MODPATH/skip_mount"
-
-  # symlink ourselves on $PATH
-  manager_paths="/data/adb/ap/bin /data/adb/ksu/bin"
-  BIN_PATH="/data/adb/modules/encore/system/bin"
-  for dir in $manager_paths; do
-	[ -d "$dir" ] && {
-		ui_print "- Creating symlink in $dir"
-	ln -sf "$BIN_PATH/fusaod" "$dir/fusaod"
-	ln -sf "$BIN_PATH/fusao" "$dir/fusao"
-	}
-  done
+	ui_print "- KSU/AP detectado; ativando skip_mount e symlinks de CLI"
+	rm -f "$MODPATH/action.sh"
+	touch "$MODPATH/skip_mount"
+	for _dir in /data/adb/ap/bin /data/adb/ksu/bin; do
+		if [ -d "$_dir" ]; then
+			ui_print "- Linkando fusao/fusaod em $_dir"
+			ln -sf "$FUSAO_BIN_DIR/fusaod" "$_dir/fusaod"
+			ln -sf "$FUSAO_BIN_DIR/fusao" "$_dir/fusao"
+		fi
+	done
 fi
 
-# Seed do SSOT em /data/adb/fusao (só cria o ausente — nunca sobrescreve
-# perfil/gamelist do usuário; regra: instalador não apaga estado).
-ui_print "- Seeding /data/adb/fusao"
+# Seed inicial em /data/adb/fusao (nunca sobrescreve estado existente do usuario).
+ui_print "- Inicializando estado em $FUSAO_SEED"
 mkdir -p "$FUSAO_SEED"
 chmod 0700 "$FUSAO_SEED"
 [ -f "$FUSAO_SEED/config" ] || cp "$MODPATH/fusao/config" "$FUSAO_SEED/config"
@@ -115,8 +87,7 @@ chmod 0700 "$FUSAO_SEED"
 [ -f "$FUSAO_SEED/game-active.txt" ] || : >"$FUSAO_SEED/game-active.txt"
 chmod 0600 "$FUSAO_SEED/config" "$FUSAO_SEED/profile" 2>/dev/null
 
-# Permission settings
-ui_print "- Permission setup"
+ui_print "- Ajustando permissoes"
 set_perm_recursive "$MODPATH/system/bin" 0 0 0755 0755
 set_perm_recursive "$MODPATH/fusao" 0 0 0755 0755
 

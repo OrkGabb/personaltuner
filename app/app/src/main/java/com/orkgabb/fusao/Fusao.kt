@@ -9,9 +9,9 @@ import androidx.compose.runtime.Immutable
  */
 object FusaoBridge {
 
-    private const val MOD_CLI = "/data/adb/modules/encore/system/bin/fusaod"
-    private const val MOD_DIR = "/data/adb/modules/encore"
-    private const val ALT_MOD_DIR = "/data/adb/modules/fusao"
+    private const val MOD_DIR = "/data/adb/modules/fusao"
+    private const val MOD_CLI = "$MOD_DIR/system/bin/fusaod"
+    private const val UPD_MOD_DIR = "/data/adb/modules_update/fusao"
     private const val DATA_DIR = "/data/adb/fusao"
 
     /** Resolve o binário do CLI uma vez por sessão (symlink do KSU/AP ou módulo). */
@@ -27,7 +27,7 @@ object FusaoBridge {
         val r = RootShell.run(
             "command -v fusao 2>/dev/null; " +
                 "for b in /data/adb/ksu/bin/fusao /data/adb/ap/bin/fusao " +
-                "\"$MOD_DIR/system/bin/fusao\" \"$ALT_MOD_DIR/system/bin/fusao\" /system/bin/fusao; do " +
+                "\"$MOD_DIR/system/bin/fusao\" \"$UPD_MOD_DIR/system/bin/fusao\" /system/bin/fusao; do " +
                 "[ -x \"\$b\" ] && echo \"\$b\" && break; done"
         )
         val found = r.output.map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
@@ -37,14 +37,14 @@ object FusaoBridge {
 
     suspend fun modulePresent(): Boolean =
         RootShell.run(
-            "if [ -x \"$MOD_CLI\" ] || [ -x \"$ALT_MOD_DIR/system/bin/fusaod\" ] || [ -d \"$DATA_DIR\" ]; then echo Y; else echo N; fi"
+            "if [ -x \"$MOD_CLI\" ] || [ -x \"$UPD_MOD_DIR/system/bin/fusaod\" ] || [ -d \"$DATA_DIR\" ]; then echo Y; else echo N; fi"
         ).output.any { it.trim() == "Y" }
 
     suspend fun moduleVersion(): String {
         val r = RootShell.run(
-            "grep -E '^version=' \"$MOD_DIR/module.prop\" \"$ALT_MOD_DIR/module.prop\" 2>/dev/null | head -n 1 | sed 's/^[^:]*://'; " +
-                "[ -f /data/adb/modules_update/encore/module.prop ] && " +
-                "echo \"staged:\$(grep -E '^version=' /data/adb/modules_update/encore/module.prop 2>/dev/null | head -n 1)\""
+            "grep -E '^version=' \"$MOD_DIR/module.prop\" 2>/dev/null | head -n 1; " +
+                "[ -f \"$UPD_MOD_DIR/module.prop\" ] && " +
+                "echo \"staged:\$(grep -E '^version=' \"$UPD_MOD_DIR/module.prop\" 2>/dev/null | head -n 1)\""
         )
         return r.output.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" | ").ifEmpty { "—" }
     }
