@@ -3,4 +3,5 @@
     <string name="smart_pixels_label">FUSAO Smart Pixels</string>
     <string name="smart_pixels_tile_label">Smart Pixels</string>
     <string name="smart_pixels_a11y_description">Desenha a máscara de pixels do Smart Pixels (aba Pixels do FUSAO) por cima de tudo, em preto total. Não lê o conteúdo da tela, não recebe eventos e não usa root.</string>
+    <string name="block_listener_label">FUSAO Bloqueio de SMS</string>
 </resources>

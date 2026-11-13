@@ -4,7 +4,7 @@ import androidx.compose.runtime.Immutable
 
 /**
  * O único canal do app até o módulo: chama o CLI `fusao` (que gerencia
- * flags, perfis e preload em /data/adb/fusao) e lê de volta a telemetria real
+ * flags e perfis em /data/adb/fusao) e lê de volta a telemetria real
  * verificada pelo backend.
  */
 object FusaoBridge {
@@ -69,7 +69,7 @@ object FusaoBridge {
         }
     }
 
-    /** Liga/desliga uma flag (fusaod, framework, perf, dnd, preload, ramclean, gos). */
+    /** Liga/desliga uma flag (fusaod, framework, perf, dnd, ramclean, gos, fas). */
     suspend fun setFlag(cmd: String, on: Boolean): String {
         val c = cli()
         if (c.isEmpty()) return "módulo ausente"
@@ -147,38 +147,6 @@ object FusaoBridge {
         return parseFasToml(RootShell.run("\"$c\" fas list 2>/dev/null").output)
     }
 
-    suspend fun preloadStatus(): List<String> {
-        val c = cli()
-        if (c.isEmpty()) return listOf("módulo ausente")
-        return RootShell.run("\"$c\" preload status 2>&1").output
-    }
-
-    suspend fun preloadPrepare(pkg: String = ""): List<String> {
-        val c = cli()
-        if (c.isEmpty()) return listOf("módulo ausente")
-        val safe = pkg.trim().replace(Regex("[^A-Za-z0-9_.]"), "")
-        val target = if (safe.isEmpty()) "all" else safe
-        return RootShell.run("\"$c\" preload prepare $target 2>&1").output
-    }
-
-    suspend fun preloadNow(pkg: String = ""): List<String> {
-        val c = cli()
-        if (c.isEmpty()) return listOf("módulo ausente")
-        val safe = pkg.trim().replace(Regex("[^A-Za-z0-9_.]"), "")
-        val cmd = if (safe.isEmpty()) "\"$c\" preload now 2>&1" else "\"$c\" preload now $safe 2>&1"
-        return RootShell.run(cmd).output
-    }
-
-    /** Prepara/grava o pack para um pacote específico da gamelist ou todos os elegíveis. */
-    suspend fun preloadRecord(pkg: String = "", secs: Int = 20): List<String> {
-        val c = cli()
-        if (c.isEmpty()) return listOf("módulo ausente")
-        val safe = pkg.trim().replace(Regex("[^A-Za-z0-9_.]"), "")
-        val s = secs.coerceIn(1, 120)
-        val cmd = if (safe.isEmpty()) "\"$c\" preload record $s 2>&1" else "\"$c\" preload record $safe $s 2>&1"
-        return RootShell.run(cmd).output
-    }
-
     /** Interpreta o retorno do CLI `fusao ramclean now` (exit 0 para ok/partial/noop; exit != 0 reservado para falha). */
     internal fun parseRamcleanNowResult(result: ShellRunResult): List<String> {
         if (result.isSuccess) return result.output
@@ -186,6 +154,23 @@ object FusaoBridge {
         if (parsed.lastStatus == "fail") return result.output
         val detail = failMessage(result.output, "ramclean falhou (exit=${result.exitCode})")
         return listOf("ramclean fail $detail") + result.output
+    }
+
+    /**
+     * Bloqueio de chamadas/SMS: `fusao block grant|revoke` (módulo >= 2.13.0) concede ou devolve o papel de
+     * triagem, o acesso a notificações e as permissões do app. As regras ficam no app, não passam por aqui.
+     */
+    suspend fun blockAccess(grant: Boolean): String {
+        val c = cli()
+        if (c.isEmpty()) return "módulo ausente"
+        val verb = if (grant) "grant" else "revoke"
+        val r = RootShell.run("\"$c\" block $verb 2>&1")
+        // módulo < 2.13.0 não conhece `block`: responde com a lista de comandos
+        if (r.output.any { it.startsWith("fusao: profile|") }) {
+            return "FALHOU: este módulo não tem o bloqueio; atualize para o 2.13.0"
+        }
+        if (!r.isSuccess) return failMessage(r.output, "o módulo não respondeu ao block $verb")
+        return r.output.lastOrNull()?.trim().orEmpty()
     }
 
     suspend fun ramcleanNow(): List<String> {
@@ -262,7 +247,6 @@ data class FusaoStatus(
     val framework: Boolean = false,
     val perf: Boolean = false,
     val dnd: Boolean = false,
-    val preload: Boolean = false,
     val ramclean: Boolean = false,
     val gos: Boolean = true,
     /** FAS (fas-rs, fork M54): dono da CPU no jogo quando ligado. Vazio/false em módulo < 2.11.0. */
@@ -289,14 +273,14 @@ data class FusaoStatus(
         get() = profile.isNotEmpty() && profileState != "failed"
 
     val activeFlagsCount: Int
-        get() = listOf(fusaod, framework, perf, dnd, preload, ramclean, gos, fas && fasSupported).count { it }
+        get() = listOf(fusaod, framework, perf, dnd, ramclean, gos, fas && fasSupported).count { it }
 
     /**
-     * Total de chaves na aba Flags: 6 fixas + o FAS (módulo >= 2.11.0) + o ramclean só enquanto ligado (saiu do
+     * Total de chaves na aba Flags: 5 fixas + o FAS (módulo >= 2.11.0) + o ramclean só enquanto ligado (saiu do
      * game-enter no módulo 2.12.0; a chave aparece só para desligar a flag de um módulo antigo).
      */
     val flagsTotal: Int
-        get() = 6 + (if (fasSupported) 1 else 0) + (if (ramclean) 1 else 0)
+        get() = 5 + (if (fasSupported) 1 else 0) + (if (ramclean) 1 else 0)
 
     val runningDaemonsCount: Int
         get() = listOf(fusaodRunning, watchRunning, observerRunning).count { it }
@@ -306,7 +290,6 @@ data class FusaoStatus(
         "framework" -> framework
         "perf" -> perf
         "dnd" -> dnd
-        "preload" -> preload
         "ramclean" -> ramclean
         "gos" -> gos
         "fas" -> fas
@@ -364,7 +347,7 @@ data class FusaoStatus(
                         "game-active" -> gameActive = v
                         "display" -> display = v
                         "thermal" -> thermal = v.removePrefix("thermal=")
-                        "fusaod", "framework", "perf", "dnd", "preload", "ramclean", "gos", "fas" ->
+                        "fusaod", "framework", "perf", "dnd", "ramclean", "gos", "fas" ->
                             flags[k] = v == "on"
                         "fas_mode" -> {
                             fasSupported = true
@@ -392,7 +375,6 @@ data class FusaoStatus(
                 framework = flags["framework"] == true,
                 perf = flags["perf"] == true,
                 dnd = flags["dnd"] == true,
-                preload = flags["preload"] == true,
                 ramclean = flags["ramclean"] == true,
                 gos = flags["gos"] != false,
                 fas = flags["fas"] == true,
@@ -408,115 +390,6 @@ data class FusaoStatus(
                 fusaodRunning = daemons["fusaod"] == true,
                 watchRunning = daemons["watch"] == true,
                 observerRunning = daemons["observer"] == true,
-            )
-        }
-    }
-}
-
-/**
- * Extrai metadados estruturados reais a partir da saída textual de `fusao preload status`,
- * distinguindo preload habilitado, preparação solicitada/concluída, execução concluída e falha.
- */
-@Immutable
-data class PreloadTelemetry(
-    val stateLabel: String = "—",
-    val isEnabled: Boolean = false,
-    val preloadState: String = "disabled",
-    val eligibleCount: Int = 0,
-    val eligiblePkgs: List<String> = emptyList(),
-    val lastResult: String = "",
-    val memAvailKb: String = "",
-    val packCount: String = "0",
-    val packFiles: List<String> = emptyList(),
-    val recentEvents: List<String> = emptyList(),
-) {
-    val statusBadgeLabel: String
-        get() = when (preloadState) {
-            "executed" -> "EXECUÇÃO CONCLUÍDA"
-            "prepared" -> "PACKS PREPARADOS"
-            "armed" -> "PRELOAD HABILITADO"
-            "failed" -> "FALHA NO PRELOAD"
-            else -> if (isEnabled) "PRELOAD HABILITADO" else "DESATIVADO"
-        }
-
-    companion object {
-        fun fromLines(lines: List<String>): PreloadTelemetry {
-            if (lines.isEmpty()) return PreloadTelemetry()
-            var stateLabel = "—"
-            var isEnabled = false
-            var preloadState = "disabled"
-            var eligibleCount = 0
-            var eligiblePkgs: List<String> = emptyList()
-            var lastResult = ""
-            var memAvailKb = ""
-            var packCount = "0"
-            val packs = mutableListOf<String>()
-            val events = mutableListOf<String>()
-            var inEvents = false
-
-            for (raw in lines) {
-                val line = raw.trim()
-                if (line.isEmpty()) continue
-                if (line.startsWith("---")) {
-                    inEvents = true
-                    continue
-                }
-                if (!inEvents) {
-                    when {
-                        line.startsWith("preload=") -> {
-                            stateLabel = line.removePrefix("preload=")
-                            isEnabled = stateLabel.startsWith("on")
-                        }
-                        line.startsWith("preload_state=") -> {
-                            preloadState = line.removePrefix("preload_state=").trim()
-                        }
-                        line.startsWith("eligible_count=") -> {
-                            eligibleCount = line.removePrefix("eligible_count=").trim().toIntOrNull() ?: 0
-                        }
-                        line.startsWith("eligible_pkgs=") -> {
-                            val csv = line.removePrefix("eligible_pkgs=").trim()
-                            eligiblePkgs = if (csv.isEmpty()) emptyList() else csv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                        }
-                        line.startsWith("last_result=") -> {
-                            lastResult = line.removePrefix("last_result=").trim()
-                        }
-                        line.startsWith("mem_avail_kb=") -> {
-                            memAvailKb = line.removePrefix("mem_avail_kb=").trim()
-                        }
-                        line.startsWith("packs:") -> {
-                            val rawCount = line.removePrefix("packs:").trim()
-                            packCount = if (rawCount.startsWith("nenhum", ignoreCase = true)) {
-                                "0"
-                            } else {
-                                rawCount.substringBefore(" ").ifEmpty { "0" }
-                            }
-                        }
-                        line.endsWith(".pack") || line.contains(".pack") -> {
-                            packs.add(line)
-                        }
-                    }
-                } else {
-                    events.add(line)
-                    if (line.contains("preload ok pkg=")) {
-                        preloadState = "executed"
-                    } else if (line.contains("preload-record ok") || line.contains("preload-prepare ok")) {
-                        if (preloadState != "executed") preloadState = "prepared"
-                    } else if (line.contains("falhou") || line.contains("reason=low_ram")) {
-                        preloadState = "failed"
-                    }
-                }
-            }
-            return PreloadTelemetry(
-                stateLabel = stateLabel,
-                isEnabled = isEnabled,
-                preloadState = preloadState,
-                eligibleCount = eligibleCount,
-                eligiblePkgs = eligiblePkgs,
-                lastResult = lastResult,
-                memAvailKb = memAvailKb,
-                packCount = packCount,
-                packFiles = packs,
-                recentEvents = events,
             )
         }
     }

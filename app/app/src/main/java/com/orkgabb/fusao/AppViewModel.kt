@@ -13,8 +13,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,7 +23,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** Uma ação longa por vez (a UI trava só a linha ocupada, nunca a tela). */
-enum class Busy { NONE, REFRESH, FLAG, PRELOAD, RECORD, RAMCLEAN, GAMELIST, LOG, BUGREPORT, APPS }
+enum class Busy { NONE, REFRESH, FLAG, RAMCLEAN, BLOCK, GAMELIST, LOG, BUGREPORT, APPS }
 
 @Immutable
 data class AppEntry(val pkg: String, val label: String)
@@ -104,10 +102,7 @@ data class FusaoUiState(
     val status: FusaoStatus = FusaoStatus(),
     val busy: Busy = Busy.NONE,
     val activeTarget: String = "",
-    val recordRemainingSec: Int = 0,
     val notice: String = "",
-    val preloadInfo: List<String> = emptyList(),
-    val selectedPreloadPkg: String = "",
     val ramcleanInfo: List<String> = emptyList(),
     val games: List<String> = emptyList(),
     /** Alvos do FAS por jogo (pkg -> lista), lidos de `fusao fas list` (sem regravar a lista do fas-rs). */
@@ -129,7 +124,6 @@ class FusaoViewModel : ViewModel() {
     val state: StateFlow<FusaoUiState> = _state.asStateFlow()
 
     private val actionMutex = Mutex()
-    private var recordCountdownJob: Job? = null
 
     private fun launchLocked(busy: Busy, target: String, block: suspend () -> Unit) {
         viewModelScope.launch {
@@ -224,7 +218,6 @@ class FusaoViewModel : ViewModel() {
             val version = if (present) FusaoBridge.moduleVersion() else ""
             val cur = _state.value
             val games = if (present) FusaoBridge.gamelist() else emptyList()
-            val pInfo = if (present && cur.preloadInfo.isNotEmpty()) FusaoBridge.preloadStatus() else cur.preloadInfo
             val rInfo = if (present && cur.ramcleanInfo.isNotEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
             val lLines = if (present && cur.logLines.isNotEmpty()) {
                 FusaoBridge.logTail(cur.logLineLimit, cur.logFusaod)
@@ -239,7 +232,6 @@ class FusaoViewModel : ViewModel() {
                     status = st,
                     moduleVersion = version,
                     games = games,
-                    preloadInfo = pInfo,
                     ramcleanInfo = rInfo,
                     logLines = lLines,
                     busy = Busy.NONE,
@@ -256,11 +248,6 @@ class FusaoViewModel : ViewModel() {
             val out = FusaoBridge.setFlag(cmd, on)
             val st = FusaoBridge.status(quick = quickStatusAfterFlag(cmd, on))
             val cur = _state.value
-            val pInfo = if (cmd == "preload") {
-                FusaoBridge.preloadStatus()
-            } else {
-                cur.preloadInfo
-            }
             val rInfo = if (cmd == "ramclean" && cur.ramcleanInfo.isNotEmpty()) {
                 FusaoBridge.ramcleanStatus()
             } else {
@@ -269,7 +256,6 @@ class FusaoViewModel : ViewModel() {
             _state.update {
                 it.copy(
                     status = st,
-                    preloadInfo = pInfo,
                     ramcleanInfo = rInfo,
                     busy = Busy.NONE,
                     activeTarget = "",
@@ -309,121 +295,6 @@ class FusaoViewModel : ViewModel() {
         }
     }
 
-    fun selectPreloadTarget(pkg: String) {
-        _state.update { it.copy(selectedPreloadPkg = pkg) }
-    }
-
-    /** Carrega estado de Preload, gamelist e RAM clean de forma coordenada sem disputa de estado Busy. */
-    fun loadPreloadAndRamcleanIfEmpty() {
-        if (!guardRoot()) return
-        val cur0 = _state.value
-        if (cur0.preloadInfo.isNotEmpty() && cur0.ramcleanInfo.isNotEmpty()) return
-        launchLocked(Busy.PRELOAD, "preload_init") {
-            val cur = _state.value
-            val pInfo = if (cur.preloadInfo.isEmpty()) FusaoBridge.preloadStatus() else cur.preloadInfo
-            val rInfo = if (cur.ramcleanInfo.isEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
-            val games = if (cur.games.isEmpty()) FusaoBridge.gamelist() else cur.games
-            _state.update {
-                it.copy(
-                    preloadInfo = pInfo,
-                    ramcleanInfo = rInfo,
-                    games = games,
-                    busy = Busy.NONE,
-                    activeTarget = "",
-                )
-            }
-        }
-    }
-
-    fun loadPreload() {
-        if (!guardRoot()) return
-        launchLocked(Busy.PRELOAD, "preload_status") {
-            val info = FusaoBridge.preloadStatus()
-            _state.update { it.copy(preloadInfo = info, busy = Busy.NONE, activeTarget = "") }
-        }
-    }
-
-    fun preloadPrepare(targetPkg: String = _state.value.selectedPreloadPkg) {
-        if (!guardRoot()) return
-        launchLocked(Busy.PRELOAD, "preload_prepare") {
-            val out = FusaoBridge.preloadPrepare(targetPkg)
-            val info = FusaoBridge.preloadStatus()
-            val st = FusaoBridge.status(quick = true)
-            _state.update {
-                it.copy(
-                    preloadInfo = info + listOf("---") + out,
-                    status = st,
-                    busy = Busy.NONE,
-                    activeTarget = "",
-                    notice = out.lastOrNull().orEmpty(),
-                )
-            }
-        }
-    }
-
-    fun preloadNow(targetPkg: String = _state.value.selectedPreloadPkg) {
-        if (!guardRoot()) return
-        launchLocked(Busy.PRELOAD, "preload_now") {
-            val out = FusaoBridge.preloadNow(targetPkg)
-            val info = FusaoBridge.preloadStatus()
-            val st = FusaoBridge.status(quick = true)
-            _state.update {
-                it.copy(
-                    preloadInfo = info + listOf("---") + out,
-                    status = st,
-                    busy = Busy.NONE,
-                    activeTarget = "",
-                    notice = out.lastOrNull().orEmpty(),
-                )
-            }
-        }
-    }
-
-    fun preloadRecord(targetPkg: String = _state.value.selectedPreloadPkg) {
-        if (!guardRoot()) return
-        launchLocked(Busy.RECORD, "preload_record") {
-            val inGameNow = _state.value.status.inGame
-            recordCountdownJob?.cancel()
-            val secs = if (inGameNow) 20 else 5
-            _state.update {
-                it.copy(
-                    recordRemainingSec = secs,
-                    notice = if (inGameNow) {
-                        "Observando o jogo ativo (~20s)..."
-                    } else {
-                        "Gravando o pack dos jogos da lista..."
-                    },
-                )
-            }
-            if (inGameNow) {
-                recordCountdownJob = viewModelScope.launch {
-                    for (rem in secs downTo 1) {
-                        _state.update { it.copy(recordRemainingSec = rem) }
-                        delay(1000L)
-                    }
-                    _state.update { it.copy(recordRemainingSec = 0) }
-                }
-            }
-            val out = try {
-                FusaoBridge.preloadRecord(targetPkg, secs)
-            } finally {
-                recordCountdownJob?.cancel()
-            }
-            val info = FusaoBridge.preloadStatus()
-            val st = FusaoBridge.status(quick = true)
-            _state.update {
-                it.copy(
-                    preloadInfo = info + listOf("---") + out,
-                    status = st,
-                    busy = Busy.NONE,
-                    activeTarget = "",
-                    recordRemainingSec = 0,
-                    notice = out.lastOrNull().orEmpty(),
-                )
-            }
-        }
-    }
-
     fun ramcleanNow() {
         if (!guardRoot()) return
         launchLocked(Busy.RAMCLEAN, "ramclean_now") {
@@ -451,6 +322,34 @@ class FusaoViewModel : ViewModel() {
                     notice = noticeText,
                 )
             }
+        }
+    }
+
+    /** Estado do RAM clean na 1ª vez que a aba Status aparece com root e módulo. */
+    fun loadRamcleanIfEmpty() {
+        if (!_state.value.rooted || _state.value.ramcleanInfo.isNotEmpty()) return
+        launchLocked(Busy.RAMCLEAN, "ramclean_init") {
+            if (_state.value.ramcleanInfo.isNotEmpty()) return@launchLocked
+            val info = FusaoBridge.ramcleanStatus()
+            _state.update { it.copy(ramcleanInfo = info, busy = Busy.NONE, activeTarget = "") }
+        }
+    }
+
+    /** Bloqueio de chamadas/SMS: concede papel de triagem, listener e permissões pelo módulo (root). */
+    fun blockGrant() {
+        if (!guardRoot()) return
+        launchLocked(Busy.BLOCK, "block_grant") {
+            val out = FusaoBridge.blockAccess(grant = true)
+            _state.update { it.copy(busy = Busy.NONE, activeTarget = "", notice = out) }
+        }
+    }
+
+    /** Devolve o papel de triagem (a quem tinha antes) e o acesso a notificações. */
+    fun blockRevoke() {
+        if (!guardRoot()) return
+        launchLocked(Busy.BLOCK, "block_revoke") {
+            val out = FusaoBridge.blockAccess(grant = false)
+            _state.update { it.copy(busy = Busy.NONE, activeTarget = "", notice = out) }
         }
     }
 

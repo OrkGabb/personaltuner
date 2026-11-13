@@ -24,7 +24,7 @@ atualizar `handoff.md`/`status.md` (têm paths absolutos).
 - O app NUNCA escreve sysfs. Tudo via CLI `fusao` como root (libsu) + flags em
   `/data/adb/fusao/` + logs (`fusao.log`/`fusaod.log`) + packs
   `/data/adb/fusao/preload/*.pack` + `gamelist.txt`. Abas atuais:
-  Status / Flags (7 toggles) / Preload (status, now, record 20s + ramclean now) /
+  Status (+ ramclean now) / Flags / Bloqueio (chamadas e SMS; regras no app, `fusao block` p/ permissões) /
   Jogos (lista + picker) / Log (+ bugreport). Root re-checado a cada abertura.
 - Detalhe v2.9.1+: DND é armado (só liga no próximo game-enter), `action.sh` do
   módulo abre o app FUSAO.

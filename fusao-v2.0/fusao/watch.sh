@@ -5,8 +5,6 @@
 #   (não força framework.sh game no enter nem reseta para idle apagando o perfil no exit).
 # - Coordena fusaod serve (ativo somente em sessão de jogo nos perfis game/balanced,
 #   parado em idle/battery para evitar sobrescrita de sysfs e consumo em background).
-# - Protege o cache de preload recém-aquecido (lê preload.last p/ não repetir WILLNEED por cima
-#   de um preload manual feito antes de abrir o jogo).
 # - 2.12.0: sem ramclean (sync + drop_caches + compact_memory) no game-enter: esvaziar o pagecache no
 #   launch faz o jogo reler do UFS o que já estava em RAM, e a compactação síncrona trava junto (doutrina
 #   do projeto: drop_caches = stutter, recusado). Limpeza só manual: fusao ramclean now.
@@ -29,10 +27,7 @@ nap_init watch
 
 GAMEFILE="$M54_DIR/game-active.txt"
 GAMELIST="$M54_DIR/gamelist.txt"
-PRELOAD_LAST="$M54_DIR/preload.last"
 LAST=""
-LAST_HEAVY_PKG=""
-LAST_HEAVY_TS=0
 log "watch v2.0: inicio (gamelist=$GAMELIST)"
 
 # read_gamefile — pacote em foco (game-active.txt) em CUR, só com builtins: era $(...) + printf|tr a cada 2 s
@@ -60,14 +55,6 @@ find_fusaod() {
   done
   _b=$(command -v fusaod 2>/dev/null)
   [ -n "$_b" ] && [ -x "$_b" ] && { echo "$_b"; return 0; }
-  return 1
-}
-
-find_fusao_cli() {
-  local _c
-  for _c in "$M54_DIR/fusao-cli" /system/bin/fusao /data/adb/ksu/bin/fusao /data/adb/ap/bin/fusao /data/adb/modules/fusao/system/bin/fusao /data/adb/modules/encore/system/bin/fusao "$M54_DIR/../system/bin/fusao"; do
-    [ -f "$_c" ] && { echo "$_c"; return 0; }
-  done
   return 1
 }
 
@@ -180,20 +167,6 @@ if ! observer_alive; then
   relaunch_observer
 fi
 
-recently_preloaded() {
-  local _pkg="$1" _now="$2" _lp _lts _rest
-  [ -f "$PRELOAD_LAST" ] || return 1
-  while read -r _lp _lts _rest; do
-    if [ "$_lp" = "$_pkg" ]; then
-      case "$_lts" in ''|*[!0-9]*) continue;; esac
-      if [ $((_now - _lts)) -ge 0 ] && [ $((_now - _lts)) -lt 180 ]; then
-        return 0
-      fi
-    fi
-  done < "$PRELOAD_LAST"
-  return 1
-}
-
 fire_enter() {
   _pkg="$1"
   HOOKS=""
@@ -204,37 +177,6 @@ fire_enter() {
   if [ -f "$M54_DIR/dnd.enabled" ] && [ -x "$(dirname "$0")/dnd.sh" ]; then
     M54_DIR="$M54_DIR" nohup sh "$(dirname "$0")/dnd.sh" on >>"$M54_DIR/fusao.log" 2>&1 &
     HOOKS="$HOOKS dnd"
-  fi
-  _now_h=$(uptime_s)
-  case "$_now_h" in ''|*[!0-9]*) _now_h=0;; esac
-  _skip_heavy=0
-  if [ "$_pkg" = "$LAST_HEAVY_PKG" ] && [ "$LAST_HEAVY_TS" != "0" ] && [ $((_now_h - LAST_HEAVY_TS)) -lt 180 ]; then
-    _skip_heavy=1
-  elif recently_preloaded "$_pkg" "$_now_h"; then
-    # Se o usuário acabou de aquecer o cache manualmente no app antes de abrir o jogo,
-    # NÃO repetir WILLNEED por cima.
-    _skip_heavy=1
-  fi
-  if [ -f "$M54_DIR/preload.enabled" ]; then
-    if [ "$_skip_heavy" = 0 ]; then
-      _cli=$(find_fusao_cli)
-      if [ -n "$_cli" ]; then
-        M54_DIR="$M54_DIR" nohup sh "$_cli" preload now "$_pkg" >>"$M54_DIR/fusao.log" 2>&1 &
-        HOOKS="$HOOKS preload"
-      else
-        _b=$(find_fusaod)
-        if [ -n "$_b" ]; then
-          nohup "$_b" preload "$_pkg" >>"$M54_DIR/fusao.log" 2>&1 &
-          HOOKS="$HOOKS preload"
-        fi
-      fi
-    else
-      HOOKS="$HOOKS preload(warm)"
-    fi
-  fi
-  if [ "$_skip_heavy" = 0 ] && [ -f "$M54_DIR/preload.enabled" ]; then
-    LAST_HEAVY_PKG="$_pkg"
-    LAST_HEAVY_TS="$_now_h"
   fi
   # Jogo fora do FAS (fas.targets: pkg=off) vindo direto de outro jogo: o fas-rs do anterior sai ANTES do
   # perfil, que então escreve a CPU por último (mesma ordem do exit: o fas-rs sai com min=max cravados)
@@ -274,10 +216,6 @@ fire_exit() {
   # Sem checar o .enabled: desligado no meio do jogo, o daemon ainda pode estar vivo.
   [ -x "$(dirname "$0")/fas.sh" ] && M54_DIR="$M54_DIR" sh "$(dirname "$0")/fas.sh" exit 2>/dev/null
   sync_fusaod_session 0
-  if [ -n "$_exited_pkg" ] && ! pidof "$_exited_pkg" >/dev/null 2>&1; then
-    LAST_HEAVY_PKG=""
-    LAST_HEAVY_TS=0
-  fi
   if [ -f "$M54_DIR/perf.enabled" ] && [ -x "$(dirname "$0")/perf.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/perf.sh" exit "$_exited_pkg" 2>/dev/null
   fi

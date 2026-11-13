@@ -20,7 +20,7 @@ object RootShell {
         Shell.setDefaultBuilder(
             Shell.Builder.create()
                 .setFlags(Shell.FLAG_REDIRECT_STDERR)
-                // preload record observa por ~20s; preload de jogo grande leva ~2s.
+                // a ação mais longa (ramclean now, bugreport) leva poucos segundos;
                 // 60s cobre tudo sem travar a UI (tudo roda em Dispatchers.IO).
                 .setTimeout(60)
         )

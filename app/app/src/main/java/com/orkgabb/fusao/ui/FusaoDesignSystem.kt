@@ -857,74 +857,6 @@ fun ReactorCoreEmblem(
 }
 
 /**
- * Anel de contagem regressiva de 20 segundos para a operação `fusao preload record 20`.
- */
-@Composable
-fun PreloadCountdownGauge(
-    remainingSec: Int,
-    totalSec: Int = 20,
-    modifier: Modifier = Modifier,
-) {
-    val progress = (remainingSec.coerceIn(0, totalSec).toFloat() / totalSec.toFloat())
-    val animatedProgress by animateFloatAsState(
-        targetValue = progress,
-        animationSpec = tween(durationMillis = 350),
-        label = "recordCountdown",
-    )
-
-    Box(
-        modifier = modifier
-            .size(72.dp)
-            .drawWithCache {
-                val stroke = 5.dp.toPx()
-                val inset = stroke / 2f + 2.dp.toPx()
-                val arcSize = Size(size.width - inset * 2, size.height - inset * 2)
-                val sweepBrush = Brush.sweepGradient(
-                    colors = listOf(FusaoPalette.IgnisAmber, FusaoPalette.CryoCyan, FusaoPalette.PlasmaViolet)
-                )
-                onDrawBehind {
-                    drawArc(
-                        color = FusaoPalette.GridHairline,
-                        startAngle = 0f,
-                        sweepAngle = 360f,
-                        useCenter = false,
-                        topLeft = Offset(inset, inset),
-                        size = arcSize,
-                        style = Stroke(width = stroke),
-                    )
-                    drawArc(
-                        brush = sweepBrush,
-                        startAngle = -90f,
-                        sweepAngle = 360f * animatedProgress,
-                        useCenter = false,
-                        topLeft = Offset(inset, inset),
-                        size = arcSize,
-                        style = Stroke(width = stroke, cap = StrokeCap.Round),
-                    )
-                }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "${remainingSec}s",
-                style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
-                color = FusaoPalette.IgnisAmber,
-                maxLines = 1,
-                softWrap = false,
-            )
-            Text(
-                text = "REC",
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
-                color = FusaoPalette.CryoCyan,
-                maxLines = 1,
-                softWrap = false,
-            )
-        }
-    }
-}
-
-/**
  * Renderiza o ícone real do aplicativo via PackageManager (sem permissões extras)
  * ou um brasão hexagonal tático com monograma quando o pacote não está instalado.
  */
@@ -1014,7 +946,7 @@ fun AppIconBadge(
  * Ícones vetoriais desenhados nativamente em Canvas para as 6 áreas de navegação
  * e subsistemas técnicos (zero dependência de material-icons-extended pesado).
  */
-enum class FusaoNavIcon { STATUS, FLAGS, PRELOAD, GAMES, PIXELS, LOG }
+enum class FusaoNavIcon { STATUS, FLAGS, BLOCK, GAMES, PIXELS, LOG }
 
 @Composable
 fun FusaoVectorGlyph(
@@ -1058,24 +990,24 @@ fun FusaoVectorGlyph(
                     )
                 }
             }
-            FusaoNavIcon.PRELOAD -> {
-                drawRoundRect(
-                    color = color,
-                    topLeft = Offset(w * 0.22f, h * 0.22f),
-                    size = Size(w * 0.56f, h * 0.56f),
-                    cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
-                    style = stroke,
-                )
-                for (f in listOf(0.36f, 0.64f)) {
-                    drawLine(color, Offset(w * f, h * 0.06f), Offset(w * f, h * 0.22f), stroke.width)
-                    drawLine(color, Offset(w * f, h * 0.78f), Offset(w * f, h * 0.94f), stroke.width)
-                    drawLine(color, Offset(w * 0.06f, h * f), Offset(w * 0.22f, h * f), stroke.width)
-                    drawLine(color, Offset(w * 0.78f, h * f), Offset(w * 0.94f, h * f), stroke.width)
+            FusaoNavIcon.BLOCK -> {
+                // escudo com a barra de "barrado": chamadas e SMS bloqueados
+                val shield = Path().apply {
+                    moveTo(w * 0.5f, h * 0.07f)
+                    lineTo(w * 0.86f, h * 0.22f)
+                    lineTo(w * 0.86f, h * 0.52f)
+                    cubicTo(w * 0.86f, h * 0.74f, w * 0.68f, h * 0.88f, w * 0.5f, h * 0.94f)
+                    cubicTo(w * 0.32f, h * 0.88f, w * 0.14f, h * 0.74f, w * 0.14f, h * 0.52f)
+                    lineTo(w * 0.14f, h * 0.22f)
+                    close()
                 }
-                drawRect(
-                    color = color.copy(alpha = 0.7f),
-                    topLeft = Offset(w * 0.38f, h * 0.38f),
-                    size = Size(w * 0.24f, h * 0.24f),
+                drawPath(shield, color = color, style = stroke)
+                drawLine(
+                    color = color,
+                    start = Offset(w * 0.34f, h * 0.36f),
+                    end = Offset(w * 0.66f, h * 0.66f),
+                    strokeWidth = stroke.width,
+                    cap = StrokeCap.Round,
                 )
             }
             FusaoNavIcon.GAMES -> {

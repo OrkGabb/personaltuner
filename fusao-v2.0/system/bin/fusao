@@ -3,29 +3,18 @@
 # Uso: fusao profile [battery|balanced|game] | fusao framework [on|off|game|balanced|battery|idle]
 #      fusao perf [on|off] | fusao fusaod [on|off] | fusao dnd [on|off]
 #      fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|off|30,45,60>|gen|list]
-#      fusao preload [on|off|prepare [pkg|all]|now [pkg|all]|record [pkg] [s]|status]
 #      fusao display [show|720p|810p|900p|reset|adaptive|120hz|60hz|hz-reset|hz ...]
-#      fusao gamelist [list|add <pkg>|del <pkg>|count|eligible|set <pkg>...]
+#      fusao block [status|grant|revoke [perms]|log [n]]
+#      fusao gamelist [list|add <pkg>|del <pkg>|count|set <pkg>...]
 #      fusao gos [on|off] | fusao reseed-stock
 #      fusao status [quick] | fusao log | fusao bugreport | fusao kill-switch [on|off]
 M54_DIR=${M54_DIR:-/data/adb/fusao}
 MODDIR_FUSAO=/data/adb/modules/encore/fusao
 [ -d "$M54_DIR" ] || M54_DIR="$MODDIR_FUSAO"
 R="${FS_ROOT:-}"
-DATA_ROOT="${PRELOAD_DATA_ROOT:-$R}"
 
 log_msg() {
   echo "$(date '+%H:%M:%S' 2>/dev/null) $*" >> "$M54_DIR/fusao.log" 2>/dev/null
-}
-
-uptime_sec() {
-  local _u _r
-  if [ -r /proc/uptime ]; then
-    read -r _u _r < /proc/uptime 2>/dev/null
-    echo "${_u%%.*}"
-  else
-    date +%s 2>/dev/null || echo 0
-  fi
 }
 
 find_fusaod() {
@@ -84,211 +73,6 @@ sync_fusaod_for_profile() {
       [ "$_p" = "$$" ] || kill -KILL "$_p" 2>/dev/null
     done
   fi
-}
-
-# --- Subsistema de Preload baseado em gamelist.txt ---
-pkg_has_data() {
-  local _pkg="$1"
-  [ -z "$_pkg" ] && return 1
-  if [ -d "$DATA_ROOT/data/data/$_pkg" ] || \
-     [ -d "$DATA_ROOT/data/media/0/Android/data/$_pkg" ] || \
-     [ -d "$DATA_ROOT/data/media/0/Android/obb/$_pkg" ] || \
-     [ -d "$DATA_ROOT/media/0/Android/data/$_pkg" ] || \
-     [ -d "$DATA_ROOT/media/0/Android/obb/$_pkg" ]; then
-    return 0
-  fi
-  return 1
-}
-
-list_eligible_games() {
-  if [ -n "$PRELOAD_ELIGIBLE_FAKE" ]; then
-    for _p in $PRELOAD_ELIGIBLE_FAKE; do echo "$_p"; done
-    return 0
-  fi
-  [ -f "$M54_DIR/gamelist.txt" ] || return 0
-  local _line
-  while IFS= read -r _line || [ -n "$_line" ]; do
-    # só builtins: printf|tr por linha custava 17 s de parede e 29 s de CPU com os 533 jogos (aparelho 2026-10-22).
-    # Bordas (espaço, tab, CR) saem por expansão; espaço INTERNO cai no tr de sempre, que junta os pedaços
-    # ("com.a.b # jogo" -> "com.a.b#jogo"): mesma saída de antes para qualquer linha.
-    _line=${_line#"${_line%%[![:space:]]*}"}
-    _line=${_line%"${_line##*[![:space:]]}"}
-    case "$_line" in *[[:space:]]*) _line=$(printf "%s" "$_line" | tr -d '[:space:]');; esac
-    case "$_line" in ""|\#*) continue;; esac
-    if pkg_has_data "$_line"; then
-      echo "$_line"
-    fi
-  done < "$M54_DIR/gamelist.txt"
-}
-
-sanitize_pkg() {
-  printf "%s" "$1" | tr '.' '_' | tr -cd 'a-zA-Z0-9_-'
-}
-
-write_preload_state() {
-  local _st="$1" _act="$2" _res="$3"
-  {
-    echo "preload_state=$_st"
-    echo "last_action=$_act"
-    echo "last_result=$_res"
-    echo "updated_ts=$(uptime_sec)"
-  } > "$M54_DIR/preload.state.tmp" 2>/dev/null && mv -f "$M54_DIR/preload.state.tmp" "$M54_DIR/preload.state" 2>/dev/null
-}
-
-read_mem_avail_kb() {
-  if [ -n "$PRELOAD_MEM_AVAIL_KB" ]; then
-    echo "$PRELOAD_MEM_AVAIL_KB"
-    return 0
-  fi
-  local _memf="${R}/proc/meminfo"
-  [ -r "$_memf" ] || _memf="/proc/meminfo"
-  local _av
-  _av=$(awk '/^MemAvailable:/{print $2}' "$_memf" 2>/dev/null)
-  case "$_av" in ''|*[!0-9]*) echo 4000000;; *) echo "$_av";; esac
-}
-
-prepare_pack_one() {
-  local _pkg="$1" _sec="${2:-1}" _san _pack _b _out _seen=0 _wrote=0 _d _f _sz _mt
-  [ -z "$_pkg" ] && return 1
-  if [ -f "$M54_DIR/gamelist.txt" ] && ! grep -Fxq "$_pkg" "$M54_DIR/gamelist.txt" 2>/dev/null; then
-    echo "preload-prepare erro: $_pkg fora da gamelist" >&2
-    return 1
-  fi
-  mkdir -p "$M54_DIR/preload" 2>/dev/null
-  _san=$(sanitize_pkg "$_pkg")
-  _pack="$M54_DIR/preload/${_san}.pack"
-  _b=$(find_fusaod)
-  if [ -n "$_b" ] && [ -z "$DATA_ROOT" ]; then
-    _out=$(FUSAO_PACK_BASE="$M54_DIR" "$_b" preload-record "$_pkg" "$_sec" 2>&1)
-    if [ $? -eq 0 ] && [ -s "$_pack" ]; then
-      echo "$_out"
-      log_msg "$_out"
-      return 0
-    fi
-  elif [ -n "$_b" ] && [ -n "$DATA_ROOT" ]; then
-    _out=$(FUSAO_PACK_BASE="$M54_DIR" "$_b" preload-record "$_pkg" "$_sec" "$DATA_ROOT" 2>&1)
-    if [ $? -eq 0 ] && [ -s "$_pack" ]; then
-      echo "$_out"
-      log_msg "$_out"
-      return 0
-    fi
-  fi
-
-  # Fallback walk determinístico (mesmo formato <mtime> <size> <path> do fusaod)
-  : > "${_pack}.tmp"
-  for _d in \
-    "$DATA_ROOT/data/data/$_pkg" \
-    "$DATA_ROOT/data/media/0/Android/data/$_pkg" \
-    "$DATA_ROOT/data/media/0/Android/obb/$_pkg" \
-    "$DATA_ROOT/media/0/Android/data/$_pkg" \
-    "$DATA_ROOT/media/0/Android/obb/$_pkg"; do
-    [ -d "$_d" ] || continue
-    for _f in $(find "$_d" -type f 2>/dev/null | head -n 500); do
-      case "$_f" in */cache/*|*/code_cache/*|*.log|*.tmp) continue;; esac
-      _seen=$((_seen + 1))
-      _sz=$(wc -c < "$_f" 2>/dev/null | tr -d '[:space:]')
-      case "$_sz" in ''|0|*[!0-9]*) continue;; esac
-      [ "$_sz" -gt 536870912 ] 2>/dev/null && continue
-      _mt=$(stat -c %Y "$_f" 2>/dev/null || stat -f %m "$_f" 2>/dev/null || echo 1)
-      printf "%s %s %s\n" "$_mt" "$_sz" "$_f" >> "${_pack}.tmp"
-      _wrote=$((_wrote + 1))
-      [ "$_wrote" -ge 2000 ] && break
-    done
-  done
-  if [ "$_wrote" -gt 0 ]; then
-    mv -f "${_pack}.tmp" "$_pack" 2>/dev/null
-    _out="preload-record ok pkg=$_pkg seen=$_seen wrote=$_wrote modo=walk"
-    echo "$_out"
-    log_msg "$_out"
-    return 0
-  fi
-  rm -f "${_pack}.tmp" 2>/dev/null
-  return 1
-}
-
-run_preload_one() {
-  local _pkg="$1" _force="${2:-0}" _san _pack _b _out _now _lp _lts _lfiles _lbytes
-  [ -z "$_pkg" ] && return 1
-  if [ -f "$M54_DIR/gamelist.txt" ] && ! grep -Fxq "$_pkg" "$M54_DIR/gamelist.txt" 2>/dev/null; then
-    echo "preload falhou: $_pkg fora da gamelist"
-    return 1
-  fi
-  local _avail
-  _avail=$(read_mem_avail_kb)
-  if [ "$_avail" -lt 800000 ] 2>/dev/null; then
-    _out="preload skip pkg=$_pkg reason=low_ram avail=${_avail}kB"
-    echo "$_out"
-    log_msg "$_out"
-    write_preload_state "failed" "now" "ram_insuficiente (${_avail}kB)"
-    return 2
-  fi
-
-  _now=$(uptime_sec)
-  if [ "$_force" != "1" ] && [ -f "$M54_DIR/preload.last" ]; then
-    while read -r _lp _lts _lfiles _lbytes; do
-      if [ "$_lp" = "$_pkg" ]; then
-        case "$_lts" in ''|*[!0-9]*) continue;; esac
-        if [ $((_now - _lts)) -ge 0 ] && [ $((_now - _lts)) -lt "${PRELOAD_COOLDOWN:-60}" ]; then
-          _out="preload ok pkg=$_pkg files=${_lfiles:-0} bytes=${_lbytes:-0} ms=0 (warm)"
-          echo "$_out"
-          write_preload_state "executed" "now" "$_pkg (warm files=${_lfiles:-0})"
-          return 0
-        fi
-      fi
-    done < "$M54_DIR/preload.last"
-  fi
-
-  _san=$(sanitize_pkg "$_pkg")
-  _pack="$M54_DIR/preload/${_san}.pack"
-  if [ ! -s "$_pack" ]; then
-    prepare_pack_one "$_pkg" 1 >/dev/null 2>&1
-  fi
-
-  _b=$(find_fusaod)
-  if [ -n "$_b" ]; then
-    if [ -n "$DATA_ROOT" ]; then
-      _out=$(FUSAO_PACK_BASE="$M54_DIR" "$_b" preload "$_pkg" "$DATA_ROOT" 2>&1)
-    else
-      _out=$(FUSAO_PACK_BASE="$M54_DIR" "$_b" preload "$_pkg" 2>&1)
-    fi
-    if echo "$_out" | grep -q "^preload ok pkg="; then
-      echo "$_out"
-      log_msg "$_out"
-      _lfiles=$(echo "$_out" | sed -n 's/.*files=\([0-9]*\).*/\1/p')
-      _lbytes=$(echo "$_out" | sed -n 's/.*bytes=\([0-9]*\).*/\1/p')
-      grep -Fv "$_pkg " "$M54_DIR/preload.last" 2>/dev/null > "$M54_DIR/preload.last.tmp" || true
-      echo "$_pkg $_now ${_lfiles:-0} ${_lbytes:-0}" >> "$M54_DIR/preload.last.tmp"
-      mv -f "$M54_DIR/preload.last.tmp" "$M54_DIR/preload.last" 2>/dev/null
-      write_preload_state "executed" "now" "$_pkg (files=${_lfiles:-0} bytes=${_lbytes:-0})"
-      return 0
-    fi
-  fi
-
-  # Fallback de aquecimento via leitura de pack (orçamento máx 64 MB por pacote em shell)
-  if [ -s "$_pack" ]; then
-    local _files=0 _bytes=0 _mt _sz _fp _budget=67108864
-    while read -r _mt _sz _fp; do
-      [ -r "$_fp" ] || continue
-      case "$_sz" in ''|*[!0-9]*) continue;; esac
-      if [ $((_bytes + _sz)) -le "$_budget" ]; then
-        dd if="$_fp" of=/dev/null bs=65536 count=64 >/dev/null 2>&1
-        _files=$((_files + 1))
-        _bytes=$((_bytes + _sz))
-      fi
-    done < "$_pack"
-    if [ "$_files" -gt 0 ]; then
-      _out="preload ok pkg=$_pkg files=$_files bytes=$_bytes ms=1"
-      echo "$_out"
-      log_msg "$_out"
-      grep -Fv "$_pkg " "$M54_DIR/preload.last" 2>/dev/null > "$M54_DIR/preload.last.tmp" || true
-      echo "$_pkg $_now $_files $_bytes" >> "$M54_DIR/preload.last.tmp"
-      mv -f "$M54_DIR/preload.last.tmp" "$M54_DIR/preload.last" 2>/dev/null
-      write_preload_state "executed" "now" "$_pkg (files=$_files bytes=$_bytes)"
-      return 0
-    fi
-  fi
-
-  return 1
 }
 
 cmd="$1"; arg="$2"
@@ -470,174 +254,97 @@ case "$cmd" in
         [ -f "$M54_DIR/dnd.enabled" ] && echo "dnd=on" || echo "dnd=off"
         ;;
     esac;;
-  preload)
+  block)
+    # Bloqueio de chamadas e SMS. O motor e as regras vivem no app FUSAO (armazenamento protegido do app:
+    # segue bloqueando sem root). Aqui fica só o que exige root: papel de triagem de chamadas, acesso a
+    # notificações, permissões e a lista de bateria. O CLI nunca escreve no diretório do app (arquivo criado
+    # por root lá dentro fica ilegível para o app).
+    _bk_pkg="com.orkgabb.fusao"
+    _bk_lsn="$_bk_pkg/$_bk_pkg.block.BlockNotificationListener"
+    _bk_role="android.app.role.CALL_SCREENING"
+    _bk_dir="$R/data/user_de/0/$_bk_pkg/files"
+    _bk_state="$M54_DIR/block.state"
+    _bk_app() { [ -n "$(pm path "$_bk_pkg" 2>/dev/null)" ]; }
+    _bk_holders() { cmd role get-role-holders "$_bk_role" 2>/dev/null | tr ' ,;' '\n\n\n' | grep -v '^$'; }
+    _bk_role_held() { _bk_holders | grep -Fxq "$_bk_pkg"; }
+    _bk_listener() {
+      settings get secure enabled_notification_listeners 2>/dev/null | tr ':' '\n' |
+        grep -Fxq -e "$_bk_lsn" -e "$_bk_pkg/.block.BlockNotificationListener"
+    }
+    _bk_perm() { dumpsys package "$_bk_pkg" 2>/dev/null | grep -q "android.permission.$1: granted=true"; }
+    _bk_idle() { cmd deviceidle whitelist 2>/dev/null | grep -q ",$_bk_pkg,"; }
+    _bk_yn() { "$@" && echo 1 || echo 0; }
+    _bk_status() {
+      echo "block_app=$(_bk_yn _bk_app)"
+      echo "block_role=$(_bk_yn _bk_role_held)"
+      echo "block_listener=$(_bk_yn _bk_listener)"
+      echo "block_sms=$(_bk_yn _bk_perm RECEIVE_SMS)"
+      echo "block_contacts=$(_bk_yn _bk_perm READ_CONTACTS)"
+      _bk_en=$(sed -n 's/^enabled=//p' "$_bk_dir/block.conf" 2>/dev/null | head -n 1)
+      echo "block_enabled=${_bk_en:-0}"
+      _bk_rules=$(grep -c "^rule	" "$_bk_dir/block.conf" 2>/dev/null)
+      echo "block_rules=${_bk_rules:-0}"
+    }
     case "$arg" in
-      on)
-        touch "$M54_DIR/preload.enabled"
-        # Prepara packs automaticamente para os jogos elegíveis instalados caso ainda não haja packs
-        _el=$(list_eligible_games)
-        _prep_cnt=0
-        if [ -n "$_el" ]; then
-          for _ep in $_el; do
-            _esan=$(sanitize_pkg "$_ep")
-            if [ ! -s "$M54_DIR/preload/${_esan}.pack" ]; then
-              prepare_pack_one "$_ep" 1 >/dev/null 2>&1 && _prep_cnt=$((_prep_cnt + 1))
-            else
-              _prep_cnt=$((_prep_cnt + 1))
-            fi
-          done
+      grant)
+        _bk_app || { echo "FALHOU: app FUSAO não instalado"; exit 1; }
+        # 1ª concessão: guarda quem tinha o papel e se o app já estava na lista de bateria, p/ o revoke devolver
+        if [ ! -f "$_bk_state" ]; then
+          _bk_prev=$(_bk_holders | grep -Fxv "$_bk_pkg" | head -n 1)
+          {
+            echo "role_prev=$_bk_prev"
+            echo "idle_prev=$(_bk_yn _bk_idle)"
+          } > "$_bk_state" 2>/dev/null
         fi
-        if [ "$_prep_cnt" -gt 0 ]; then
-          write_preload_state "prepared" "on" "packs prontos ($_prep_cnt elegíveis)"
-        else
-          write_preload_state "armed" "on" "habilitado (aguardando pacotes elegíveis)"
-        fi
-        echo "preload=on"
-        ;;
-      off)
-        rm -f "$M54_DIR/preload.enabled"
-        write_preload_state "disabled" "off" "desativado pelo usuário"
-        echo "preload=off"
-        ;;
-      prepare)
-        _target="${3:-all}"
-        _ok_p=0
-        _tot_p=0
-        if [ "$_target" != "all" ] && [ -n "$_target" ]; then
-          _tot_p=1
-          prepare_pack_one "$_target" 1 && _ok_p=1
-        else
-          _ga=$(cat "$M54_DIR/game-active.txt" 2>/dev/null | tr -d '[:space:]')
-          _list=$(list_eligible_games)
-          [ -n "$_ga" ] && ! echo "$_list" | grep -Fxq "$_ga" 2>/dev/null && _list="$_ga $_list"
-          for _ep in $_list; do
-            [ -z "$_ep" ] && continue
-            _tot_p=$((_tot_p + 1))
-            prepare_pack_one "$_ep" 1 && _ok_p=$((_ok_p + 1))
-          done
-        fi
-        if [ "$_ok_p" -gt 0 ]; then
-          write_preload_state "prepared" "prepare" "${_ok_p}/${_tot_p} pacotes preparados"
-          echo "preload-prepare ok prepared=${_ok_p}/${_tot_p}"
-        else
-          write_preload_state "failed" "prepare" "nenhum pacote elegível com dados encontrados"
-          echo "preload-prepare falhou: nenhum pacote elegível com dados na gamelist"
+        pm grant "$_bk_pkg" android.permission.RECEIVE_SMS >/dev/null 2>&1
+        pm grant "$_bk_pkg" android.permission.READ_CONTACTS >/dev/null 2>&1
+        _bk_role_held || cmd role add-role-holder "$_bk_role" "$_bk_pkg" >/dev/null 2>&1
+        _bk_listener || cmd notification allow_listener "$_bk_lsn" >/dev/null 2>&1
+        _bk_idle || cmd deviceidle whitelist +"$_bk_pkg" >/dev/null 2>&1
+        _bk_status
+        _bk_miss=""
+        _bk_role_held || _bk_miss="$_bk_miss triagem"
+        _bk_listener || _bk_miss="$_bk_miss notificações"
+        _bk_perm RECEIVE_SMS || _bk_miss="$_bk_miss sms"
+        _bk_perm READ_CONTACTS || _bk_miss="$_bk_miss contatos"
+        if [ -n "$_bk_miss" ]; then
+          log_msg "block: grant parcial (faltou:$_bk_miss)"
+          echo "FALHOU: o sistema não concedeu:$_bk_miss"
           exit 1
         fi
+        log_msg "block: grant ok"
+        echo "Bloqueio: permissões concedidas"
         ;;
-      now)
-        _target="${3:-}"
-        _ga=$(cat "$M54_DIR/game-active.txt" 2>/dev/null | tr -d '[:space:]')
-        _ok_run=0
-        _ran_any=0
-        if [ -n "$_target" ] && [ "$_target" != "all" ]; then
-          _ran_any=1
-          run_preload_one "$_target" 1 && _ok_run=1
-        elif [ -n "$_ga" ]; then
-          _ran_any=1
-          run_preload_one "$_ga" 0 && _ok_run=1
-        else
-          # Sem jogo em primeiro plano: usa os pacotes elegíveis instalados da gamelist.txt
-          # (limite de até 3 pacotes por acionamento global p/ respeitar orçamento de RAM)
-          for _ep in $(list_eligible_games | head -n 3); do
-            [ -z "$_ep" ] && continue
-            _ran_any=1
-            run_preload_one "$_ep" 1
-            _rc=$?
-            [ "$_rc" -eq 0 ] && _ok_run=$((_ok_run + 1))
-            [ "$_rc" -eq 2 ] && break
-          done
+      revoke)
+        # `revoke perms` também tira RECEIVE_SMS/READ_CONTACTS; o sistema mata o app ao revogar permissão de
+        # runtime, por isso o app chama só `revoke` (as permissões ficam sem efeito com o bloqueio desligado).
+        _bk_prev=$(sed -n 's/^role_prev=//p' "$_bk_state" 2>/dev/null | head -n 1)
+        _bk_idle_prev=$(sed -n 's/^idle_prev=//p' "$_bk_state" 2>/dev/null | head -n 1)
+        cmd role remove-role-holder "$_bk_role" "$_bk_pkg" >/dev/null 2>&1
+        [ -n "$_bk_prev" ] && cmd role add-role-holder "$_bk_role" "$_bk_prev" >/dev/null 2>&1
+        cmd notification disallow_listener "$_bk_lsn" >/dev/null 2>&1
+        [ "$_bk_idle_prev" = "1" ] || cmd deviceidle whitelist -"$_bk_pkg" >/dev/null 2>&1
+        if [ "$3" = "perms" ]; then
+          pm revoke "$_bk_pkg" android.permission.RECEIVE_SMS >/dev/null 2>&1
+          pm revoke "$_bk_pkg" android.permission.READ_CONTACTS >/dev/null 2>&1
         fi
-        if [ "$_ok_run" -eq 0 ]; then
-          if [ "$_ran_any" -eq 0 ]; then
-            write_preload_state "failed" "now" "nenhum jogo elegível instalado na gamelist"
-            echo "preload falhou: nenhum jogo elegível instalado na gamelist"
-          else
-            write_preload_state "failed" "now" "falha ao aquecer pacotes elegíveis"
-            echo "preload falhou: não foi possível aquecer os dados dos pacotes elegíveis"
-          fi
+        rm -f "$_bk_state" 2>/dev/null
+        _bk_status
+        if _bk_role_held || _bk_listener; then
+          log_msg "block: revoke parcial"
+          echo "FALHOU: o sistema não devolveu a triagem ou o acesso a notificações"
           exit 1
         fi
+        log_msg "block: revoke ok"
+        echo "Bloqueio: triagem e acesso a notificações devolvidos"
         ;;
-      record)
-        # Aceita: fusao preload record [pkg] [segundos] OU fusao preload record [segundos]
-        _arg3="${3:-}"
-        _arg4="${4:-}"
-        _pkg_rec=""
-        _sec_rec="20"
-        case "$_arg3" in
-          "" )
-            _pkg_rec="$(cat "$M54_DIR/game-active.txt" 2>/dev/null | tr -d '[:space:]')"
-            ;;
-          *[!0-9]* )
-            _pkg_rec="$_arg3"
-            [ -n "$_arg4" ] && _sec_rec="$_arg4"
-            ;;
-          * )
-            _sec_rec="$_arg3"
-            _pkg_rec="$(cat "$M54_DIR/game-active.txt" 2>/dev/null | tr -d '[:space:]')"
-            ;;
-        esac
-        if [ -n "$_pkg_rec" ] && [ "$_pkg_rec" != "all" ]; then
-          if prepare_pack_one "$_pkg_rec" "$_sec_rec"; then
-            write_preload_state "prepared" "record" "pack gravado p/ $_pkg_rec"
-          else
-            write_preload_state "failed" "record" "falha ao gravar pack p/ $_pkg_rec"
-            echo "preload-record falhou: sem dados legíveis p/ $_pkg_rec"
-            exit 1
-          fi
-        else
-          # Sem jogo em foco: prepara packs de todos os jogos elegíveis instalados na gamelist.txt
-          _ok_r=0
-          for _ep in $(list_eligible_games); do
-            [ -z "$_ep" ] && continue
-            prepare_pack_one "$_ep" "$_sec_rec" && _ok_r=$((_ok_r + 1))
-          done
-          if [ "$_ok_r" -gt 0 ]; then
-            write_preload_state "prepared" "record" "${_ok_r} packs gerados via gamelist"
-          else
-            write_preload_state "failed" "record" "nenhum jogo elegível instalado na gamelist"
-            echo "preload-record falhou: nenhum jogo elegível instalado na gamelist"
-            exit 1
-          fi
-        fi
+      log)
+        _bk_n="$3"
+        case "$_bk_n" in ''|*[!0-9]*) _bk_n=120;; esac
+        { cat "$_bk_dir/block.log.1" 2>/dev/null; cat "$_bk_dir/block.log" 2>/dev/null; } | tail -n "$_bk_n"
         ;;
-      status)
-        [ -f "$M54_DIR/preload.enabled" ] && echo "preload=on" || echo "preload=off (game-enter não dispara)"
-        _cnt=0
-        if [ -d "$M54_DIR/preload" ]; then
-          _cnt=$(ls "$M54_DIR/preload"/*.pack 2>/dev/null | wc -l | tr -d '[:space:]')
-        fi
-        _el_list=$(list_eligible_games | tr '\n' ',' | sed 's/,$//')
-        _el_cnt=0
-        [ -n "$_el_list" ] && _el_cnt=$(echo "$_el_list" | tr ',' '\n' | grep -c .)
-        _pstate="disabled"
-        if [ -f "$M54_DIR/preload.state" ]; then
-          _pstate=$(grep "^preload_state=" "$M54_DIR/preload.state" 2>/dev/null | cut -d= -f2-)
-        fi
-        if [ ! -f "$M54_DIR/preload.enabled" ] && [ "$_pstate" != "executed" ] && [ "$_pstate" != "prepared" ] && [ "$_pstate" != "failed" ]; then
-          _pstate="disabled"
-        elif [ -f "$M54_DIR/preload.enabled" ] && { [ -z "$_pstate" ] || [ "$_pstate" = "disabled" ]; }; then
-          [ "$_cnt" -gt 0 ] && _pstate="prepared" || _pstate="armed"
-        fi
-        _lres=$(grep "^last_result=" "$M54_DIR/preload.state" 2>/dev/null | cut -d= -f2-)
-        echo "preload_state=${_pstate:-disabled}"
-        echo "eligible_count=${_el_cnt:-0}"
-        echo "eligible_pkgs=${_el_list}"
-        echo "mem_avail_kb=$(read_mem_avail_kb)"
-        [ -n "$_lres" ] && echo "last_result=$_lres"
-        if [ "$_cnt" -gt 0 ]; then
-          echo "packs: ${_cnt}"
-          ls -l "$M54_DIR/preload" 2>/dev/null
-        else
-          echo "packs: nenhum (use 'fusao preload prepare' ou 'fusao preload record')"
-        fi
-        echo "--- último preload/record no log ---"
-        { grep -E "preload ok|preload-record ok|preload-record: fanotify|preload skip|watch: hooks" "$M54_DIR/fusao.log.1" 2>/dev/null; grep -E "preload ok|preload-record ok|preload-record: fanotify|preload skip|watch: hooks" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 5
-        ;;
-      *)
-        [ -f "$M54_DIR/preload.enabled" ] && echo "preload=on" || echo "preload=off"
-        ;;
+      status|"") _bk_status;;
+      *) echo "uso: fusao block [status|grant|revoke [perms]|log [n]]"; exit 1;;
     esac;;
   ramclean)
     case "$arg" in
@@ -1004,7 +711,6 @@ case "$cmd" in
     [ -f "$M54_DIR/framework.enabled" ] && echo "framework=on" || echo "framework=off"
     [ -f "$M54_DIR/perf.enabled" ] && echo "perf=on" || echo "perf=off"
     [ -f "$M54_DIR/dnd.enabled" ] && echo "dnd=on" || echo "dnd=off"
-    [ -f "$M54_DIR/preload.enabled" ] && echo "preload=on" || echo "preload=off"
     [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off"
     [ -f "$M54_DIR/gos_killer.paused" ] && echo "gos=off" || echo "gos=on"
     if [ -f "$M54_DIR/fas.sh" ]; then
@@ -1015,7 +721,7 @@ case "$cmd" in
     echo "display=$(M54_DIR="$M54_DIR" sh "$M54_DIR/display.sh" show 2>/dev/null)"
     echo "thermal=$(grep -E '^thermal=' "$M54_DIR/config" 2>/dev/null | tail -1 | cut -d= -f2-)"
     echo "--- última atividade dos ganchos (foi ou não) ---"
-    { grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|tune: (apply|restore)|perf: (io|proc)|dnd: (on|off)|preload ok|preload-record ok|ramclean (ok|noop|partial|fail)" "$M54_DIR/fusao.log.1" 2>/dev/null; grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|tune: (apply|restore)|perf: (io|proc)|dnd: (on|off)|preload ok|preload-record ok|ramclean (ok|noop|partial|fail)" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 8
+    { grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|tune: (apply|restore)|perf: (io|proc)|dnd: (on|off)|ramclean (ok|noop|partial|fail)" "$M54_DIR/fusao.log.1" 2>/dev/null; grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|tune: (apply|restore)|perf: (io|proc)|dnd: (on|off)|ramclean (ok|noop|partial|fail)" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 8
     pgrep -f "[f]usaod serve" >/dev/null 2>&1 && echo "fusaod=running" || echo "fusaod=stopped"
     pgrep -f "[w]atch.sh" >/dev/null 2>&1 && echo "watch=running" || echo "watch=stopped"
     pgrep -f "[f]usao.observer" >/dev/null 2>&1 && echo "observer=running" || echo "observer=stopped"
@@ -1047,14 +753,13 @@ case "$cmd" in
   gamelist)
     case "$arg" in
       list|"") cat "$M54_DIR/gamelist.txt" 2>/dev/null;;
-      eligible) list_eligible_games;;
       count) wc -l < "$M54_DIR/gamelist.txt" 2>/dev/null | tr -d '[:space:]'; echo "";;
       add) [ -n "$3" ] && { grep -Fxq "$3" "$M54_DIR/gamelist.txt" 2>/dev/null || echo "$3" >> "$M54_DIR/gamelist.txt"; echo "added $3"; };;
       del) [ -n "$3" ] && { grep -Fxv "$3" "$M54_DIR/gamelist.txt" 2>/dev/null > "$M54_DIR/gamelist.tmp"; [ $? -le 1 ] && mv -f "$M54_DIR/gamelist.tmp" "$M54_DIR/gamelist.txt"; echo "removed $3"; };;
       # substituir a lista exige o verbo: um verbo digitado errado não pode apagar a gamelist
       set) [ -n "$3" ] || { echo "uso: fusao gamelist set <pkg> [pkg...]" >&2; exit 1; }
         printf "%s\n" "$3" "$4" "$5" "$6" "$7" | grep -v "^$" > "$M54_DIR/gamelist.txt"; echo "gamelist substituida";;
-      *) echo "fusao gamelist: verbo invalido '$arg' (list|add|del|count|eligible|set); lista intacta" >&2; exit 1;;
+      *) echo "fusao gamelist: verbo invalido '$arg' (list|add|del|count|set); lista intacta" >&2; exit 1;;
     esac;;
-  *) echo "fusao: profile|framework|perf|fusaod|fas|dnd|preload|ramclean|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"; exit 1;;
+  *) echo "fusao: profile|framework|perf|fusaod|fas|dnd|block|ramclean|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"; exit 1;;
 esac

@@ -14,10 +14,10 @@ class StatusQuickTest {
 
     @Test
     fun otherFlagsUseTheQuickStatus() {
-        for (cmd in listOf("fusaod", "framework", "perf", "dnd", "preload", "ramclean", "gos", "fas")) {
+        for (cmd in listOf("fusaod", "framework", "perf", "dnd", "ramclean", "gos", "fas")) {
             assertTrue(cmd, quickStatusAfterFlag(cmd, true))
         }
-        for (cmd in listOf("fusaod", "perf", "dnd", "preload", "ramclean", "gos", "fas")) {
+        for (cmd in listOf("fusaod", "perf", "dnd", "ramclean", "gos", "fas")) {
             assertTrue(cmd, quickStatusAfterFlag(cmd, false))
         }
     }

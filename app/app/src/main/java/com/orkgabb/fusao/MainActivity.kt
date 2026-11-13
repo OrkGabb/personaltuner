@@ -81,6 +81,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.orkgabb.fusao.block.BlockStore
+import com.orkgabb.fusao.block.BlockTab
 import com.orkgabb.fusao.pixels.SmartPixelsStore
 import com.orkgabb.fusao.pixels.SmartPixelsTab
 import com.orkgabb.fusao.ui.AppIconBadge
@@ -91,7 +93,6 @@ import com.orkgabb.fusao.ui.FusaoPalette
 import com.orkgabb.fusao.ui.FusaoTheme
 import com.orkgabb.fusao.ui.FusaoVectorGlyph
 import com.orkgabb.fusao.ui.HudSectionHeader
-import com.orkgabb.fusao.ui.PreloadCountdownGauge
 import com.orkgabb.fusao.ui.ReactorCoreEmblem
 import com.orkgabb.fusao.ui.StatusPulseDot
 import com.orkgabb.fusao.ui.TacticalButton
@@ -132,15 +133,9 @@ private val FLAG_SPECS = listOf(
         accent = FusaoPalette.CryoTurquoise,
     ),
     FlagSpec(
-        cmd = "preload",
-        title = "preload",
-        desc = "Pré-carrega os arquivos do jogo na RAM ao entrar",
-        accent = FusaoPalette.ElectricOrchid,
-    ),
-    FlagSpec(
         cmd = "ramclean",
         title = "ramclean",
-        desc = "Limpava a RAM ao entrar no jogo (módulo 2.12.0 tirou: travava o carregamento). Desligue; limpar agora: aba Preload",
+        desc = "Limpava a RAM ao entrar no jogo (módulo 2.12.0 tirou: travava o carregamento). Desligue; limpar agora: aba Status",
         accent = FusaoPalette.BioEmerald,
     ),
     FlagSpec(
@@ -204,6 +199,8 @@ class MainActivity : ComponentActivity() {
         val pixelsStore = remember(ctx) { SmartPixelsStore.get(ctx) }
         val pixels by pixelsStore.state.collectAsStateWithLifecycle()
         val pixelsBadge = if (pixels.active) "${pixels.config.litPercent}%" else null
+        val blockConfig by remember(ctx) { BlockStore.get(ctx) }.config.collectAsStateWithLifecycle()
+        val blockBadge = if (blockConfig.enabled) "${blockConfig.rules.size}" else null
         // leitura do app aberto também alimenta o perfil do Smart Pixels (além do broadcast do módulo)
         val effectiveProfile = state.status.effectiveProfile
         LaunchedEffect(pixelsStore, effectiveProfile) {
@@ -234,6 +231,7 @@ class MainActivity : ComponentActivity() {
                         gamesCount = state.games.size,
                         inGame = state.status.inGame,
                         pixelsBadge = pixelsBadge,
+                        blockBadge = blockBadge,
                         accentColor = profileAccent,
                     )
                 },
@@ -248,7 +246,7 @@ class MainActivity : ComponentActivity() {
                         return@Column
                     }
 
-                    // Banners de estado de sistema (Root, Módulo, Gravação 20s em andamento e Avisos)
+                    // Banners de estado de sistema (Root, Módulo e Avisos)
                     SystemBannersArea(state)
 
                     // Conteúdo principal das 6 áreas com transição suave
@@ -261,7 +259,14 @@ class MainActivity : ComponentActivity() {
                         when (currentTab) {
                             0 -> StatusTab(state)
                             1 -> FlagsTab(state)
-                            2 -> PreloadTab(state)
+                            2 -> BlockTab(
+                                rooted = state.rooted,
+                                moduleInstalled = state.moduleInstalled,
+                                grantBusy = state.isBusy(Busy.BLOCK),
+                                anyBusy = state.anyBusy(),
+                                onGrant = { vm.blockGrant() },
+                                onRevoke = { vm.blockRevoke() },
+                            )
                             3 -> GamesTab(state)
                             4 -> SmartPixelsTab()
                             5 -> LogTab(state)
@@ -424,13 +429,14 @@ class MainActivity : ComponentActivity() {
         gamesCount: Int,
         inGame: Boolean,
         pixelsBadge: String?,
+        blockBadge: String?,
         accentColor: Color,
     ) {
-        val tabs = remember(activeFlags, flagsTotal, gamesCount, inGame, pixelsBadge) {
+        val tabs = remember(activeFlags, flagsTotal, gamesCount, inGame, pixelsBadge, blockBadge) {
             listOf(
                 Triple("Status", FusaoNavIcon.STATUS, if (inGame) "LIVE" else null),
                 Triple("Flags", FusaoNavIcon.FLAGS, "$activeFlags/$flagsTotal"),
-                Triple("Preload", FusaoNavIcon.PRELOAD, null),
+                Triple("Bloqueio", FusaoNavIcon.BLOCK, blockBadge),
                 Triple("Jogos", FusaoNavIcon.GAMES, if (gamesCount > 0) "$gamesCount" else null),
                 Triple("Pixels", FusaoNavIcon.PIXELS, pixelsBadge),
                 Triple("Log", FusaoNavIcon.LOG, null),
@@ -591,19 +597,7 @@ class MainActivity : ComponentActivity() {
             }
 
             AnimatedVisibility(
-                visible = state.isBusy(Busy.RECORD),
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically(),
-            ) {
-                Banner(
-                    text = "Gravação de Preload ativa (${state.recordRemainingSec}s restantes) — mantenha o jogo em execução.",
-                    accentColor = FusaoPalette.IgnisAmber,
-                    tag = "REC 20S",
-                )
-            }
-
-            AnimatedVisibility(
-                visible = state.notice.isNotEmpty() && !state.isBusy(Busy.RECORD),
+                visible = state.notice.isNotEmpty(),
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically(),
             ) {
@@ -1045,6 +1039,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // LIMPEZA DE RAM MANUAL (MGLRU)
+            item(key = "status_ramclean") {
+                RamcleanPanel(state)
+            }
+
             // DAEMONS DO MÓDULO (fusaod, watch, observer)
             item(key = "status_daemons") {
                 TacticalPanel(
@@ -1150,7 +1149,7 @@ class MainActivity : ComponentActivity() {
     private fun daemonText(running: Boolean): String = if (running) "rodando" else "parado"
 
     // =========================================================================
-    // 2. ÁREA DE FLAGS — OS 7 CONTROLES DE SUBSISTEMA
+    // 2. ÁREA DE FLAGS — CONTROLES DE SUBSISTEMA
     // =========================================================================
     @Composable
     private fun FlagsTab(state: FusaoUiState) {
@@ -1382,430 +1381,123 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // =========================================================================
-    // 3. ÁREA DE PRELOAD & RAM CLEAN
-    // =========================================================================
+    /**
+     * Limpeza de RAM manual (`fusao ramclean now`), na aba Status entre a escala da tela e os serviços.
+     * Só manual desde o módulo 2.12.0: no game-enter ela travava o carregamento do jogo.
+     */
     @Composable
-    private fun PreloadTab(state: FusaoUiState) {
+    private fun RamcleanPanel(state: FusaoUiState) {
         val busy = state.anyBusy()
-        val preloadTelemetry = remember(state.preloadInfo) {
-            PreloadTelemetry.fromLines(state.preloadInfo)
-        }
         val ramcleanTelemetry = remember(state.ramcleanInfo) {
             RamcleanTelemetry.fromLines(state.ramcleanInfo)
         }
 
-        LaunchedEffect(state.rooted) {
-            if (state.rooted) {
-                vm.loadPreloadAndRamcleanIfEmpty()
+        LaunchedEffect(state.rooted, state.moduleInstalled) {
+            if (state.rooted && state.moduleInstalled) {
+                vm.loadRamcleanIfEmpty()
             }
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+        TacticalPanel(
+            modifier = Modifier.fillMaxWidth(),
+            accentColor = FusaoPalette.BioEmerald,
         ) {
-            // PAINEL PRINCIPAL: PRELOAD (WILLNEED) + RECORD 20S
-            TacticalPanel(
-                modifier = Modifier.fillMaxWidth(),
-                accentColor = FusaoPalette.ElectricOrchid,
-                highlighted = true,
-                contentPadding = PaddingValues(0.dp),
-            ) {
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    Image(
-                        painter = painterResource(id = R.drawable.bg_preload_matrix),
-                        contentDescription = null,
-                        modifier = Modifier.matchParentSize(),
-                        contentScale = ContentScale.Crop,
-                        alpha = 0.30f,
-                    )
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        FusaoPalette.VoidBlack.copy(alpha = 0.62f),
-                                        FusaoPalette.ObsidianSurface.copy(alpha = 0.92f),
-                                        FusaoPalette.AbyssNavy.copy(alpha = 0.98f),
-                                    )
-                                )
-                            )
-                    )
-
-                    val eligibleGames = remember(preloadTelemetry.eligiblePkgs, state.games, state.appLabelsMap) {
-                        val base = (preloadTelemetry.eligiblePkgs + state.games.filter { it in state.appLabelsMap }).distinct()
-                        base
-                    }
-                    val preloadBadgeColor = when (preloadTelemetry.preloadState) {
-                        "executed" -> FusaoPalette.BioEmerald
-                        "prepared" -> FusaoPalette.CryoCyan
-                        "armed" -> FusaoPalette.ElectricOrchid
-                        "failed" -> FusaoPalette.CrimsonCore
-                        else -> if (state.status.preload) FusaoPalette.ElectricOrchid else FusaoPalette.TextMuted
-                    }
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        HudSectionHeader(
-                            title = "Preload",
-                            subtitle = "Pré-carrega na RAM os arquivos dos jogos da lista",
-                            accentColor = FusaoPalette.ElectricOrchid,
-                            trailing = {
-                                TelemetryPill(
-                                    text = preloadTelemetry.statusBadgeLabel,
-                                    color = preloadBadgeColor,
-                                    filled = preloadTelemetry.preloadState in setOf("executed", "prepared", "armed") || state.status.preload,
-                                )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                HudSectionHeader(
+                    title = "Limpeza de RAM",
+                    subtitle = "Reclaim MGLRU seletivo (preserva mídia e cache ativo)",
+                    accentColor = FusaoPalette.BioEmerald,
+                    trailing = {
+                        val pillLabel = when {
+                            state.status.ramclean -> "LIGADO NO JOGO"
+                            ramcleanTelemetry.lastMglruTag.isNotEmpty() ->
+                                "MGLRU · ${ramcleanTelemetry.lastMglruTag.substringAfter(':', "OK").uppercase()}"
+                            else -> "MANUAL · MGLRU"
+                        }
+                        TelemetryPill(
+                            text = pillLabel,
+                            color = if (state.status.ramclean || ramcleanTelemetry.lastMglruTag.isNotEmpty()) {
+                                FusaoPalette.BioEmerald
+                            } else {
+                                FusaoPalette.TextMuted
                             },
+                            filled = state.status.ramclean,
                         )
+                    },
+                )
 
-                        // Chave de habilitação global da política automática de Preload direto na aba
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(FusaoPalette.VoidBlack.copy(alpha = 0.68f))
-                                .border(1.dp, FusaoPalette.BorderSubtle, RoundedCornerShape(8.dp))
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
-                                Text(
-                                    text = "PRELOAD AO ENTRAR NO JOGO",
-                                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
-                                    color = FusaoPalette.TextPrimary,
-                                )
-                                Text(
-                                    text = if (preloadTelemetry.lastResult.isNotEmpty()) {
-                                        "Último resultado: ${preloadTelemetry.lastResult}"
-                                    } else {
-                                        "Vale para os jogos da lista"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = FusaoPalette.TextSecondary,
-                                )
-                            }
-                            CyberSwitch(
-                                checked = state.status.preload,
-                                onCheckedChange = { vm.toggleFlag("preload", it) },
-                                enabled = state.rooted && !busy,
-                                isProcessing = state.isBusy(Busy.FLAG) && state.activeTarget == "preload",
-                                accentColor = FusaoPalette.ElectricOrchid,
-                            )
-                        }
-
-                        // Resumo estruturado extraído das linhas reais do CLI
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            MetricMiniCard(
-                                label = "JOGOS / PACKS",
-                                value = "${maxOf(preloadTelemetry.eligibleCount, eligibleGames.size)} / ${preloadTelemetry.packCount}",
-                                accent = FusaoPalette.CryoCyan,
-                                modifier = Modifier.weight(1f),
-                            )
-                            MetricMiniCard(
-                                label = "ALVO",
-                                value = when {
-                                    state.selectedPreloadPkg.isNotEmpty() -> state.labelFor(state.selectedPreloadPkg)
-                                    state.status.inGame -> state.labelFor(state.status.gameActive)
-                                    else -> "TODOS (${maxOf(preloadTelemetry.eligibleCount, eligibleGames.size)})"
-                                },
-                                accent = if (state.status.inGame) FusaoPalette.IgnisAmber else FusaoPalette.ElectricOrchid,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-
-                        // Seletor de pacote alvo a partir da gamelist (funciona sem jogo em primeiro plano)
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                text = "ESCOLHA O JOGO",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = FusaoPalette.TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                val allSelected = state.selectedPreloadPkg.isEmpty()
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(
-                                            if (allSelected) FusaoPalette.ElectricOrchid.copy(alpha = 0.22f)
-                                            else FusaoPalette.VoidBlack.copy(alpha = 0.55f)
-                                        )
-                                        .border(
-                                            1.dp,
-                                            if (allSelected) FusaoPalette.ElectricOrchid else FusaoPalette.BorderSubtle,
-                                            RoundedCornerShape(6.dp),
-                                        )
-                                        .clickable { vm.selectPreloadTarget("") }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Text(
-                                        text = "Todos",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (allSelected) FusaoPalette.ElectricOrchid else FusaoPalette.TextSecondary,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                    )
-                                }
-                                eligibleGames.forEach { pkg ->
-                                    val sel = state.selectedPreloadPkg == pkg
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(
-                                                if (sel) FusaoPalette.CryoCyan.copy(alpha = 0.22f)
-                                                else FusaoPalette.VoidBlack.copy(alpha = 0.55f)
-                                            )
-                                            .border(
-                                                1.dp,
-                                                if (sel) FusaoPalette.CryoCyan else FusaoPalette.BorderSubtle,
-                                                RoundedCornerShape(6.dp),
-                                            )
-                                            .clickable { vm.selectPreloadTarget(pkg) }
-                                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                                    ) {
-                                        Text(
-                                            text = state.labelFor(pkg),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (sel) FusaoPalette.CryoCyan else FusaoPalette.TextSecondary,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // Medidor ao vivo durante gravação/mapeamento
-                        AnimatedVisibility(
-                            visible = state.isBusy(Busy.RECORD),
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically(),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(FusaoPalette.VoidBlack.copy(alpha = 0.85f))
-                                    .border(1.2.dp, FusaoPalette.IgnisAmber, RoundedCornerShape(10.dp))
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            ) {
-                                PreloadCountdownGauge(
-                                    remainingSec = state.recordRemainingSec,
-                                    totalSec = 20,
-                                )
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Text(
-                                        text = "GRAVANDO O PACK",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = FusaoPalette.IgnisAmber,
-                                    )
-                                    Text(
-                                        text = "Anotando quais arquivos carregar no próximo preload.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = FusaoPalette.TextPrimary,
-                                    )
-                                    LinearProgressIndicator(
-                                        progress = { (20 - state.recordRemainingSec).coerceIn(0, 20) / 20f },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = 4.dp)
-                                            .height(5.dp)
-                                            .clip(RoundedCornerShape(3.dp)),
-                                        color = FusaoPalette.IgnisAmber,
-                                        trackColor = FusaoPalette.GridHairline,
-                                    )
-                                }
-                            }
-                        }
-
-                        // Botões de comando do Preload habilitados independentemente de qual app está em foco
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            TacticalButton(
-                                text = "Atualizar",
-                                onClick = { vm.loadPreload() },
-                                enabled = state.rooted && !busy,
-                                isLoading = state.isBusy(Busy.PRELOAD) && state.activeTarget == "preload_status",
-                                accentColor = FusaoPalette.CryoCyan,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TacticalButton(
-                                text = "Preparar packs",
-                                onClick = { vm.preloadPrepare() },
-                                enabled = state.rooted && !busy,
-                                isLoading = state.isBusy(Busy.PRELOAD) && state.activeTarget == "preload_prepare",
-                                accentColor = FusaoPalette.CryoTurquoise,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            TacticalButton(
-                                text = "Preload agora",
-                                onClick = { vm.preloadNow() },
-                                enabled = state.rooted && !busy,
-                                filled = true,
-                                isLoading = state.isBusy(Busy.PRELOAD) && state.activeTarget == "preload_now",
-                                accentColor = FusaoPalette.ElectricOrchid,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TacticalButton(
-                                text = if (state.isBusy(Busy.RECORD)) {
-                                    "Gravando... (${state.recordRemainingSec}s)"
-                                } else {
-                                    "Gravar pack"
-                                },
-                                onClick = { vm.preloadRecord() },
-                                enabled = state.rooted && !busy,
-                                filled = state.isBusy(Busy.RECORD),
-                                isLoading = state.isBusy(Busy.RECORD),
-                                accentColor = FusaoPalette.IgnisAmber,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-
-                        // Console de saída real do CLI `fusao preload status` / `prepare` / `now` / `record`
-                        TerminalOutputConsole(
-                            title = "Resultado do preload",
-                            lines = state.preloadInfo,
-                        )
-                    }
-                }
-            }
-
-            // PAINEL SECUNDÁRIO: RAM CLEAN (SÓ MANUAL DESDE O MÓDULO 2.12.0)
-            TacticalPanel(
-                modifier = Modifier.fillMaxWidth(),
-                accentColor = FusaoPalette.BioEmerald,
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    HudSectionHeader(
-                        title = "Limpeza de RAM",
-                        subtitle = "Reclaim MGLRU seletivo (preserva mídia e cache ativo)",
-                        accentColor = FusaoPalette.BioEmerald,
-                        trailing = {
-                            val pillLabel = when {
-                                state.status.ramclean -> "LIGADO NO JOGO"
-                                ramcleanTelemetry.lastMglruTag.isNotEmpty() ->
-                                    "MGLRU · ${ramcleanTelemetry.lastMglruTag.substringAfter(':', "OK").uppercase()}"
-                                else -> "MANUAL · MGLRU"
-                            }
-                            TelemetryPill(
-                                text = pillLabel,
-                                color = if (state.status.ramclean || ramcleanTelemetry.lastMglruTag.isNotEmpty()) {
-                                    FusaoPalette.BioEmerald
-                                } else {
-                                    FusaoPalette.TextMuted
-                                },
-                                filled = state.status.ramclean,
-                            )
-                        },
-                    )
-
-                    if (
-                        ramcleanTelemetry.lastTransition.isNotEmpty() ||
-                        ramcleanTelemetry.lastAvailTransition.isNotEmpty() ||
-                        ramcleanTelemetry.lastAvailKb.isNotEmpty()
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            MetricMiniCard(
-                                label = "LIBERADO (Δ)",
-                                value = formatDeltaMb(ramcleanTelemetry.lastDeltaMb),
-                                accent = if ((ramcleanTelemetry.lastDeltaMb ?: 0) > 0) {
-                                    FusaoPalette.BioEmerald
-                                } else {
-                                    FusaoPalette.TextMuted
-                                },
-                                modifier = Modifier.weight(1f),
-                            )
-                            MetricMiniCard(
-                                label = "DISPONÍVEL",
-                                value = availTransitionMb(ramcleanTelemetry),
-                                accent = FusaoPalette.CryoCyan,
-                                modifier = Modifier.weight(1.45f),
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            MetricMiniCard(
-                                label = "RAM LIVRE",
-                                value = ramTransitionMb(ramcleanTelemetry.lastTransition),
-                                accent = FusaoPalette.BioEmerald,
-                                modifier = Modifier.weight(1.35f),
-                            )
-                            MetricMiniCard(
-                                label = "MGLRU / TRIM",
-                                value = mglruTrimSummary(ramcleanTelemetry),
-                                accent = FusaoPalette.CryoCyan,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-
+                if (
+                    ramcleanTelemetry.lastTransition.isNotEmpty() ||
+                    ramcleanTelemetry.lastAvailTransition.isNotEmpty() ||
+                    ramcleanTelemetry.lastAvailKb.isNotEmpty()
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        TacticalButton(
-                            text = "Atualizar",
-                            onClick = { vm.loadRamclean() },
-                            enabled = state.rooted && !busy,
-                            isLoading = state.isBusy(Busy.RAMCLEAN) && state.activeTarget == "ramclean_status",
-                            accentColor = FusaoPalette.CryoCyan,
+                        MetricMiniCard(
+                            label = "LIBERADO (Δ)",
+                            value = formatDeltaMb(ramcleanTelemetry.lastDeltaMb),
+                            accent = if ((ramcleanTelemetry.lastDeltaMb ?: 0) > 0) {
+                                FusaoPalette.BioEmerald
+                            } else {
+                                FusaoPalette.TextMuted
+                            },
                             modifier = Modifier.weight(1f),
                         )
-                        TacticalButton(
-                            text = "Limpar agora",
-                            onClick = { vm.ramcleanNow() },
-                            enabled = state.rooted && !busy,
-                            filled = true,
-                            isLoading = state.isBusy(Busy.RAMCLEAN) && state.activeTarget == "ramclean_now",
-                            accentColor = FusaoPalette.BioEmerald,
+                        MetricMiniCard(
+                            label = "DISPONÍVEL",
+                            value = availTransitionMb(ramcleanTelemetry),
+                            accent = FusaoPalette.CryoCyan,
+                            modifier = Modifier.weight(1.45f),
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        MetricMiniCard(
+                            label = "RAM LIVRE",
+                            value = ramTransitionMb(ramcleanTelemetry.lastTransition),
+                            accent = FusaoPalette.BioEmerald,
+                            modifier = Modifier.weight(1.35f),
+                        )
+                        MetricMiniCard(
+                            label = "MGLRU / TRIM",
+                            value = mglruTrimSummary(ramcleanTelemetry),
+                            accent = FusaoPalette.CryoCyan,
                             modifier = Modifier.weight(1f),
                         )
                     }
+                }
 
-                    TerminalOutputConsole(
-                        title = "Resultado da limpeza de RAM",
-                        lines = state.ramcleanInfo,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TacticalButton(
+                        text = "Atualizar",
+                        onClick = { vm.loadRamclean() },
+                        enabled = state.rooted && !busy,
+                        isLoading = state.isBusy(Busy.RAMCLEAN) && state.activeTarget == "ramclean_status",
+                        accentColor = FusaoPalette.CryoCyan,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TacticalButton(
+                        text = "Limpar agora",
+                        onClick = { vm.ramcleanNow() },
+                        enabled = state.rooted && !busy,
+                        filled = true,
+                        isLoading = state.isBusy(Busy.RAMCLEAN) && state.activeTarget == "ramclean_now",
+                        accentColor = FusaoPalette.BioEmerald,
+                        modifier = Modifier.weight(1f),
                     )
                 }
+
+                TerminalOutputConsole(
+                    title = "Resultado da limpeza de RAM",
+                    lines = state.ramcleanInfo,
+                )
             }
         }
     }

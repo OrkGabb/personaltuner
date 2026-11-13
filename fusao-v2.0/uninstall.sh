@@ -101,6 +101,18 @@ for b in sda sdb sdc sdd sde; do
 	[ -f /sys/block/$b/queue/read_ahead_kb ] && echo "128" >/sys/block/$b/queue/read_ahead_kb 2>/dev/null
 done
 
+# Bloqueio de chamadas/SMS: devolve o papel de triagem (a quem tinha antes, se houver), o acesso a notificações
+# e a lista de bateria. Inline: na desinstalação o CLI do módulo já pode não existir.
+if [ -f /data/adb/fusao/block.state ]; then
+	bk_pkg="com.orkgabb.fusao"
+	bk_prev=$(sed -n 's/^role_prev=//p' /data/adb/fusao/block.state 2>/dev/null | head -n 1)
+	bk_idle=$(sed -n 's/^idle_prev=//p' /data/adb/fusao/block.state 2>/dev/null | head -n 1)
+	cmd role remove-role-holder android.app.role.CALL_SCREENING "$bk_pkg" >/dev/null 2>&1
+	[ -n "$bk_prev" ] && cmd role add-role-holder android.app.role.CALL_SCREENING "$bk_prev" >/dev/null 2>&1
+	cmd notification disallow_listener "$bk_pkg/$bk_pkg.block.BlockNotificationListener" >/dev/null 2>&1
+	[ "$bk_idle" = "1" ] || cmd deviceidle whitelist -"$bk_pkg" >/dev/null 2>&1
+fi
+
 rm -rf /data/adb/fusao
 # lista do usuário do fas-rs (caminho fixo do upstream): só o FUSAO escreve nela
 rm -rf /sdcard/Android/fas-rs

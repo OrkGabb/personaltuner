@@ -159,6 +159,10 @@ if [ ! -f "$FUSAO_DIR/.fas_seeded" ]; then
 fi
 # 2.12.0: ramclean saiu do game-enter (drop_caches + compact_memory no launch); a flag antiga não arma mais nada
 rm -f "$FUSAO_DIR/ramclean.enabled" 2>/dev/null
+# 2.13.0: preload removido do projeto (não rendeu ganho medido); apaga a flag, os packs e o estado antigos
+rm -f "$FUSAO_DIR/preload.enabled" "$FUSAO_DIR/preload.state" "$FUSAO_DIR/preload.last" 2>/dev/null
+rm -f "$FUSAO_DIR/preload"/*.pack "$FUSAO_DIR/preload"/*.tmp 2>/dev/null
+rmdir "$FUSAO_DIR/preload" 2>/dev/null
 # 2.12.0: Roblox fora do FAS UMA vez (marcador próprio; um "fusao fas target" posterior vale). Sem limite de fps
 # fixo, a escada do fas-rs vira catraca (60 -> 45 -> 30 e não volta: ele freia a CPU no degrau de baixo) e toda
 # sessão do Roblox com o FAS saiu pior (status.md 2.11.5: CPU 30-33 ms por frame > GPU 20-23 ms). Sobrescreve

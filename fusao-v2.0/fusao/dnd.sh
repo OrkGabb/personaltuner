@@ -13,7 +13,7 @@
 #   do framework no mesmo minuto APLICA — só o caminho zen trava). Por isso:
 #   retry longo com backoff (tenta por ~35s) + guarda de geração (um enter novo
 #   cancela o run velho; um exit cancela o on em voo) + log FALHOU em vez de
-#   mentir. O watch chama async (não bloqueia preload/framework).
+#   mentir. O watch chama async (não bloqueia o framework).
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 

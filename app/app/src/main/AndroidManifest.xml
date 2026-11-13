@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Zero permissões: sem INTERNET, sem QUERY_ALL_PACKAGES. A lista de apps
-         para a gamelist vem do intent LAUNCHER declarado abaixo (visibilidade
-         de pacotes via <queries>, permitido desde a API 30). -->
+    <!-- Sem INTERNET, sem QUERY_ALL_PACKAGES. A lista de apps para a gamelist vem do intent
+         LAUNCHER declarado abaixo (visibilidade de pacotes via <queries>, permitido desde a API 30).
+         As duas permissões são só do bloqueio de chamadas e SMS (aba Bloqueio) e ficam negadas
+         até o dono ligar o recurso: RECEIVE_SMS dá o número real de quem mandou o SMS;
+         READ_CONTACTS serve à regra "fora dos contatos" e faz o sistema mandar para a triagem
+         também as chamadas de quem está na agenda. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -69,6 +75,40 @@
             android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="com.orkgabb.fusao.action.PROFILE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Bloqueio de chamadas e SMS (aba Bloqueio). Os três são directBootAware: a configuração
+             fica no armazenamento protegido do aparelho e vale antes do primeiro desbloqueio.
+             Cada um só pode ser acionado pelo sistema (permissão BIND_* / BROADCAST_SMS). -->
+        <service
+            android:name=".block.BlockCallScreener"
+            android:directBootAware="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_SCREENING_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".block.BlockNotificationListener"
+            android:directBootAware="true"
+            android:exported="true"
+            android:label="@string/block_listener_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".block.BlockSmsReceiver"
+            android:directBootAware="true"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
     </application>

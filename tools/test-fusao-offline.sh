@@ -625,54 +625,24 @@ grep -q '\*_pid' "$STAGE/uninstall.sh" && ok "uninstall pidfiles" || bad "uninst
 grep -q 'thermal_guard.sh' "$STAGE/cleanup.sh" && ok "cleanup guard" || bad "cleanup guard"
 grep -q 'dnd.sh.*off' "$STAGE/cleanup.sh" && ok "cleanup dnd" || bad "cleanup dnd"
 
-# 14) preload e2e (binário + fluxo sem jogo em primeiro plano via gamelist.txt)
-BRAIN_DIR=""
-if [ -d "$ROOT/fusao-brain" ]; then
-  BRAIN_DIR="$ROOT/fusao-brain"
-elif [ -d "$ROOT/_historico/fusao-brain" ]; then
-  BRAIN_DIR="$ROOT/_historico/fusao-brain"
-fi
-if [ -n "$BRAIN_DIR" ] && command -v cargo >/dev/null 2>&1; then
-  (cd "$BRAIN_DIR" && cargo build 2>/dev/null)
-  mkdir -p "$FAKE/predata/data/com.jogo"
-  echo conteudo > "$FAKE/predata/data/com.jogo/a.dat"
-  mkdir -p "$FAKE/predata/media/0/Android/data/com.jogo"
-  echo mais > "$FAKE/predata/media/0/Android/data/com.jogo/b.dat"
-  "$BRAIN_DIR/target/debug/fusaod" preload com.jogo "$FAKE/predata" | grep -q "files=2" && ok "preload e2e" || bad "preload e2e"
-  mkdir -p "$FAKE/packbase/preload"
-  _sz=$(wc -c < "$FAKE/predata/data/com.jogo/a.dat")
-  _mt=$(stat -c %Y "$FAKE/predata/data/com.jogo/a.dat" 2>/dev/null || stat -f %m "$FAKE/predata/data/com.jogo/a.dat")
-  printf "%s %s %s\n" "$_mt" "$_sz" "$FAKE/predata/data/com.jogo/a.dat" > "$FAKE/packbase/preload/com_jogo.pack"
-  FUSAO_PACK_BASE="$FAKE/packbase" "$BRAIN_DIR/target/debug/fusaod" preload com.jogo "$FAKE/predata" | grep -q "files=1" && ok "preload replay e2e" || bad "preload replay e2e"
-else
-  strings "$STAGE/system/bin/fusaod" | grep -q "preload ok pkg=" && ok "preload e2e (elf-sym)" || bad "preload e2e (elf-sym)"
-  strings "$STAGE/system/bin/fusaod" | grep -q "preload_replay" && ok "preload replay e2e (elf-sym)" || bad "preload replay e2e (elf-sym)"
-fi
+# 14) preload removido do projeto (2.13.0): o CLI recusa o comando, o status não publica a flag, o watch não
+# dispara nada no game-enter e o boot apaga o estado antigo (flag, packs, preload.state/last).
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload on >/dev/null 2>&1 && bad "cli preload recusado" || ok "cli preload recusado"
+[ -f "$FAKE/fusao/preload.enabled" ] && bad "cli preload não arma flag" || ok "cli preload não arma flag"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" status | grep -q "^preload=" && bad "status sem preload" || ok "status sem preload"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" gamelist eligible >/dev/null 2>&1 && bad "gamelist eligible recusado" || ok "gamelist eligible recusado"
+grep -qi "preload" "$STAGE/fusao/watch.sh" "$STAGE/system/bin/fusao" && bad "watch/cli sem preload" || ok "watch/cli sem preload"
+# roda as linhas de limpeza do service.sh num diretório com o estado antigo: tem de sumir tudo e só isso
+mkdir -p "$FAKE/pl/preload"; : > "$FAKE/pl/preload.enabled"; : > "$FAKE/pl/preload.state"; : > "$FAKE/pl/preload.last"
+: > "$FAKE/pl/preload/com_x.pack"; : > "$FAKE/pl/perf.enabled"
+grep -E '^(rm -f|rmdir) "\$FUSAO_DIR/preload' "$STAGE/service.sh" > "$FAKE/pl/clean.sh"
+FUSAO_DIR="$FAKE/pl" sh "$FAKE/pl/clean.sh"
+[ -z "$(ls "$FAKE/pl" | grep -i preload)" ] && [ -f "$FAKE/pl/perf.enabled" ] && ok "service limpa estado do preload" || bad "service limpa estado do preload [$(ls "$FAKE/pl" | tr '
+' ' ')]"
 
-M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload on | grep -q "preload=on" && ok "cli preload on" || bad "cli preload on"
-M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload off | grep -q "preload=off" && ok "cli preload off" || bad "cli preload off"
-M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload status | grep -q "packs: nenhum" && ok "cli preload status" || bad "cli preload status"
-
-# 14a) Preload sem jogo em primeiro plano (game-active.txt vazio, usando gamelist.txt como fonte de verdade)
+# 14a) sem jogo em primeiro plano; o NTE entra na gamelist para os blocos seguintes
 : > "$FAKE/fusao/game-active.txt"
-mkdir -p "$FAKE/predata/data/data/com.roblox.client" "$FAKE/predata/data/media/0/Android/obb/com.hottagames.nte"
-echo "asset_roblox_1" > "$FAKE/predata/data/data/com.roblox.client/main.pak"
-echo "asset_nte_1" > "$FAKE/predata/data/media/0/Android/obb/com.hottagames.nte/main.obb"
 grep -Fxq "com.hottagames.nte" "$FAKE/fusao/gamelist.txt" || echo "com.hottagames.nte" >> "$FAKE/fusao/gamelist.txt"
-
-PRELOAD_DATA_ROOT="$FAKE/predata" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload status | grep -q "eligible_count=2" && ok "preload eligible discovery" || bad "preload eligible discovery"
-# M3: elegíveis por builtins = mesma saída do printf|tr antigo para bordas, tab, CR e espaço INTERNO (tr junta os
-# pedaços: "com.k l" -> com.kl; "com.m.n # jogo" -> com.m.n#jogo, sem dados). com.k/com.m.n/com.o.p são iscas.
-mkdir -p "$FAKE/m3"
-printf 'com.a.b\n  com.c.d\ncom.e.f  \n\tcom.g.h\t\ncom.i.j\r\ncom.k l\ncom.m.n # jogo\n  # c\n\n   \n#com.x\ncom.o.p\tx' > "$FAKE/m3/gamelist.txt"
-for _p in com.a.b com.c.d com.e.f com.g.h com.i.j com.kl com.o.px com.k com.m.n com.o.p; do mkdir -p "$FAKE/m3data/data/data/$_p"; done
-_m3=$(PRELOAD_DATA_ROOT="$FAKE/m3data" M54_DIR="$FAKE/m3" sh "$FAKE/fusao/fusao-cli" gamelist eligible | tr '\n' ' ')
-[ "$_m3" = "com.a.b com.c.d com.e.f com.g.h com.i.j com.kl com.o.px " ] && ok "eligible builtins = printf|tr antigo" || bad "eligible builtins = printf|tr antigo [$_m3]"
-PRELOAD_DATA_ROOT="$FAKE/predata" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload prepare | grep -q "preload-prepare ok prepared=2/2" && ok "preload prepare without fg game" || bad "preload prepare without fg game"
-[ -s "$FAKE/fusao/preload/com_roblox_client.pack" ] && [ -s "$FAKE/fusao/preload/com_hottagames_nte.pack" ] && ok "preload packs created" || bad "preload packs created"
-PRELOAD_DATA_ROOT="$FAKE/predata" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload now | grep -q "preload ok pkg=" && ok "preload now without fg game" || bad "preload now without fg game"
-PRELOAD_DATA_ROOT="$FAKE/predata" M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload status | grep -q "preload_state=executed" && ok "preload state executed" || bad "preload state executed"
-PRELOAD_DATA_ROOT="$FAKE/predata" PRELOAD_MEM_AVAIL_KB=400000 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" preload now com.roblox.client | grep -q "reason=low_ram" && ok "preload low-ram gate" || bad "preload low-ram gate"
 
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fusao-cli" status | grep -q "atividade dos ganchos" && ok "cli status hooks" || bad "cli status hooks"
 
@@ -1502,6 +1472,87 @@ if [ "$p4_settled" = "1824000" ] && [ "$ufc_min_after" = "-1" ] && [ "$ufc_wob_a
 else
   bad "Fix-4: p4=$p4_settled min=$ufc_min_after wob=$ufc_wob_after"
 fi
+
+# 30) fusao block (2.13.0): lado root do bloqueio de chamadas/SMS. Binários falsos guardam o estado em arquivos;
+# cada caso confere o ESTADO final (quem tem o papel, o que está na lista), não se o comando foi chamado.
+BK="$FAKE/bk"; mkdir -p "$BK/bin" "$BK/fusao" "$BK/data/user_de/0/com.orkgabb.fusao/files"
+cp "$STAGE/system/bin/fusao" "$BK/fusao/fusao-cli"
+cat > "$BK/bin/pm" <<'BKEOF'
+#!/bin/sh
+case "$1" in
+  path) [ -f "$BK/app.installed" ] && echo "package:/data/app/base.apk";;
+  grant) [ -f "$BK/pm.deny" ] || echo "$3" >> "$BK/perms";;
+  revoke) grep -Fxv "$3" "$BK/perms" > "$BK/perms.t" 2>/dev/null; mv -f "$BK/perms.t" "$BK/perms";;
+esac
+BKEOF
+cat > "$BK/bin/cmd" <<'BKEOF'
+#!/bin/sh
+case "$1 $2" in
+  "role get-role-holders") cat "$BK/role" 2>/dev/null;;
+  "role add-role-holder") echo "$4" > "$BK/role";;
+  "role remove-role-holder") [ "$(cat "$BK/role" 2>/dev/null)" = "$4" ] && : > "$BK/role";;
+  "notification allow_listener") echo "$3" >> "$BK/listeners";;
+  "notification disallow_listener") grep -Fxv "$3" "$BK/listeners" > "$BK/l.t" 2>/dev/null; mv -f "$BK/l.t" "$BK/listeners";;
+  "deviceidle whitelist")
+    case "$3" in
+      +*) echo "user,${3#+},10001" >> "$BK/idle";;
+      -*) grep -Fv ",${3#-}," "$BK/idle" > "$BK/i.t" 2>/dev/null; mv -f "$BK/i.t" "$BK/idle";;
+      *) cat "$BK/idle" 2>/dev/null;;
+    esac;;
+esac
+BKEOF
+cat > "$BK/bin/settings" <<'BKEOF'
+#!/bin/sh
+[ "$1 $2 $3" = "get secure enabled_notification_listeners" ] && { tr '\n' ':' < "$BK/listeners" 2>/dev/null; echo; }
+BKEOF
+cat > "$BK/bin/dumpsys" <<'BKEOF'
+#!/bin/sh
+[ "$1" = "package" ] && while read -r _p; do echo "      $_p: granted=true, flags=[ USER_SET ]"; done < "$BK/perms" 2>/dev/null
+BKEOF
+chmod +x "$BK/bin/"*
+bk() { PATH="$BK/bin:$PATH" BK="$BK" M54_DIR="$BK/fusao" FS_ROOT="$BK" sh "$BK/fusao/fusao-cli" block "$@"; }
+BK_LSN="com.orkgabb.fusao/com.orkgabb.fusao.block.BlockNotificationListener"
+: > "$BK/perms"; : > "$BK/idle"
+echo "com.samsung.android.smartcallprovider" > "$BK/role"
+echo "com.sec.android.app.launcher/com.android.launcher3.notification.NotificationListener" > "$BK/listeners"
+# sem o app instalado: recusa e não toca em nada
+bk grant >/dev/null 2>&1 && bad "block grant sem app recusa" || ok "block grant sem app recusa"
+[ "$(cat "$BK/role")" = "com.samsung.android.smartcallprovider" ] && [ ! -f "$BK/fusao/block.state" ] && ok "block grant sem app não mexe no papel" || bad "block grant sem app não mexe no papel"
+: > "$BK/app.installed"
+printf 'enabled=1\nrule\t1\t0800*\twildcard\tcalls\tblock\tTele\nrule\t2\t28000\texact\tsms\tblock\t\n' > "$BK/data/user_de/0/com.orkgabb.fusao/files/block.conf"
+bk status > "$BK/st0"
+grep -qx "block_role=0" "$BK/st0" && grep -qx "block_listener=0" "$BK/st0" && grep -qx "block_sms=0" "$BK/st0" && ok "block status antes: nada concedido" || bad "block status antes: nada concedido"
+grep -qx "block_rules=2" "$BK/st0" && grep -qx "block_enabled=1" "$BK/st0" && ok "block status lê regras do app" || bad "block status lê regras do app"
+bk grant > "$BK/g1"; _bkrc=$?
+[ "$_bkrc" = 0 ] && [ "$(cat "$BK/role")" = "com.orkgabb.fusao" ] && grep -Fxq "$BK_LSN" "$BK/listeners" && grep -q ",com.orkgabb.fusao," "$BK/idle" && ok "block grant: papel, listener e bateria" || bad "block grant: papel, listener e bateria (rc=$_bkrc)"
+grep -Fxq "android.permission.RECEIVE_SMS" "$BK/perms" && grep -Fxq "android.permission.READ_CONTACTS" "$BK/perms" && ok "block grant: permissões" || bad "block grant: permissões"
+grep -q "launcher3" "$BK/listeners" && ok "block grant preserva os outros listeners" || bad "block grant preserva os outros listeners"
+grep -qx "role_prev=com.samsung.android.smartcallprovider" "$BK/fusao/block.state" && grep -qx "idle_prev=0" "$BK/fusao/block.state" && ok "block grant guarda o dono anterior" || bad "block grant guarda o dono anterior"
+# 2º grant não pode regravar o estado com o próprio FUSAO como "dono anterior"
+bk grant >/dev/null
+grep -qx "role_prev=com.samsung.android.smartcallprovider" "$BK/fusao/block.state" && ok "block grant repetido mantém o dono anterior" || bad "block grant repetido mantém o dono anterior"
+bk revoke > "$BK/r1"; _bkrc=$?
+[ "$_bkrc" = 0 ] && [ "$(cat "$BK/role")" = "com.samsung.android.smartcallprovider" ] && ok "block revoke devolve o papel a quem tinha" || bad "block revoke devolve o papel a quem tinha (rc=$_bkrc role=$(cat "$BK/role"))"
+grep -Fxq "$BK_LSN" "$BK/listeners" && bad "block revoke tira o listener" || ok "block revoke tira o listener"
+grep -q "launcher3" "$BK/listeners" && ok "block revoke preserva os outros listeners" || bad "block revoke preserva os outros listeners"
+grep -q ",com.orkgabb.fusao," "$BK/idle" && bad "block revoke tira da lista de bateria" || ok "block revoke tira da lista de bateria"
+grep -Fxq "android.permission.RECEIVE_SMS" "$BK/perms" && ok "block revoke (sem perms) mantém as permissões" || bad "block revoke (sem perms) mantém as permissões"
+[ ! -f "$BK/fusao/block.state" ] && ok "block revoke apaga o estado" || bad "block revoke apaga o estado"
+# app que já estava na lista de bateria antes: o revoke não tira
+echo "user,com.orkgabb.fusao,10001" > "$BK/idle"; : > "$BK/role"
+bk grant >/dev/null; bk revoke perms >/dev/null
+grep -q ",com.orkgabb.fusao," "$BK/idle" && ok "block revoke respeita lista de bateria anterior" || bad "block revoke respeita lista de bateria anterior"
+[ ! -s "$BK/role" ] && ok "block revoke sem dono anterior deixa o papel vazio" || bad "block revoke sem dono anterior deixa o papel vazio"
+grep -q "RECEIVE_SMS\|READ_CONTACTS" "$BK/perms" && bad "block revoke perms tira as permissões" || ok "block revoke perms tira as permissões"
+# o sistema nega a permissão: grant diz FALHOU e sai != 0 (não finge sucesso)
+: > "$BK/pm.deny"
+bk grant > "$BK/g2"; _bkrc=$?
+[ "$_bkrc" != 0 ] && grep -q "^FALHOU:.*sms" "$BK/g2" && ok "block grant negado = FALHOU" || bad "block grant negado = FALHOU (rc=$_bkrc)"
+rm -f "$BK/pm.deny"
+printf '2026-11-13 10:00:00|CALL|08001234567|BLOCK|Tele\n' > "$BK/data/user_de/0/com.orkgabb.fusao/files/block.log"
+bk log 5 | grep -q "08001234567|BLOCK" && ok "block log lê o registro do app" || bad "block log lê o registro do app"
+bk nada >/dev/null 2>&1 && bad "block verbo inválido recusa" || ok "block verbo inválido recusa"
+grep -q 'remove-role-holder android.app.role.CALL_SCREENING' "$STAGE/uninstall.sh" && grep -q 'disallow_listener' "$STAGE/uninstall.sh" && ok "uninstall devolve triagem e listener" || bad "uninstall devolve triagem e listener"
 
 echo "----"
 echo "pass=$pass fail=$fail"

@@ -8,15 +8,15 @@ class FlagsTotalTest {
 
     @Test
     fun ramcleanCountsOnlyWhileOn() {
-        assertEquals(7, FusaoStatus(fasSupported = true).flagsTotal)
-        assertEquals(8, FusaoStatus(fasSupported = true, ramclean = true).flagsTotal)
-        assertEquals(6, FusaoStatus().flagsTotal)
+        assertEquals(6, FusaoStatus(fasSupported = true).flagsTotal)
+        assertEquals(7, FusaoStatus(fasSupported = true, ramclean = true).flagsTotal)
+        assertEquals(5, FusaoStatus().flagsTotal)
     }
 
     @Test
     fun activeCountMatchesTheVisibleKeys() {
         val st = FusaoStatus(framework = true, perf = true, gos = true, fas = true, fasSupported = true)
         assertEquals(4, st.activeFlagsCount)
-        assertEquals(7, st.flagsTotal)
+        assertEquals(6, st.flagsTotal)
     }
 }
