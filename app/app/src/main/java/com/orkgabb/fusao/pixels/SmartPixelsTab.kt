@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -19,20 +18,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.orkgabb.fusao.ui.CyberSwitch
+import com.orkgabb.fusao.ui.FusaoCollapsibleSection
+import com.orkgabb.fusao.ui.FusaoHairlineDivider
 import com.orkgabb.fusao.ui.FusaoPalette
+import com.orkgabb.fusao.ui.FusaoSectionLabel
+import com.orkgabb.fusao.ui.FusaoSegmentedControl
+import com.orkgabb.fusao.ui.FusaoSwitchRow
 import com.orkgabb.fusao.ui.HudSectionHeader
+import com.orkgabb.fusao.ui.SegmentedItem
 import com.orkgabb.fusao.ui.TacticalButton
 import com.orkgabb.fusao.ui.TacticalPanel
 import com.orkgabb.fusao.ui.TelemetryPill
@@ -78,7 +82,7 @@ fun SmartPixelsTab() {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(key = "pixels_header") {
             HeaderPanel(
@@ -119,7 +123,7 @@ private fun HeaderPanel(
         access == AccessState.SERVICE_STOPPED -> "SERVIÇO PARADO"
         !active -> "DESLIGADO"
         cfg.masksNothing -> "100% ACESOS"
-        masking && auto -> "NA TELA · AUTO (BATTERY)"
+        masking && auto -> "AUTO · BATTERY"
         masking -> "NA TELA"
         else -> "LIGANDO"
     }
@@ -130,14 +134,18 @@ private fun HeaderPanel(
         else -> FusaoPalette.TextMuted
     }
     val stateText: String = when (snapshot.activation) {
-        PixelsActivation.MANUAL -> "Ligado · ${cfg.litPercent}% dos pixels acesos"
-        PixelsActivation.AUTO_BATTERY -> "Ligado pelo perfil battery · ${cfg.litPercent}% acesos"
-        PixelsActivation.OFF -> "Desligado"
+        PixelsActivation.MANUAL -> "Máscara ativa · ${cfg.litPercent}% dos pixels acesos"
+        PixelsActivation.AUTO_BATTERY -> "Ativo pelo perfil battery · ${cfg.litPercent}% acesos"
+        PixelsActivation.OFF -> "Ativar máscara AMOLED"
     }
-    val profileText: String = when (snapshot.effectiveProfile) {
-        "" -> "Perfil ainda não lido. Abra o app ou troque de perfil uma vez."
-        SmartPixelsConfig.PROFILE_BATTERY -> "Perfil agora: battery. Em jogo vira game e a máscara sai sozinha."
-        else -> "Perfil agora: ${snapshot.effectiveProfile}. Volta sozinha quando o perfil for battery."
+    val autoSubtitle: String? = if (cfg.autoBattery) {
+        when (snapshot.effectiveProfile) {
+            "" -> "Abra o app ou troque de perfil uma vez"
+            SmartPixelsConfig.PROFILE_BATTERY -> "No perfil battery; sai sozinha ao entrar em jogo"
+            else -> "Perfil atual: ${snapshot.effectiveProfile} · entra ao mudar para battery"
+        }
+    } else {
+        null
     }
 
     TacticalPanel(
@@ -149,7 +157,7 @@ private fun HeaderPanel(
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             HudSectionHeader(
                 title = "Smart Pixels",
-                subtitle = "Apaga uma parte dos pixels da tela",
+                subtitle = "Apaga grade de pixels em telas AMOLED",
                 accentColor = PixelsAccent,
                 trailing = {
                     TelemetryPill(
@@ -160,49 +168,21 @@ private fun HeaderPanel(
                     )
                 },
             )
-            SwitchRow(
-                text = stateText,
+            FusaoSwitchRow(
+                title = stateText,
                 checked = cfg.enabled,
+                accentColor = PixelsAccent,
                 onCheckedChange = onToggle,
             )
-            SwitchRow(
-                text = "Ligar sozinho no perfil battery",
+            FusaoHairlineDivider()
+            FusaoSwitchRow(
+                title = "Ligar sozinho no perfil battery",
+                subtitle = autoSubtitle,
                 checked = cfg.autoBattery,
+                accentColor = PixelsAccent,
                 onCheckedChange = onToggleAuto,
             )
-            if (cfg.autoBattery) {
-                Text(
-                    text = profileText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FusaoPalette.TextSecondary,
-                )
-            }
         }
-    }
-}
-
-@Composable
-private fun SwitchRow(text: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = FusaoPalette.TextPrimary,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 12.dp),
-        )
-        CyberSwitch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            accentColor = PixelsAccent,
-        )
     }
 }
 
@@ -219,19 +199,16 @@ private fun AccessPanel(access: AccessState, onOpenSettings: () -> Unit) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             HudSectionHeader(
-                title = if (missing) "Falta a permissão" else "Serviço parado",
+                title = if (missing) "Permissão de Acessibilidade" else "Serviço parado",
                 accentColor = accent,
             )
             Text(
                 text = if (missing) {
-                    "Sem a permissão de acessibilidade a máscara não aparece. Em Acessibilidade, " +
-                        "abra \"Aplicativos instalados\" (ou \"Serviços instalados\"), toque em " +
-                        "FUSAO Smart Pixels e ligue."
+                    "Em Acessibilidade → Aplicativos instalados, ative o FUSAO Smart Pixels para desenhar sobre a tela."
                 } else {
-                    "A permissão está dada, mas o Android não ligou o serviço. Em Acessibilidade, " +
-                        "desligue e ligue de novo o FUSAO Smart Pixels."
+                    "A permissão está concedida, mas o sistema parou o serviço. Desligue e religue em Acessibilidade."
                 },
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = FusaoPalette.TextSecondary,
             )
             TacticalButton(
@@ -247,75 +224,82 @@ private fun AccessPanel(access: AccessState, onOpenSettings: () -> Unit) {
 
 @Composable
 private fun ControlsPanel(cfg: SmartPixelsConfig, store: SmartPixelsStore) {
+    val patternItems = remember {
+        PixelPattern.entries.map { p ->
+            SegmentedItem(
+                value = p,
+                label = p.label,
+                subtitle = if (p == PixelPattern.UNIFORM) "espalhado" else "2x2",
+            )
+        }
+    }
+
     TacticalPanel(
         modifier = Modifier.fillMaxWidth(),
         accentColor = PixelsAccent,
         contentPadding = PaddingValues(14.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             LitSlider(litPercent = cfg.litPercent, onCommit = store::setLitPercent)
 
-            SectionLabel("TAMANHO DO PONTO")
-            CELL_ROWS.forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    row.forEach { px ->
-                        TacticalButton(
-                            text = "$px px",
-                            onClick = { store.setCellPx(px) },
-                            filled = cfg.cellPx == px,
-                            accentColor = PixelsAccent,
-                            modifier = Modifier.weight(1f),
-                        )
+            FusaoHairlineDivider()
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                FusaoSectionLabel("PADRÃO")
+                FusaoSegmentedControl(
+                    items = patternItems,
+                    selected = cfg.pattern,
+                    onSelect = store::setPattern,
+                    defaultAccent = PixelsAccent,
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                FusaoSectionLabel("TAMANHO DO PONTO")
+                CELL_ROWS.forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        row.forEach { px ->
+                            TacticalButton(
+                                text = "$px px",
+                                onClick = { store.setCellPx(px) },
+                                filled = cfg.cellPx == px,
+                                accentColor = PixelsAccent,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
             }
 
-            SectionLabel("PADRÃO")
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                PixelPattern.entries.forEach { pattern ->
-                    TacticalButton(
-                        text = pattern.label,
-                        subtitle = if (pattern == PixelPattern.UNIFORM) "pontos espalhados" else "quadrados 2x2",
-                        onClick = { store.setPattern(pattern) },
-                        filled = cfg.pattern == pattern,
-                        accentColor = PixelsAccent,
-                        modifier = Modifier.weight(1f),
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                FusaoSectionLabel("TROCA ANTI BURN-IN")
+                SHIFT_ROWS.forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        row.forEach { preset ->
+                            TacticalButton(
+                                text = preset.label,
+                                onClick = { store.setShiftMillis(preset.millis) },
+                                filled = cfg.shiftMillis == preset.millis,
+                                accentColor = PixelsAccent,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        repeat(SHIFT_COLUMNS - row.size) { Spacer(modifier = Modifier.weight(1f)) }
+                    }
+                }
+                if (cfg.shiftMillis == SmartPixelsConfig.STATIC_SHIFT_MILLIS) {
+                    Text(
+                        text = "Parado: sem alternância os mesmos subpixels ficam sempre acesos e podem desgastar a tela.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FusaoPalette.IgnisAmber,
                     )
                 }
-            }
-
-            SectionLabel("MOVIMENTO · TROCA OS PIXELS APAGADOS A CADA")
-            SHIFT_ROWS.forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    row.forEach { preset ->
-                        TacticalButton(
-                            text = preset.label,
-                            onClick = { store.setShiftMillis(preset.millis) },
-                            filled = cfg.shiftMillis == preset.millis,
-                            accentColor = PixelsAccent,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    // completa a linha para os botões terem a mesma largura
-                    repeat(SHIFT_COLUMNS - row.size) { Spacer(modifier = Modifier.weight(1f)) }
-                }
-            }
-            if (cfg.shiftMillis == SmartPixelsConfig.STATIC_SHIFT_MILLIS) {
-                Text(
-                    text = "Parado: os mesmos pixels ficam sempre apagados e os acesos gastam mais. " +
-                        "Com o tempo isso pode marcar a tela.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FusaoPalette.IgnisAmber,
-                )
             }
         }
     }
@@ -327,45 +311,53 @@ private fun LitSlider(litPercent: Int, onCommit: (Int) -> Unit) {
     var dragValue: Float by remember(litPercent) { mutableFloatStateOf(litPercent.toFloat()) }
     val shown: Int = snapLit(dragValue)
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        SectionLabel("PIXELS ACESOS")
-        TelemetryPill(text = "$shown%", color = PixelsAccent, filled = true)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            FusaoSectionLabel("PIXELS ACESOS")
+            TelemetryPill(text = "$shown%", color = PixelsAccent, filled = true)
+        }
+        Slider(
+            value = dragValue,
+            onValueChange = { dragValue = it },
+            onValueChangeFinished = { onCommit(snapLit(dragValue)) },
+            valueRange = SmartPixelsConfig.MIN_LIT_PERCENT.toFloat()..SmartPixelsConfig.MAX_LIT_PERCENT.toFloat(),
+            steps = LIT_SLIDER_STEPS,
+            colors = SliderDefaults.colors(
+                thumbColor = PixelsAccent,
+                activeTrackColor = PixelsAccent,
+                inactiveTrackColor = FusaoPalette.BorderSubtle,
+                activeTickColor = FusaoPalette.VoidBlack.copy(alpha = 0.5f),
+                inactiveTickColor = FusaoPalette.TextMuted.copy(alpha = 0.5f),
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            text = "50% apaga metade (máxima economia/privacidade) · 100% tudo aceso",
+            style = MaterialTheme.typography.bodySmall,
+            color = FusaoPalette.TextMuted,
+        )
     }
-    Slider(
-        value = dragValue,
-        onValueChange = { dragValue = it },
-        onValueChangeFinished = { onCommit(snapLit(dragValue)) },
-        valueRange = SmartPixelsConfig.MIN_LIT_PERCENT.toFloat()..SmartPixelsConfig.MAX_LIT_PERCENT.toFloat(),
-        steps = LIT_SLIDER_STEPS,
-        colors = SliderDefaults.colors(
-            thumbColor = PixelsAccent,
-            activeTrackColor = PixelsAccent,
-            inactiveTrackColor = FusaoPalette.BorderSubtle,
-            activeTickColor = FusaoPalette.VoidBlack.copy(alpha = 0.5f),
-            inactiveTickColor = FusaoPalette.TextMuted.copy(alpha = 0.5f),
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Text(
-        text = "50% = metade apagada (mais economia e mais privacidade) · 100% = nada apagado",
-        style = MaterialTheme.typography.bodySmall,
-        color = FusaoPalette.TextSecondary,
-    )
 }
 
 @Composable
 private fun AboutPanel() {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
     TacticalPanel(
         modifier = Modifier.fillMaxWidth(),
         accentColor = FusaoPalette.BorderSubtle,
-        contentPadding = PaddingValues(14.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            HudSectionHeader(title = "Como funciona", accentColor = PixelsAccent)
+        FusaoCollapsibleSection(
+            title = "Como funciona · AMOLED & Quick Tile",
+            expanded = expanded,
+            onToggle = { expanded = !expanded },
+            accentColor = PixelsAccent,
+        ) {
             ABOUT_LINES.forEach { line ->
                 Text(
                     text = line,
@@ -375,17 +367,6 @@ private fun AboutPanel() {
             }
         }
     }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = FusaoPalette.TextSecondary,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
 }
 
 private fun snapLit(value: Float): Int {
@@ -404,14 +385,9 @@ private val CELL_ROWS: List<List<Int>> = SmartPixelsConfig.CELL_SIZES.chunked(CE
 private val SHIFT_ROWS: List<List<ShiftPreset>> = SmartPixelsConfig.SHIFT_PRESETS.chunked(SHIFT_COLUMNS)
 
 private val ABOUT_LINES: List<String> = listOf(
-    "Economia: só em tela AMOLED (a do M54 é). Pixel preto é pixel desligado, então o ganho " +
-        "acompanha o brilho do que está na tela: em tela clara economiza mais, em tela escura quase nada.",
-    "Privacidade: com menos pixels acesos a tela fica mais escura e mais difícil de ler de longe.",
-    "Movimento: os pixels apagados se revezam de tempos em tempos, para nenhum pixel gastar " +
-        "mais que os outros. A troca para com a tela desligada.",
-    "Permissão: usa a acessibilidade só para desenhar a máscara por cima de tudo em preto total " +
-        "(janela comum fica limitada a 80%). Não lê a tela e não usa root.",
-    "Automático: com \"Ligar sozinho no perfil battery\" ligado, a máscara aparece enquanto o " +
-        "módulo estiver no perfil battery e sai sozinha no jogo (lá o perfil vira game).",
-    "Atalho: bloco \"Smart Pixels\" nas Configurações rápidas (editar os blocos e arrastar).",
+    "Economia: em telas AMOLED (M54), pixel preto é pixel desligado; em telas claras economiza mais.",
+    "Privacidade: reduz o brilho percebido e dificulta leitura lateral.",
+    "Anti burn-in: alterna os subpixels periodicamente e pausa quando a tela apaga.",
+    "Permissão: acessibilidade apenas para sobrepor a máscara preta; sem leitura de conteúdo e sem root.",
+    "Atalho rápido: adicione o bloco \"Smart Pixels\" nas Configurações rápidas.",
 )

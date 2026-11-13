@@ -1,10 +1,23 @@
 package com.orkgabb.fusao.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -12,10 +25,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,9 +42,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -44,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -54,9 +70,10 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -68,13 +85,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orkgabb.fusao.AppIconCache
 import com.orkgabb.fusao.R
 import kotlin.math.cos
-import kotlin.math.min
 import kotlin.math.sin
 
 private val TELEMETRY_TS_REGEX = Regex(
@@ -82,22 +97,20 @@ private val TELEMETRY_TS_REGEX = Regex(
 )
 
 /**
- * Paleta oficial Cyber-Cryo // Reactor Core M54.
- * Projetada especificamente para o painel Super AMOLED Plus do Galaxy M54 (1080x2400),
- * combinando preto profundo com camadas tonais de obsidiana, ciano criogênico,
- * violeta elétrico e âmbar de ignição.
+ * Paleta oficial FUSAO Obsidian // Super AMOLED M54.
+ * Superfícies profundas com hierarquia tonal limpa, bordas sutis e acentos reservados ao estado ativo.
  */
 object FusaoPalette {
-    val VoidBlack = Color(0xFF04060A)
-    val AbyssNavy = Color(0xFF070B13)
-    val ObsidianSurface = Color(0xFF0B101C)
-    val CryoSlate = Color(0xFF101829)
-    val ElevatedHud = Color(0xFF162138)
-    val GlassOverlay = Color(0xD90A0F1D)
-    val GridHairline = Color(0xFF1C2A46)
-    val BorderSubtle = Color(0xFF233454)
+    val VoidBlack = Color(0xFF05070B)
+    val AbyssNavy = Color(0xFF090D16)
+    val ObsidianSurface = Color(0xFF0E1420)
+    val CryoSlate = Color(0xFF141C2B)
+    val ElevatedHud = Color(0xFF1B263B)
+    val GlassOverlay = Color(0xDD0C121E)
+    val GridHairline = Color(0xFF1E293D)
+    val BorderSubtle = Color(0xFF253249)
 
-    val CryoCyan = Color(0xFF00F0FF)
+    val CryoCyan = Color(0xFF22D3EE)
     val CryoTurquoise = Color(0xFF06B6D4)
     val CryoCyanDim = Color(0xFF0E7490)
 
@@ -105,8 +118,8 @@ object FusaoPalette {
     val ElectricOrchid = Color(0xFFA855F7)
     val PlasmaDeep = Color(0xFF4C1D95)
 
-    val IgnisAmber = Color(0xFFFF9F1C)
-    val SolarGold = Color(0xFFFFB703)
+    val IgnisAmber = Color(0xFFF59E0B)
+    val SolarGold = Color(0xFFFBBF24)
 
     val BioEmerald = Color(0xFF10B981)
     val MintPulse = Color(0xFF34D399)
@@ -161,59 +174,59 @@ private val FusaoColorScheme = darkColorScheme(
 private val FusaoTypography = Typography(
     headlineMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Black,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
-        letterSpacing = 0.9.sp,
+        fontWeight = FontWeight.Bold,
+        fontSize = 21.sp,
+        lineHeight = 27.sp,
+        letterSpacing = 0.2.sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.ExtraBold,
+        fontWeight = FontWeight.Bold,
         fontSize = 18.sp,
         lineHeight = 24.sp,
-        letterSpacing = 0.7.sp,
+        letterSpacing = 0.2.sp,
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 15.sp,
-        lineHeight = 21.sp,
-        letterSpacing = 0.5.sp,
+        lineHeight = 20.sp,
+        letterSpacing = 0.1.sp,
     ),
     titleSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 13.sp,
+        fontSize = 13.5.sp,
         lineHeight = 18.sp,
-        letterSpacing = 0.4.sp,
+        letterSpacing = 0.1.sp,
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
         fontSize = 13.5.sp,
-        lineHeight = 19.sp,
-        letterSpacing = 0.15.sp,
+        lineHeight = 18.5.sp,
+        letterSpacing = 0.1.sp,
     ),
     bodySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
         fontSize = 12.sp,
-        lineHeight = 17.sp,
-        letterSpacing = 0.2.sp,
+        lineHeight = 16.5.sp,
+        letterSpacing = 0.1.sp,
     ),
     labelMedium = TextStyle(
         fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 11.sp,
         lineHeight = 15.sp,
-        letterSpacing = 0.8.sp,
+        letterSpacing = 0.4.sp,
     ),
     labelSmall = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.Medium,
         fontSize = 10.sp,
         lineHeight = 13.sp,
-        letterSpacing = 0.7.sp,
+        letterSpacing = 0.5.sp,
     ),
 )
 
@@ -227,35 +240,8 @@ fun FusaoTheme(content: @Composable () -> Unit) {
 }
 
 /**
- * Shape chanfrado técnico a 45° para painéis, botões e badges do FUSAO.
- */
-fun chamferedHudShape(
-    topStartPx: Float = 0f,
-    topEndPx: Float = 18f,
-    bottomEndPx: Float = 0f,
-    bottomStartPx: Float = 18f,
-) = GenericShape { size: Size, _: LayoutDirection ->
-    val w = size.width
-    val h = size.height
-    val ts = min(topStartPx, min(w, h) * 0.35f)
-    val te = min(topEndPx, min(w, h) * 0.35f)
-    val be = min(bottomEndPx, min(w, h) * 0.35f)
-    val bs = min(bottomStartPx, min(w, h) * 0.35f)
-
-    moveTo(ts, 0f)
-    lineTo(w - te, 0f)
-    if (te > 0f) lineTo(w, te)
-    lineTo(w, h - be)
-    if (be > 0f) lineTo(w - be, h)
-    lineTo(bs, h)
-    if (bs > 0f) lineTo(0f, h - bs)
-    lineTo(0f, ts)
-    close()
-}
-
-/**
- * Fundo tático AMOLED com malha técnica de baixa opacidade e iluminação radial localizada.
- * Usa `drawWithCache` para evitar realocação de objetos durante recomposições.
+ * Fundo AMOLED limpo com iluminação atmosférica orgânica de baixa intensidade.
+ * Sem grades ruidosas para preservar contraste e clareza visual.
  */
 @Composable
 fun FusaoAmbientCanvas(
@@ -266,65 +252,59 @@ fun FusaoAmbientCanvas(
 ) {
     val animAccent by animateColorAsState(
         targetValue = accentColor,
-        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing),
         label = "ambientAccent",
     )
+    val animSecondary by animateColorAsState(
+        targetValue = secondaryColor,
+        animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing),
+        label = "ambientSecondary",
+    )
+    val breathTransition = rememberInfiniteTransition(label = "ambientBreath")
+    val glowAlpha by breathTransition.animateFloat(
+        initialValue = 0.09f,
+        targetValue = 0.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 5200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "glowAlpha",
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(FusaoPalette.VoidBlack)
-            .drawWithCache {
-                val step = 36.dp.toPx()
-                val topGlow = Brush.radialGradient(
-                    colors = listOf(
-                        animAccent.copy(alpha = 0.11f),
-                        secondaryColor.copy(alpha = 0.05f),
-                        Color.Transparent,
-                    ),
-                    center = Offset(size.width * 0.82f, size.height * 0.08f),
-                    radius = size.width * 0.85f,
+            .drawBehind {
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            animAccent.copy(alpha = glowAlpha),
+                            animSecondary.copy(alpha = glowAlpha * 0.35f),
+                            Color.Transparent,
+                        ),
+                        center = Offset(size.width * 0.78f, size.height * 0.06f),
+                        radius = size.width * 0.9f,
+                    )
                 )
-                val bottomGlow = Brush.radialGradient(
-                    colors = listOf(
-                        secondaryColor.copy(alpha = 0.09f),
-                        Color.Transparent,
-                    ),
-                    center = Offset(size.width * 0.15f, size.height * 0.92f),
-                    radius = size.width * 0.75f,
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            animSecondary.copy(alpha = 0.06f),
+                            Color.Transparent,
+                        ),
+                        center = Offset(size.width * 0.18f, size.height * 0.90f),
+                        radius = size.width * 0.7f,
+                    )
                 )
-                val gridColor = FusaoPalette.GridHairline.copy(alpha = 0.28f)
-                onDrawBehind {
-                    drawRect(brush = topGlow)
-                    drawRect(brush = bottomGlow)
-                    var x = 0f
-                    while (x < size.width) {
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(x, 0f),
-                            end = Offset(x, size.height),
-                            strokeWidth = 1f,
-                        )
-                        x += step
-                    }
-                    var y = 0f
-                    while (y < size.height) {
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(0f, y),
-                            end = Offset(size.width, y),
-                            strokeWidth = 1f,
-                        )
-                        y += step
-                    }
-                }
             },
         content = content,
     )
 }
 
 /**
- * Painel modular tático com cantos chanfrados, retículas de precisão em Canvas
- * e acabamento metálico/AMOLED.
+ * Painel de superfície moderno com cantos arredondados suaves, animação de tamanho ao expandir
+ * detalhes internos e realce luminoso discreto quando destacado.
  */
 @Composable
 fun TacticalPanel(
@@ -333,96 +313,68 @@ fun TacticalPanel(
     containerColor: Color = FusaoPalette.ObsidianSurface,
     elevated: Boolean = false,
     highlighted: Boolean = false,
-    chamferTopStart: Dp = 4.dp,
-    chamferTopEnd: Dp = 14.dp,
-    chamferBottomEnd: Dp = 4.dp,
-    chamferBottomStart: Dp = 14.dp,
+    @Suppress("UNUSED_PARAMETER") chamferTopStart: Dp = 0.dp,
+    @Suppress("UNUSED_PARAMETER") chamferTopEnd: Dp = 0.dp,
+    @Suppress("UNUSED_PARAMETER") chamferBottomEnd: Dp = 0.dp,
+    @Suppress("UNUSED_PARAMETER") chamferBottomStart: Dp = 0.dp,
+    cornerRadius: Dp = 18.dp,
     contentPadding: PaddingValues = PaddingValues(16.dp),
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val density = LocalDensity.current
-    val shape = remember(chamferTopStart, chamferTopEnd, chamferBottomEnd, chamferBottomStart, density) {
-        with(density) {
-            chamferedHudShape(
-                topStartPx = chamferTopStart.toPx(),
-                topEndPx = chamferTopEnd.toPx(),
-                bottomEndPx = chamferBottomEnd.toPx(),
-                bottomStartPx = chamferBottomStart.toPx(),
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            highlighted -> accentColor.copy(alpha = 0.42f)
+            elevated -> FusaoPalette.BorderSubtle.copy(alpha = 0.75f)
+            else -> FusaoPalette.GridHairline.copy(alpha = 0.95f)
+        },
+        animationSpec = tween(durationMillis = 260),
+        label = "panelBorder",
+    )
+    val bgTop by animateColorAsState(
+        targetValue = if (highlighted) {
+            Color(
+                red = (containerColor.red * 0.90f + accentColor.red * 0.10f).coerceIn(0f, 1f),
+                green = (containerColor.green * 0.90f + accentColor.green * 0.10f).coerceIn(0f, 1f),
+                blue = (containerColor.blue * 0.90f + accentColor.blue * 0.10f).coerceIn(0f, 1f),
+                alpha = 0.96f,
             )
-        }
-    }
-    val borderAlpha = if (highlighted) 0.62f else if (elevated) 0.34f else 0.22f
-    val topHighlightAlpha = if (highlighted) 0.16f else if (elevated) 0.08f else 0.04f
+        } else {
+            containerColor.copy(alpha = 0.94f)
+        },
+        animationSpec = tween(durationMillis = 280),
+        label = "panelBgTop",
+    )
 
     Box(
         modifier = modifier
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+            )
             .clip(shape)
             .background(
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        containerColor.copy(alpha = 0.96f),
-                        FusaoPalette.AbyssNavy.copy(alpha = 0.98f),
+                        bgTop,
+                        FusaoPalette.AbyssNavy.copy(alpha = 0.97f),
                     )
                 )
             )
             .border(
-                width = if (highlighted) 1.3.dp else 1.dp,
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        accentColor.copy(alpha = borderAlpha),
-                        FusaoPalette.BorderSubtle.copy(alpha = 0.35f),
-                        accentColor.copy(alpha = borderAlpha * 0.65f),
-                    )
-                ),
+                width = if (highlighted) 1.15.dp else 1.dp,
+                color = borderColor,
                 shape = shape,
             )
-            .drawWithCache {
-                val glowBrush = Brush.horizontalGradient(
-                    colors = listOf(
-                        accentColor.copy(alpha = topHighlightAlpha),
-                        Color.Transparent,
-                        accentColor.copy(alpha = topHighlightAlpha * 0.5f),
-                    )
-                )
-                val tickLen = 10.dp.toPx()
-                val strokePx = 2.dp.toPx()
-                val tickColor = accentColor.copy(alpha = if (highlighted) 0.85f else 0.45f)
-                onDrawWithContent {
-                    drawRect(brush = glowBrush, size = Size(size.width, 36.dp.toPx()))
-                    drawContent()
-                    drawLine(
-                        color = tickColor,
-                        start = Offset(0f, 0f),
-                        end = Offset(tickLen, 0f),
-                        strokeWidth = strokePx,
-                    )
-                    drawLine(
-                        color = tickColor,
-                        start = Offset(0f, 0f),
-                        end = Offset(0f, tickLen),
-                        strokeWidth = strokePx,
-                    )
-                    drawLine(
-                        color = tickColor,
-                        start = Offset(size.width - tickLen, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = strokePx,
-                    )
-                    drawLine(
-                        color = tickColor,
-                        start = Offset(size.width, size.height - tickLen),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = strokePx,
-                    )
-                }
-            }
             .padding(contentPadding),
         content = content,
     )
 }
 
 /**
- * Cabeçalho técnico de seção com marcador luminoso, título e metadado opcional.
+ * Cabeçalho limpo de seção com pílula de acento sutil, título e metadado opcional.
  */
 @Composable
 fun HudSectionHeader(
@@ -444,13 +396,9 @@ fun HudSectionHeader(
             Box(
                 modifier = Modifier
                     .width(3.dp)
-                    .height(22.dp)
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(accentColor, FusaoPalette.PlasmaViolet)
-                        ),
-                        shape = RoundedCornerShape(2.dp),
-                    )
+                    .height(18.dp)
+                    .clip(CircleShape)
+                    .background(accentColor)
             )
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -480,6 +428,8 @@ fun HudSectionHeader(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = FusaoPalette.TextSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -492,7 +442,37 @@ fun HudSectionHeader(
 }
 
 /**
- * Pill / Etiqueta de telemetria compacta.
+ * Rótulo compacto de categoria/seção reutilizado entre todas as abas.
+ */
+@Composable
+fun FusaoSectionLabel(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = FusaoPalette.TextSecondary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Divisor interno discreto para listas agrupadas dentro de um único painel.
+ */
+@Composable
+fun FusaoHairlineDivider(modifier: Modifier = Modifier) {
+    HorizontalDivider(
+        thickness = 1.dp,
+        color = FusaoPalette.GridHairline.copy(alpha = 0.72f),
+        modifier = modifier,
+    )
+}
+
+/**
+ * Pílula/Badge de status com forma encapsulada e transições suaves de cor.
  */
 @Composable
 fun TelemetryPill(
@@ -502,16 +482,28 @@ fun TelemetryPill(
     pulsingDot: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val bg by animateColorAsState(
+        targetValue = if (filled) color.copy(alpha = 0.16f) else FusaoPalette.CryoSlate.copy(alpha = 0.75f),
+        animationSpec = tween(durationMillis = 220),
+        label = "pillBg",
+    )
+    val border by animateColorAsState(
+        targetValue = color.copy(alpha = if (filled) 0.48f else 0.25f),
+        animationSpec = tween(durationMillis = 220),
+        label = "pillBorder",
+    )
+    val fg by animateColorAsState(
+        targetValue = if (filled) color else FusaoPalette.TextSecondary,
+        animationSpec = tween(durationMillis = 220),
+        label = "pillFg",
+    )
+
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (filled) color.copy(alpha = 0.18f) else FusaoPalette.CryoSlate.copy(alpha = 0.85f))
-            .border(
-                width = 1.dp,
-                color = color.copy(alpha = if (filled) 0.55f else 0.32f),
-                shape = RoundedCornerShape(6.dp),
-            )
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .clip(CircleShape)
+            .background(bg)
+            .border(width = 1.dp, color = border, shape = CircleShape)
+            .padding(horizontal = 9.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
@@ -521,7 +513,7 @@ fun TelemetryPill(
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = if (filled) color else FusaoPalette.TextPrimary,
+            color = fg,
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Ellipsis,
@@ -530,7 +522,7 @@ fun TelemetryPill(
 }
 
 /**
- * Indicador LED com halo luminoso sutil para estados vivos/ativos.
+ * LED indicador com onda de pulso contínua suave enquanto ativo.
  */
 @Composable
 fun StatusPulseDot(
@@ -538,15 +530,40 @@ fun StatusPulseDot(
     active: Boolean,
     size: Dp = 8.dp,
 ) {
+    val pulseTransition = rememberInfiniteTransition(label = "dotPulse")
+    val ringScale by pulseTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = 2.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1750, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "dotRingScale",
+    )
+    val ringAlpha by pulseTransition.animateFloat(
+        initialValue = 0.50f,
+        targetValue = 0.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1750, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "dotRingAlpha",
+    )
+
     Box(
-        modifier = Modifier.size(size * 1.9f),
+        modifier = Modifier.size(size * 2.1f),
         contentAlignment = Alignment.Center,
     ) {
         if (active) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(color.copy(alpha = 0.25f), CircleShape)
+                    .size(size)
+                    .graphicsLayer {
+                        scaleX = ringScale
+                        scaleY = ringScale
+                        alpha = ringAlpha
+                    }
+                    .background(color, CircleShape)
             )
         }
         Box(
@@ -561,7 +578,65 @@ fun StatusPulseDot(
 }
 
 /**
- * Switch personalizado de inspiração hardware/tática para os controles do FUSAO.
+ * Espectro animado compacto (4 barras) para indicar DSP/áudio ativo em tempo real.
+ */
+@Composable
+fun LiveSpectrumBars(
+    active: Boolean,
+    color: Color = FusaoPalette.BioEmerald,
+    modifier: Modifier = Modifier,
+) {
+    val animColor by animateColorAsState(
+        targetValue = if (active) color else FusaoPalette.TextMuted.copy(alpha = 0.45f),
+        animationSpec = tween(220),
+        label = "specColor",
+    )
+    val t = rememberInfiniteTransition(label = "spectrum")
+    val b1 by t.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.95f,
+        animationSpec = infiniteRepeatable(tween(420, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "bar1",
+    )
+    val b2 by t.animateFloat(
+        initialValue = 0.90f,
+        targetValue = 0.30f,
+        animationSpec = infiniteRepeatable(tween(520, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "bar2",
+    )
+    val b3 by t.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1.00f,
+        animationSpec = infiniteRepeatable(tween(370, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "bar3",
+    )
+    val b4 by t.animateFloat(
+        initialValue = 0.75f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(tween(480, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "bar4",
+    )
+
+    val levels = if (active) listOf(b1, b2, b3, b4) else listOf(0.32f, 0.56f, 0.40f, 0.28f)
+    Row(
+        modifier = modifier.height(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        levels.forEach { ratio ->
+            Box(
+                modifier = Modifier
+                    .width(2.5.dp)
+                    .height(14.dp * ratio)
+                    .clip(CircleShape)
+                    .background(animColor)
+            )
+        }
+    }
+}
+
+/**
+ * Switch tátil com física de mola (spring), cápsula moderna e escala ao pressionar.
  */
 @Composable
 fun CyberSwitch(
@@ -571,38 +646,58 @@ fun CyberSwitch(
     isProcessing: Boolean = false,
     accentColor: Color = FusaoPalette.CryoCyan,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed && enabled && !isProcessing) 0.93f else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 550f),
+        label = "switchScale",
+    )
     val thumbOffset by animateDpAsState(
-        targetValue = if (checked) 24.dp else 2.dp,
-        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+        targetValue = if (checked) 22.dp else 2.dp,
+        animationSpec = spring(dampingRatio = 0.68f, stiffness = 520f),
         label = "cyberSwitchOffset",
     )
     val trackColor by animateColorAsState(
         targetValue = when {
-            !enabled -> FusaoPalette.AbyssNavy.copy(alpha = 0.6f)
-            checked -> accentColor.copy(alpha = 0.22f)
-            else -> FusaoPalette.AbyssNavy
+            !enabled -> FusaoPalette.AbyssNavy.copy(alpha = 0.55f)
+            checked -> accentColor.copy(alpha = 0.24f)
+            else -> FusaoPalette.CryoSlate
         },
         animationSpec = tween(durationMillis = 200),
         label = "cyberSwitchTrack",
     )
     val borderColor by animateColorAsState(
         targetValue = when {
-            !enabled -> FusaoPalette.BorderSubtle.copy(alpha = 0.3f)
+            !enabled -> FusaoPalette.BorderSubtle.copy(alpha = 0.25f)
             checked -> accentColor.copy(alpha = 0.85f)
             else -> FusaoPalette.BorderSubtle.copy(alpha = 0.7f)
         },
         animationSpec = tween(durationMillis = 200),
         label = "cyberSwitchBorder",
     )
-    val interactionSource = remember { MutableInteractionSource() }
+    val thumbColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> FusaoPalette.TextMuted.copy(alpha = 0.35f)
+            checked -> accentColor
+            else -> FusaoPalette.TextSecondary.copy(alpha = 0.85f)
+        },
+        animationSpec = tween(durationMillis = 200),
+        label = "cyberSwitchThumb",
+    )
 
     Box(
         modifier = Modifier
-            .width(52.dp)
-            .height(28.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .width(48.dp)
+            .height(26.dp)
+            .clip(CircleShape)
             .background(trackColor)
-            .border(1.2.dp, borderColor, RoundedCornerShape(8.dp))
+            .border(1.2.dp, borderColor, CircleShape)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -612,46 +707,19 @@ fun CyberSwitch(
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Text(
-            text = if (checked) "ON" else "OFF",
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
-            color = if (checked) accentColor.copy(alpha = 0.85f) else FusaoPalette.TextMuted.copy(alpha = 0.65f),
-            maxLines = 1,
-            softWrap = false,
-            modifier = Modifier
-                .align(if (checked) Alignment.CenterStart else Alignment.CenterEnd)
-                .padding(horizontal = 6.dp),
-        )
         Box(
             modifier = Modifier
                 .offset(x = thumbOffset)
-                .size(24.dp, 22.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(
-                    when {
-                        !enabled -> FusaoPalette.TextMuted.copy(alpha = 0.35f)
-                        checked -> accentColor
-                        else -> FusaoPalette.TextSecondary.copy(alpha = 0.65f)
-                    }
-                ),
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(thumbColor),
             contentAlignment = Alignment.Center,
         ) {
             if (isProcessing) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier.size(11.dp),
                     strokeWidth = 1.8.dp,
                     color = if (checked) FusaoPalette.VoidBlack else accentColor,
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .width(3.dp)
-                        .height(10.dp)
-                        .background(
-                            color = if (checked) FusaoPalette.VoidBlack.copy(alpha = 0.75f)
-                            else FusaoPalette.VoidBlack.copy(alpha = 0.55f),
-                            shape = RoundedCornerShape(1.5.dp),
-                        )
                 )
             }
         }
@@ -659,7 +727,75 @@ fun CyberSwitch(
 }
 
 /**
- * Botão de comando tático chanfrado com suporte a estado de carregamento e variante sólida/contorno.
+ * Linha unificada de switch para painéis limpos sem caixas duplicadas.
+ */
+@Composable
+fun FusaoSwitchRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    enabled: Boolean = true,
+    isProcessing: Boolean = false,
+    accentColor: Color = FusaoPalette.CryoCyan,
+    trailingBadge: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(
+                enabled = enabled && !isProcessing,
+                onClick = { onCheckedChange(!checked) },
+            )
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (enabled) FusaoPalette.TextPrimary else FusaoPalette.TextMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (trailingBadge != null) {
+                    trailingBadge()
+                }
+            }
+            if (!subtitle.isNullOrEmpty()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FusaoPalette.TextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        CyberSwitch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            isProcessing = isProcessing,
+            accentColor = accentColor,
+        )
+    }
+}
+
+/**
+ * Botão moderno com cantos arredondados suaves, resposta tátil ao pressionar e animações de estado.
  */
 @Composable
 fun TacticalButton(
@@ -672,60 +808,62 @@ fun TacticalButton(
     accentColor: Color = FusaoPalette.CryoCyan,
     subtitle: String? = null,
 ) {
-    val density = LocalDensity.current
-    val shape = remember(density) {
-        with(density) {
-            chamferedHudShape(
-                topStartPx = 3.dp.toPx(),
-                topEndPx = 10.dp.toPx(),
-                bottomEndPx = 3.dp.toPx(),
-                bottomStartPx = 10.dp.toPx(),
-            )
-        }
-    }
-    val bgBrush = when {
-        !enabled -> Brush.horizontalGradient(
-            listOf(
-                FusaoPalette.CryoSlate.copy(alpha = 0.4f),
-                FusaoPalette.ObsidianSurface.copy(alpha = 0.4f),
-            )
-        )
-        filled -> Brush.horizontalGradient(
-            listOf(
-                accentColor.copy(alpha = 0.28f),
-                FusaoPalette.PlasmaViolet.copy(alpha = 0.22f),
-            )
-        )
-        else -> Brush.horizontalGradient(
-            listOf(
-                FusaoPalette.CryoSlate.copy(alpha = 0.85f),
-                FusaoPalette.ObsidianSurface.copy(alpha = 0.9f),
-            )
-        )
-    }
-    val borderColor = when {
-        !enabled -> FusaoPalette.BorderSubtle.copy(alpha = 0.3f)
-        filled -> accentColor.copy(alpha = 0.85f)
-        else -> accentColor.copy(alpha = 0.42f)
-    }
-    val contentColor = when {
-        !enabled -> FusaoPalette.TextMuted
-        filled -> accentColor
-        else -> FusaoPalette.TextPrimary
-    }
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled && !isLoading) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 560f),
+        label = "btnScale",
+    )
+    val shape = remember { RoundedCornerShape(12.dp) }
+
+    val bgColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> FusaoPalette.CryoSlate.copy(alpha = 0.35f)
+            filled -> accentColor.copy(alpha = 0.22f)
+            else -> FusaoPalette.CryoSlate.copy(alpha = 0.82f)
+        },
+        animationSpec = tween(200),
+        label = "btnBg",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> FusaoPalette.BorderSubtle.copy(alpha = 0.22f)
+            filled -> accentColor.copy(alpha = 0.75f)
+            else -> FusaoPalette.BorderSubtle.copy(alpha = 0.7f)
+        },
+        animationSpec = tween(200),
+        label = "btnBorder",
+    )
+    val contentColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> FusaoPalette.TextMuted
+            filled -> accentColor
+            else -> FusaoPalette.TextPrimary
+        },
+        animationSpec = tween(200),
+        label = "btnFg",
+    )
 
     Surface(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(shape)
-            .clickable(enabled = enabled && !isLoading, onClick = onClick),
-        color = Color.Transparent,
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = enabled && !isLoading,
+                onClick = onClick,
+            ),
+        color = bgColor,
         shape = shape,
-        border = BorderStroke(if (filled) 1.3.dp else 1.dp, borderColor),
+        border = BorderStroke(if (filled) 1.2.dp else 1.dp, borderColor),
     ) {
         Row(
-            modifier = Modifier
-                .background(bgBrush)
-                .padding(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -750,7 +888,7 @@ fun TacticalButton(
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.labelSmall,
-                        color = FusaoPalette.TextSecondary,
+                        color = if (filled) accentColor.copy(alpha = 0.85f) else FusaoPalette.TextSecondary,
                         maxLines = 1,
                         softWrap = false,
                         overflow = TextOverflow.Ellipsis,
@@ -761,9 +899,213 @@ fun TacticalButton(
     }
 }
 
+data class SegmentedItem<T>(
+    val value: T,
+    val label: String,
+    val subtitle: String? = null,
+    val accent: Color? = null,
+)
+
 /**
- * Núcleo visual do Reator FUSAO-M54 para a tela principal de Status.
- * Usa `drawWithCache` sem animações infinitas contínuas para zero overhead de CPU/GPU em repouso.
+ * Barra segmentada unificada em trilho único para substituir múltiplos botões soltos e bordas repetidas.
+ */
+@Composable
+fun <T> FusaoSegmentedControl(
+    items: List<SegmentedItem<T>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    loadingValue: T? = null,
+    defaultAccent: Color = FusaoPalette.CryoCyan,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(13.dp))
+            .background(FusaoPalette.VoidBlack.copy(alpha = 0.65f))
+            .border(1.dp, FusaoPalette.GridHairline, RoundedCornerShape(13.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items.forEach { item ->
+            val isSelected = item.value == selected
+            val isLoading = loadingValue == item.value
+            val accent = item.accent ?: defaultAccent
+            val interactionSource = remember { MutableInteractionSource() }
+            val pressed by interactionSource.collectIsPressedAsState()
+
+            val scale by animateFloatAsState(
+                targetValue = if (pressed && enabled && !isLoading) 0.96f else 1f,
+                animationSpec = spring(dampingRatio = 0.7f, stiffness = 560f),
+                label = "segScale",
+            )
+            val bg by animateColorAsState(
+                targetValue = when {
+                    isSelected -> accent.copy(alpha = 0.20f)
+                    else -> Color.Transparent
+                },
+                animationSpec = tween(180),
+                label = "segBg",
+            )
+            val border by animateColorAsState(
+                targetValue = if (isSelected) accent.copy(alpha = 0.65f) else Color.Transparent,
+                animationSpec = tween(180),
+                label = "segBorder",
+            )
+            val textColor by animateColorAsState(
+                targetValue = when {
+                    !enabled -> FusaoPalette.TextMuted
+                    isSelected -> accent
+                    else -> FusaoPalette.TextSecondary
+                },
+                animationSpec = tween(180),
+                label = "segText",
+            )
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(bg)
+                    .border(1.dp, border, RoundedCornerShape(9.dp))
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        enabled = enabled && !isLoading,
+                        onClick = { onSelect(item.value) },
+                    )
+                    .padding(horizontal = 6.dp, vertical = if (item.subtitle != null) 7.dp else 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(11.dp),
+                            strokeWidth = 1.7.dp,
+                            color = accent,
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = item.label,
+                            style = MaterialTheme.typography.titleSmall.copy(fontSize = 12.5.sp),
+                            color = textColor,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (!item.subtitle.isNullOrEmpty()) {
+                            Text(
+                                text = item.subtitle,
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                color = if (isSelected) accent.copy(alpha = 0.85f) else FusaoPalette.TextMuted,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Linha expansível (accordion) com chevron animado para manter blocos secundários recolhidos por padrão.
+ */
+@Composable
+fun FusaoCollapsibleSection(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    accentColor: Color = FusaoPalette.CryoCyan,
+    summaryTag: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val chevronRot by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 460f),
+        label = "chevronRot",
+    )
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onToggle)
+                .padding(vertical = 6.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = accentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!summaryTag.isNullOrEmpty()) {
+                    Text(
+                        text = summaryTag,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FusaoPalette.TextMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Canvas(
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer { rotationZ = chevronRot }
+            ) {
+                val p = Path().apply {
+                    moveTo(size.width * 0.22f, size.height * 0.36f)
+                    lineTo(size.width * 0.50f, size.height * 0.66f)
+                    lineTo(size.width * 0.78f, size.height * 0.36f)
+                }
+                drawPath(
+                    path = p,
+                    color = accentColor,
+                    style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(tween(180)) + expandVertically(spring(stiffness = Spring.StiffnessMediumLow)),
+            exit = fadeOut(tween(140)) + shrinkVertically(spring(stiffness = Spring.StiffnessMedium)),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                content = content,
+            )
+        }
+    }
+}
+
+/**
+ * Núcleo vivo do Reator FUSAO-M54 para a tela principal de Status.
+ * Animação orbital contínua suave e halo reativo ao estado em jogo.
  */
 @Composable
 fun ReactorCoreEmblem(
@@ -772,44 +1114,63 @@ fun ReactorCoreEmblem(
     daemonsAlive: Int,
     modifier: Modifier = Modifier,
 ) {
-    val accent = FusaoPalette.profileAccent(profile)
-    val secondary = FusaoPalette.profileSecondary(profile)
+    val accent by animateColorAsState(
+        targetValue = FusaoPalette.profileAccent(profile),
+        animationSpec = tween(400),
+        label = "reactorAccent",
+    )
+    val secondary by animateColorAsState(
+        targetValue = FusaoPalette.profileSecondary(profile),
+        animationSpec = tween(400),
+        label = "reactorSecondary",
+    )
     val progressRatio by animateFloatAsState(
         targetValue = (daemonsAlive.coerceIn(0, 3) / 3f),
-        animationSpec = tween(durationMillis = 450),
+        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
         label = "daemonArc",
+    )
+
+    val inf = rememberInfiniteTransition(label = "reactorOrbit")
+    val orbitAngle by inf.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = if (inGame) 5500 else 11000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "orbitAngle",
+    )
+    val haloBreath by inf.animateFloat(
+        initialValue = if (inGame) 0.22f else 0.12f,
+        targetValue = if (inGame) 0.38f else 0.22f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = if (inGame) 1600 else 3200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "haloBreath",
     )
 
     Box(
         modifier = modifier
-            .size(92.dp)
+            .size(84.dp)
             .drawWithCache {
-                val strokeOuter = 2.5.dp.toPx()
-                val strokeInner = 4.dp.toPx()
-                val pad = 6.dp.toPx()
+                val strokeOuter = 2.dp.toPx()
+                val strokeInner = 3.5.dp.toPx()
+                val pad = 5.dp.toPx()
                 val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
-                val haloBrush = Brush.radialGradient(
-                    colors = listOf(
-                        accent.copy(alpha = if (inGame) 0.30f else 0.16f),
-                        secondary.copy(alpha = 0.08f),
-                        Color.Transparent,
-                    )
-                )
                 val sweepBrush = Brush.sweepGradient(
-                    colors = listOf(accent, secondary, accent)
+                    colors = listOf(accent, secondary, accent.copy(alpha = 0.2f), accent)
                 )
-                val r = size.minDimension * 0.47f
-                val cx = size.width / 2f
-                val cy = size.height / 2f
-                val tickInner = r - 4.dp.toPx()
-                val tickOuter = r + 2.dp.toPx()
-                val tickStroke = 2.dp.toPx()
-                val tickColor = accent.copy(alpha = 0.7f)
-
                 onDrawBehind {
                     drawCircle(
-                        brush = haloBrush,
-                        radius = size.minDimension * 0.5f,
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                accent.copy(alpha = haloBreath),
+                                secondary.copy(alpha = haloBreath * 0.35f),
+                                Color.Transparent,
+                            )
+                        ),
+                        radius = size.minDimension * 0.52f,
                     )
                     drawArc(
                         color = FusaoPalette.GridHairline,
@@ -820,25 +1181,15 @@ fun ReactorCoreEmblem(
                         size = arcSize,
                         style = Stroke(width = strokeOuter),
                     )
-                    drawArc(
-                        brush = sweepBrush,
-                        startAngle = -90f,
-                        sweepAngle = 360f * progressRatio.coerceAtLeast(0.08f),
-                        useCenter = false,
-                        topLeft = Offset(pad, pad),
-                        size = arcSize,
-                        style = Stroke(width = strokeInner, cap = StrokeCap.Round),
-                    )
-                    for (i in 0 until 6) {
-                        val rad = Math.toRadians((i * 60).toDouble())
-                        val cosA = cos(rad).toFloat()
-                        val sinA = sin(rad).toFloat()
-                        drawLine(
-                            color = tickColor,
-                            start = Offset(cx + tickInner * cosA, cy + tickInner * sinA),
-                            end = Offset(cx + tickOuter * cosA, cy + tickOuter * sinA),
-                            strokeWidth = tickStroke,
-                            cap = StrokeCap.Round,
+                    rotate(degrees = orbitAngle) {
+                        drawArc(
+                            brush = sweepBrush,
+                            startAngle = -90f,
+                            sweepAngle = 360f * progressRatio.coerceAtLeast(0.18f),
+                            useCenter = false,
+                            topLeft = Offset(pad, pad),
+                            size = arcSize,
+                            style = Stroke(width = strokeInner, cap = StrokeCap.Round),
                         )
                     }
                 }
@@ -849,7 +1200,7 @@ fun ReactorCoreEmblem(
             painter = painterResource(id = R.drawable.img_fusao_emblem),
             contentDescription = "Emblema FUSAO-M54",
             modifier = Modifier
-                .size(68.dp)
+                .size(62.dp)
                 .clip(CircleShape),
             contentScale = ContentScale.Fit,
         )
@@ -857,8 +1208,7 @@ fun ReactorCoreEmblem(
 }
 
 /**
- * Renderiza o ícone real do aplicativo via PackageManager (sem permissões extras)
- * ou um brasão hexagonal tático com monograma quando o pacote não está instalado.
+ * Renderiza o ícone real do aplicativo via PackageManager ou brasão hexagonal tático.
  */
 @Composable
 fun AppIconBadge(
@@ -879,19 +1229,12 @@ fun AppIconBadge(
     Box(
         modifier = Modifier
             .size(size)
-            .clip(RoundedCornerShape(11.dp))
-            .background(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        FusaoPalette.ElevatedHud,
-                        FusaoPalette.AbyssNavy,
-                    )
-                )
-            )
+            .clip(RoundedCornerShape(12.dp))
+            .background(FusaoPalette.ElevatedHud.copy(alpha = 0.72f))
             .border(
                 width = 1.dp,
-                color = accentColor.copy(alpha = 0.38f),
-                shape = RoundedCornerShape(11.dp),
+                color = accentColor.copy(alpha = 0.30f),
+                shape = RoundedCornerShape(12.dp),
             ),
         contentAlignment = Alignment.Center,
     ) {
@@ -912,7 +1255,7 @@ fun AppIconBadge(
                 clean.take(2).uppercase().ifEmpty { "GM" }
             }
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val r = this.size.minDimension * 0.36f
+                val r = this.size.minDimension * 0.35f
                 val path = Path()
                 for (i in 0 until 6) {
                     val rad = Math.toRadians((i * 60 - 30).toDouble())
@@ -921,14 +1264,11 @@ fun AppIconBadge(
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
                 path.close()
+                drawPath(path = path, color = accentColor.copy(alpha = 0.14f))
                 drawPath(
                     path = path,
-                    color = accentColor.copy(alpha = 0.16f),
-                )
-                drawPath(
-                    path = path,
-                    color = accentColor.copy(alpha = 0.55f),
-                    style = Stroke(width = 1.4.dp.toPx()),
+                    color = accentColor.copy(alpha = 0.45f),
+                    style = Stroke(width = 1.3.dp.toPx()),
                 )
             }
             Text(
@@ -942,11 +1282,7 @@ fun AppIconBadge(
     }
 }
 
-/**
- * Ícones vetoriais desenhados nativamente em Canvas para as 6 áreas de navegação
- * e subsistemas técnicos (zero dependência de material-icons-extended pesado).
- */
-enum class FusaoNavIcon { STATUS, FLAGS, BLOCK, GAMES, PIXELS, LOG }
+enum class FusaoNavIcon { STATUS, FLAGS, BLOCK, GAMES, PIXELS, MISC, LOG, REFRESH }
 
 @Composable
 fun FusaoVectorGlyph(
@@ -991,7 +1327,6 @@ fun FusaoVectorGlyph(
                 }
             }
             FusaoNavIcon.BLOCK -> {
-                // escudo com a barra de "barrado": chamadas e SMS bloqueados
                 val shield = Path().apply {
                     moveTo(w * 0.5f, h * 0.07f)
                     lineTo(w * 0.86f, h * 0.22f)
@@ -1024,7 +1359,6 @@ fun FusaoVectorGlyph(
                 drawCircle(color = color, radius = w * 0.08f, center = center)
             }
             FusaoNavIcon.PIXELS -> {
-                // grade 3x3 em xadrez: pixels acesos e apagados
                 val cell = w * 0.24f
                 val gap = w * 0.07f
                 val origin = (w - (3f * cell + 2f * gap)) / 2f
@@ -1036,6 +1370,19 @@ fun FusaoVectorGlyph(
                             size = Size(cell, cell),
                         )
                     }
+                }
+            }
+            FusaoNavIcon.MISC -> {
+                val xs = listOf(w * 0.20f, w * 0.40f, w * 0.60f, w * 0.80f)
+                val tops = listOf(h * 0.44f, h * 0.16f, h * 0.30f, h * 0.52f)
+                xs.forEachIndexed { idx, x ->
+                    drawLine(
+                        color = color,
+                        start = Offset(x, tops[idx]),
+                        end = Offset(x, h * 0.84f),
+                        strokeWidth = 2.0.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
                 }
             }
             FusaoNavIcon.LOG -> {
@@ -1059,6 +1406,24 @@ fun FusaoVectorGlyph(
                     strokeWidth = stroke.width,
                     cap = StrokeCap.Round,
                 )
+            }
+            FusaoNavIcon.REFRESH -> {
+                val pad = w * 0.16f
+                drawArc(
+                    color = color,
+                    startAngle = -50f,
+                    sweepAngle = 275f,
+                    useCenter = false,
+                    topLeft = Offset(pad, pad),
+                    size = Size(w - pad * 2f, h - pad * 2f),
+                    style = stroke,
+                )
+                val arrow = Path().apply {
+                    moveTo(w * 0.70f, h * 0.10f)
+                    lineTo(w * 0.86f, h * 0.26f)
+                    lineTo(w * 0.65f, h * 0.34f)
+                }
+                drawPath(arrow, color = color, style = stroke)
             }
         }
     }

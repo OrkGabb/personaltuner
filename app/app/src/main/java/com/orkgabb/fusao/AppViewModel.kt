@@ -481,6 +481,10 @@ class FusaoViewModel : ViewModel() {
             ?: _state.value.apps.firstOrNull { it.pkg == pkg }?.label
             ?: pkg
 
+    fun showNotice(message: String) {
+        _state.update { it.copy(notice = message) }
+    }
+
     fun clearNotice() {
         _state.update { it.copy(notice = "") }
     }
