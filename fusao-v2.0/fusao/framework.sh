@@ -13,9 +13,13 @@ STOCK_F="$M54_DIR/framework.stock"
 MODE="${1:-auto}"
 
 # Tríades do FUSAO por perfil (activity_manager / job_scheduler / app_standby).
-TRIAD_AM_GAME="service_restart_duration=86400000,service_reset_run_duration=120000,background_settle_time=10000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
+# No perfil game, power_check e background_settle_time/strong_usage ficam folgados para que o ActivityManager/CFMS
+# não sufoque players de música/áudio e EQ ativos em segundo plano durante jogos.
+TRIAD_AM_GAME="service_restart_duration=86400000,service_reset_run_duration=120000,background_settle_time=30000,power_check_max_cpu_1=25,power_check_max_cpu_2=35,content_provider_retain_time=10000"
+TRIAD_AM_GAME_LEGACY="service_restart_duration=86400000,service_reset_run_duration=120000,background_settle_time=10000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
 TRIAD_JS_GAME="max_job_count_active=1,min_ready_jobs_count=32,bg_normal_job_count=0,bg_moderate_job_count=0,bg_low_job_count=0,enable_adaptive_scheduling=false,min_ready_cpu_only_jobs_count=32,min_ready_non_active_jobs_count=32,heavy_use_factor=0.95,moderate_use_factor=0.8"
-TRIAD_SB_GAME="strong_usage_duration=10000,system_interaction_duration=5000,initial_foreground_service_start_duration=60000,prediction_timeout=60000,sync_adapter_duration=10000"
+TRIAD_SB_GAME="strong_usage_duration=20000,system_interaction_duration=10000,initial_foreground_service_start_duration=90000,prediction_timeout=60000,sync_adapter_duration=10000"
+TRIAD_SB_GAME_LEGACY="strong_usage_duration=10000,system_interaction_duration=5000,initial_foreground_service_start_duration=60000,prediction_timeout=60000,sync_adapter_duration=10000"
 TRIAD_AM_BATTERY="service_restart_duration=1800000,service_reset_run_duration=60000,background_settle_time=15000,power_check_max_cpu_1=10,power_check_max_cpu_2=20,content_provider_retain_time=10000"
 TRIAD_JS_BATTERY="max_job_count_active=2,min_ready_jobs_count=8,bg_normal_job_count=1,bg_moderate_job_count=1,enable_adaptive_scheduling=true,min_ready_cpu_only_jobs_count=8,min_ready_non_active_jobs_count=8,heavy_use_factor=0.85,moderate_use_factor=0.7"
 TRIAD_SB_BATTERY="strong_usage_duration=30000,system_interaction_duration=10000,initial_foreground_service_start_duration=120000,prediction_timeout=300000,sync_adapter_duration=30000"
@@ -28,7 +32,8 @@ TRIAD_SB_BALANCED="strong_usage_duration=20000,system_interaction_duration=10000
 # framework off não voltava ao padrão: no snapshot e no restore eles contam como "sem valor" (= delete).
 own_triad() {
   case "$1" in
-    "$TRIAD_AM_GAME"|"$TRIAD_JS_GAME"|"$TRIAD_SB_GAME"|"$TRIAD_AM_BATTERY"|"$TRIAD_JS_BATTERY"|"$TRIAD_SB_BATTERY"|\
+    "$TRIAD_AM_GAME"|"$TRIAD_AM_GAME_LEGACY"|"$TRIAD_JS_GAME"|"$TRIAD_SB_GAME"|"$TRIAD_SB_GAME_LEGACY"|\
+    "$TRIAD_AM_BATTERY"|"$TRIAD_JS_BATTERY"|"$TRIAD_SB_BATTERY"|\
     "$TRIAD_AM_BALANCED"|"$TRIAD_JS_BALANCED"|"$TRIAD_SB_BALANCED") return 0;;
   esac
   return 1
@@ -120,6 +125,47 @@ restore_stock() {
   log "framework: restore stock"
 }
 
+stock_val() {
+  grep "^${1}=" "$STOCK_F" 2>/dev/null | cut -d= -f2- | tail -n 1
+}
+
+display_hz_pref() {
+  grep "^hz=" "$M54_DIR/display.hz" 2>/dev/null | cut -d= -f2- | tail -n 1
+}
+
+# Resolve e aplica peak/min_refresh_rate fora de jogo respeitando `fusao display` e `framework.stock`.
+apply_outside_refresh_rates() {
+  local pref sp sm
+  pref=$(display_hz_pref)
+  case "$pref" in
+    120hz|120|fixed)
+      sput system peak_refresh_rate "120.0"
+      sput system min_refresh_rate "120.0"
+      return 0
+      ;;
+    60hz|60)
+      sput system peak_refresh_rate "60.0"
+      sput system min_refresh_rate "60.0"
+      return 0
+      ;;
+    adaptive|auto)
+      sput system peak_refresh_rate "120.0"
+      sput system min_refresh_rate "60.0"
+      return 0
+      ;;
+  esac
+  sp=$(stock_val peak_refresh_rate)
+  sm=$(stock_val min_refresh_rate)
+  if [ "$sm" = "120.0" ] || [ "$sm" = "120" ]; then
+    sput system peak_refresh_rate "120.0"
+    sput system min_refresh_rate "120.0"
+  else
+    # Garante teto 120.0 no modo adaptável fora de jogo (inclusive se stock tinha pico limitado).
+    sput system peak_refresh_rate "120.0"
+    sput system min_refresh_rate "60.0"
+  fi
+}
+
 apply_triad() {
   # apply_triad <game|balanced|battery>
   case "$1" in
@@ -128,7 +174,11 @@ apply_triad() {
       sput global job_scheduler_constants "$TRIAD_JS_GAME"
       sput global app_standby_constants "$TRIAD_SB_GAME"
       sput system peak_refresh_rate "120.0"
-      sput system min_refresh_rate "120.0"
+      if [ -s "$M54_DIR/game-active.txt" ]; then
+        sput system min_refresh_rate "120.0"
+      else
+        apply_outside_refresh_rates
+      fi
       # Inteiro válido '0' (sem override forçado de FPS no GameManagerService)
       dput game_overlay "game_default_frame_rate" "0"
       ;;
@@ -136,18 +186,14 @@ apply_triad() {
       sput global activity_manager_constants "$TRIAD_AM_BATTERY"
       sput global job_scheduler_constants "$TRIAD_JS_BATTERY"
       sput global app_standby_constants "$TRIAD_SB_BATTERY"
-      # Adaptativo 120/60, não 60 travado (dono, 2026-10-19: "detesto 60 Hz", fluidez vale mais que a
-      # economia). Medido no kernlab: 60/60 = metade dos frames e ~6x mais travadas >= 33 ms no scroll.
-      sput system peak_refresh_rate "120.0"
-      sput system min_refresh_rate "60.0"
+      apply_outside_refresh_rates
       dput game_overlay "game_default_frame_rate" "0"
       ;;
     *) # balanced
       sput global activity_manager_constants "$TRIAD_AM_BALANCED"
       sput global job_scheduler_constants "$TRIAD_JS_BALANCED"
       sput global app_standby_constants "$TRIAD_SB_BALANCED"
-      sput system peak_refresh_rate "120.0"
-      sput system min_refresh_rate "60.0"
+      apply_outside_refresh_rates
       dput game_overlay "game_default_frame_rate" "0"
       ;;
   esac

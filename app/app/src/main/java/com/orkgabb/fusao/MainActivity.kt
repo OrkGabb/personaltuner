@@ -844,7 +844,7 @@ class MainActivity : ComponentActivity() {
                                             text = pKey,
                                             subtitle = subLabel,
                                             onClick = { vm.setProfile(pKey) },
-                                            enabled = state.rooted && !busy && (!selected || st.profileState != "applied"),
+                                            enabled = state.rooted && !busy,
                                             filled = confirmed,
                                             isLoading = isTargetBusy,
                                             accentColor = if (selected && st.profileState == "failed") FusaoPalette.CrimsonCore else pColor,
@@ -1712,18 +1712,53 @@ class MainActivity : ComponentActivity() {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     HudSectionHeader(
                         title = "Limpeza de RAM",
-                        subtitle = "Só manual, fora do jogo: ao entrar travava o carregamento",
+                        subtitle = "Reclaim MGLRU seletivo (preserva mídia e cache ativo)",
                         accentColor = FusaoPalette.BioEmerald,
                         trailing = {
+                            val pillLabel = when {
+                                state.status.ramclean -> "LIGADO NO JOGO"
+                                ramcleanTelemetry.lastMglruTag.isNotEmpty() ->
+                                    "MGLRU · ${ramcleanTelemetry.lastMglruTag.substringAfter(':', "OK").uppercase()}"
+                                else -> "MANUAL · MGLRU"
+                            }
                             TelemetryPill(
-                                text = if (state.status.ramclean) "LIGADO NO JOGO" else "MANUAL",
-                                color = if (state.status.ramclean) FusaoPalette.BioEmerald else FusaoPalette.TextMuted,
+                                text = pillLabel,
+                                color = if (state.status.ramclean || ramcleanTelemetry.lastMglruTag.isNotEmpty()) {
+                                    FusaoPalette.BioEmerald
+                                } else {
+                                    FusaoPalette.TextMuted
+                                },
                                 filled = state.status.ramclean,
                             )
                         },
                     )
 
-                    if (ramcleanTelemetry.lastTransition.isNotEmpty() || ramcleanTelemetry.lastAvailKb.isNotEmpty()) {
+                    if (
+                        ramcleanTelemetry.lastTransition.isNotEmpty() ||
+                        ramcleanTelemetry.lastAvailTransition.isNotEmpty() ||
+                        ramcleanTelemetry.lastAvailKb.isNotEmpty()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            MetricMiniCard(
+                                label = "LIBERADO (Δ)",
+                                value = formatDeltaMb(ramcleanTelemetry.lastDeltaMb),
+                                accent = if ((ramcleanTelemetry.lastDeltaMb ?: 0) > 0) {
+                                    FusaoPalette.BioEmerald
+                                } else {
+                                    FusaoPalette.TextMuted
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            MetricMiniCard(
+                                label = "DISPONÍVEL",
+                                value = availTransitionMb(ramcleanTelemetry),
+                                accent = FusaoPalette.CryoCyan,
+                                modifier = Modifier.weight(1.45f),
+                            )
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1735,8 +1770,8 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.weight(1.35f),
                             )
                             MetricMiniCard(
-                                label = "DISPONÍVEL",
-                                value = kbToMb(ramcleanTelemetry.lastAvailKb),
+                                label = "MGLRU / TRIM",
+                                value = mglruTrimSummary(ramcleanTelemetry),
                                 accent = FusaoPalette.CryoCyan,
                                 modifier = Modifier.weight(1f),
                             )
@@ -1783,6 +1818,26 @@ class MainActivity : ComponentActivity() {
     private fun ramTransitionMb(transition: String): String {
         val parts = transition.split("->").mapNotNull { it.trim().toLongOrNull() }
         return if (parts.size == 2) "${parts[0] / 1024} → ${parts[1] / 1024} MB" else "—"
+    }
+
+    /** Delta real em MB de MemAvailable (+N MB, 0 MB, -N MB). */
+    private fun formatDeltaMb(deltaMb: Int?): String = when {
+        deltaMb == null -> "—"
+        deltaMb > 0 -> "+$deltaMb MB"
+        else -> "$deltaMb MB"
+    }
+
+    /** MemAvailable antes → depois em MB, com fallback para formato legado de valor único. */
+    private fun availTransitionMb(telemetry: RamcleanTelemetry): String {
+        val transition = ramTransitionMb(telemetry.lastAvailTransition)
+        return if (transition != "—") transition else kbToMb(telemetry.lastAvailKb)
+    }
+
+    /** Resumo compacto do modo MGLRU + processos trimmed. */
+    private fun mglruTrimSummary(telemetry: RamcleanTelemetry): String {
+        val mode = telemetry.lastMglruTag.substringAfter(':', telemetry.lastMglruTag).takeIf { it.isNotEmpty() }
+        val trim = telemetry.lastTrimmedCount?.let { "$it trim" }
+        return listOfNotNull(mode, trim).joinToString(" · ").ifEmpty { "—" }
     }
 
     @Composable

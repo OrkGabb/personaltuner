@@ -109,6 +109,9 @@ o que sobrevive do `core.cpp` são as **funções de medição**, não a busca. 
 Teto do P4 = `cpuinfo_max_freq` 2400000 (topo de `scaling_available_frequencies`, lido 2026-10-23);
 o antigo "teto rígido 1824000" era errado (o `game-tetos` mediu 2400000 segurando; o térmico da
 Samsung pode baixar o efetivo, ex. 2304000). Stock do P4 = 2400000. Teto rígido: `mif/max=2093000`. Degrau: `policy0/min`
-só desce via intermediário (1152000→672000→533000). Pós-jogo o SoC segura
-`scaling_max` abaixo do pedido (latch térmico Samsung, cdevs em 0) — retestar a frio;
-_floors sempre colam, tetos nem sempre_.
+só desce via intermediário (1152000→672000→533000). O "latch pós-jogo" abaixo de 2400000 com `cdev2=0`
+foi identificado em 2026-11-13: `/sys/devices/platform/exynos-ufcc/ufc/cpufreq_max_limit` (symlink
+`/sys/devices/system/cpu/cpufreq_limit/cpufreq_max_limit`, `PM_QOS_MAX_LIMIT | user0`) retém caps do
+`Hyper`/`SDHMS` (`2208000`/`2112000`/`2016000`/`1824000`) mesmo fora do jogo; gravar `-1` nesse nó (com
+`cooling_device2` `thermal-cpufreq-1` em `0`) limpa o latch e libera `2400000` sem desligar proteção térmica;
+_floors sempre colam, tetos precisam liberar o latch UFC quando não há throttle térmico_.

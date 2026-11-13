@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** Uma ação longa por vez (a UI trava só a linha ocupada, nunca a tela). */
@@ -126,7 +128,27 @@ class FusaoViewModel : ViewModel() {
     private val _state = MutableStateFlow(FusaoUiState())
     val state: StateFlow<FusaoUiState> = _state.asStateFlow()
 
+    private val actionMutex = Mutex()
     private var recordCountdownJob: Job? = null
+
+    private fun launchLocked(busy: Busy, target: String, block: suspend () -> Unit) {
+        viewModelScope.launch {
+            actionMutex.withLock {
+                _state.update { it.copy(busy = busy, activeTarget = target) }
+                try {
+                    block()
+                } finally {
+                    _state.update {
+                        if (it.busy == busy && it.activeTarget == target) {
+                            it.copy(busy = Busy.NONE, activeTarget = "")
+                        } else {
+                            it
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * Revalida o estado de root e do módulo a cada abertura/retorno do aplicativo,
@@ -134,9 +156,8 @@ class FusaoViewModel : ViewModel() {
      */
     fun bootstrap(ctx: Context? = null) {
         ctx?.let { ensureAppsCatalogLoaded(it) }
-        viewModelScope.launch {
-            if (_state.value.anyBusy()) return@launch
-            _state.update { it.copy(busy = Busy.REFRESH, activeTarget = "bootstrap") }
+        if (actionMutex.isLocked && _state.value.busy == Busy.REFRESH) return
+        launchLocked(Busy.REFRESH, "bootstrap") {
             val root = RootShell.hasRoot()
             if (!root) {
                 FusaoBridge.clearCache()
@@ -150,7 +171,7 @@ class FusaoViewModel : ViewModel() {
                         notice = "Sem root — modo leitura. Refaça o temp-root e reabra.",
                     )
                 }
-                return@launch
+                return@launchLocked
             }
             val present = FusaoBridge.modulePresent()
             if (!present) FusaoBridge.clearCache()
@@ -181,9 +202,8 @@ class FusaoViewModel : ViewModel() {
      * Revalida root e atualiza status, versão, lista de jogos e abas já inicializadas.
      */
     fun refresh() {
-        viewModelScope.launch {
-            if (_state.value.anyBusy()) return@launch
-            _state.update { it.copy(busy = Busy.REFRESH, activeTarget = "refresh") }
+        if (actionMutex.isLocked && _state.value.busy == Busy.REFRESH) return
+        launchLocked(Busy.REFRESH, "refresh") {
             val root = RootShell.hasRoot()
             if (!root) {
                 FusaoBridge.clearCache()
@@ -196,7 +216,7 @@ class FusaoViewModel : ViewModel() {
                         notice = "Sem root — refaça o temp-root e reabra.",
                     )
                 }
-                return@launch
+                return@launchLocked
             }
             val present = FusaoBridge.modulePresent()
             if (!present) FusaoBridge.clearCache()
@@ -232,8 +252,7 @@ class FusaoViewModel : ViewModel() {
 
     fun toggleFlag(cmd: String, on: Boolean) {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.FLAG, activeTarget = cmd) }
+        launchLocked(Busy.FLAG, cmd) {
             val out = FusaoBridge.setFlag(cmd, on)
             val st = FusaoBridge.status(quick = quickStatusAfterFlag(cmd, on))
             val cur = _state.value
@@ -262,8 +281,7 @@ class FusaoViewModel : ViewModel() {
 
     fun setProfile(profile: String) {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.FLAG, activeTarget = "profile:$profile") }
+        launchLocked(Busy.FLAG, "profile:$profile") {
             val out = FusaoBridge.setProfile(profile)
             val st = FusaoBridge.status(quick = true)
             _state.update { it.copy(status = st, busy = Busy.NONE, activeTarget = "", notice = out) }
@@ -272,16 +290,20 @@ class FusaoViewModel : ViewModel() {
 
     fun setDisplay(mode: String) {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.FLAG, activeTarget = "display:$mode") }
+        launchLocked(Busy.FLAG, "display:$mode") {
             val out = FusaoBridge.setDisplay(mode)
             val st = FusaoBridge.status(quick = true)
+            val noticeText = when {
+                out.startsWith("FALHOU", ignoreCase = true) -> out
+                out.isNotEmpty() -> "Escala da tela: $out"
+                else -> "Escala da tela atualizada"
+            }
             _state.update {
                 it.copy(
                     status = st,
                     busy = Busy.NONE,
                     activeTarget = "",
-                    notice = if (out.isNotEmpty()) "Escala da tela: $out" else "Escala da tela atualizada",
+                    notice = noticeText,
                 )
             }
         }
@@ -294,11 +316,10 @@ class FusaoViewModel : ViewModel() {
     /** Carrega estado de Preload, gamelist e RAM clean de forma coordenada sem disputa de estado Busy. */
     fun loadPreloadAndRamcleanIfEmpty() {
         if (!guardRoot()) return
-        val cur = _state.value
-        if (cur.preloadInfo.isNotEmpty() && cur.ramcleanInfo.isNotEmpty()) return
-        viewModelScope.launch {
-            if (_state.value.anyBusy()) return@launch
-            _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_init") }
+        val cur0 = _state.value
+        if (cur0.preloadInfo.isNotEmpty() && cur0.ramcleanInfo.isNotEmpty()) return
+        launchLocked(Busy.PRELOAD, "preload_init") {
+            val cur = _state.value
             val pInfo = if (cur.preloadInfo.isEmpty()) FusaoBridge.preloadStatus() else cur.preloadInfo
             val rInfo = if (cur.ramcleanInfo.isEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
             val games = if (cur.games.isEmpty()) FusaoBridge.gamelist() else cur.games
@@ -316,8 +337,7 @@ class FusaoViewModel : ViewModel() {
 
     fun loadPreload() {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_status") }
+        launchLocked(Busy.PRELOAD, "preload_status") {
             val info = FusaoBridge.preloadStatus()
             _state.update { it.copy(preloadInfo = info, busy = Busy.NONE, activeTarget = "") }
         }
@@ -325,8 +345,7 @@ class FusaoViewModel : ViewModel() {
 
     fun preloadPrepare(targetPkg: String = _state.value.selectedPreloadPkg) {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_prepare") }
+        launchLocked(Busy.PRELOAD, "preload_prepare") {
             val out = FusaoBridge.preloadPrepare(targetPkg)
             val info = FusaoBridge.preloadStatus()
             val st = FusaoBridge.status(quick = true)
@@ -344,8 +363,7 @@ class FusaoViewModel : ViewModel() {
 
     fun preloadNow(targetPkg: String = _state.value.selectedPreloadPkg) {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.PRELOAD, activeTarget = "preload_now") }
+        launchLocked(Busy.PRELOAD, "preload_now") {
             val out = FusaoBridge.preloadNow(targetPkg)
             val info = FusaoBridge.preloadStatus()
             val st = FusaoBridge.status(quick = true)
@@ -363,14 +381,12 @@ class FusaoViewModel : ViewModel() {
 
     fun preloadRecord(targetPkg: String = _state.value.selectedPreloadPkg) {
         if (!guardRoot()) return
-        val inGameNow = _state.value.status.inGame
-        viewModelScope.launch {
+        launchLocked(Busy.RECORD, "preload_record") {
+            val inGameNow = _state.value.status.inGame
             recordCountdownJob?.cancel()
             val secs = if (inGameNow) 20 else 5
             _state.update {
                 it.copy(
-                    busy = Busy.RECORD,
-                    activeTarget = "preload_record",
                     recordRemainingSec = secs,
                     notice = if (inGameNow) {
                         "Observando o jogo ativo (~20s)..."
@@ -380,7 +396,7 @@ class FusaoViewModel : ViewModel() {
                 )
             }
             if (inGameNow) {
-                recordCountdownJob = launch {
+                recordCountdownJob = viewModelScope.launch {
                     for (rem in secs downTo 1) {
                         _state.update { it.copy(recordRemainingSec = rem) }
                         delay(1000L)
@@ -388,8 +404,11 @@ class FusaoViewModel : ViewModel() {
                     _state.update { it.copy(recordRemainingSec = 0) }
                 }
             }
-            val out = FusaoBridge.preloadRecord(targetPkg, secs)
-            recordCountdownJob?.cancel()
+            val out = try {
+                FusaoBridge.preloadRecord(targetPkg, secs)
+            } finally {
+                recordCountdownJob?.cancel()
+            }
             val info = FusaoBridge.preloadStatus()
             val st = FusaoBridge.status(quick = true)
             _state.update {
@@ -407,18 +426,29 @@ class FusaoViewModel : ViewModel() {
 
     fun ramcleanNow() {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.RAMCLEAN, activeTarget = "ramclean_now") }
+        launchLocked(Busy.RAMCLEAN, "ramclean_now") {
             val out = FusaoBridge.ramcleanNow()
             val info = FusaoBridge.ramcleanStatus()
             val st = FusaoBridge.status(quick = true)
+            val parsed = RamcleanTelemetry.fromLines(out)
+            val noticeText = when (parsed.lastStatus) {
+                "fail" -> "FALHOU: MGLRU/ramclean sem permissão ou sysfs indisponível"
+                "noop" -> "MGLRU: nada a liberar (caches saudáveis ou apps congelados)"
+                else -> parsed.lastDeltaMb?.let { delta ->
+                    val signDelta = if (delta > 0) "+$delta MB" else "$delta MB"
+                    val availAfter = parsed.lastAvailKb.toLongOrNull()?.let { " · ${it / 1024} MB disp." }.orEmpty()
+                    val trimmed = parsed.lastTrimmedCount?.takeIf { it > 0 }?.let { " · $it trim" }.orEmpty()
+                    val prefix = if (parsed.lastStatus == "partial") "MGLRU (parcial): " else "MGLRU: "
+                    "$prefix$signDelta disponíveis$availAfter$trimmed"
+                } ?: out.lastOrNull().orEmpty()
+            }
             _state.update {
                 it.copy(
                     ramcleanInfo = info + listOf("---") + out,
                     status = st,
                     busy = Busy.NONE,
                     activeTarget = "",
-                    notice = out.lastOrNull().orEmpty(),
+                    notice = noticeText,
                 )
             }
         }
@@ -426,8 +456,7 @@ class FusaoViewModel : ViewModel() {
 
     fun loadRamclean() {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.RAMCLEAN, activeTarget = "ramclean_status") }
+        launchLocked(Busy.RAMCLEAN, "ramclean_status") {
             val info = FusaoBridge.ramcleanStatus()
             _state.update { it.copy(ramcleanInfo = info, busy = Busy.NONE, activeTarget = "") }
         }
@@ -435,9 +464,7 @@ class FusaoViewModel : ViewModel() {
 
     fun loadGames() {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            if (_state.value.anyBusy()) return@launch
-            _state.update { it.copy(busy = Busy.GAMELIST, activeTarget = "gamelist_load") }
+        launchLocked(Busy.GAMELIST, "gamelist_load") {
             val games = FusaoBridge.gamelist()
             val fasTargets = if (_state.value.status.fasSupported) FusaoBridge.fasTargets() else emptyMap()
             _state.update { it.copy(games = games, fasTargets = fasTargets, busy = Busy.NONE, activeTarget = "") }
@@ -446,8 +473,7 @@ class FusaoViewModel : ViewModel() {
 
     fun setFasMode(mode: String) {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.FLAG, activeTarget = "fas_mode:$mode") }
+        launchLocked(Busy.FLAG, "fas_mode:$mode") {
             val out = FusaoBridge.setFasMode(mode)
             val st = FusaoBridge.status(quick = true)
             _state.update { it.copy(status = st, busy = Busy.NONE, activeTarget = "", notice = out) }
@@ -457,11 +483,10 @@ class FusaoViewModel : ViewModel() {
     /** Toque no FAS de um jogo: avança para o próximo limite (AUTO -> 30 -> 40 -> ... -> 144 -> OFF -> AUTO). */
     fun cycleFasCap(pkg: String) {
         if (!guardRoot()) return
-        viewModelScope.launch {
+        launchLocked(Busy.FLAG, "fas_target:$pkg") {
             val cur = fasCapOf(_state.value.fasTargets[pkg])
             val idx = FAS_CAP_PRESETS.indexOf(cur).coerceAtLeast(0)
             val next = FAS_CAP_PRESETS[(idx + 1) % FAS_CAP_PRESETS.size]
-            _state.update { it.copy(busy = Busy.FLAG, activeTarget = "fas_target:$pkg") }
             val out = FusaoBridge.setFasTarget(pkg, fasTargetsForCap(next))
             val fasTargets = FusaoBridge.fasTargets()
             _state.update { it.copy(fasTargets = fasTargets, busy = Busy.NONE, activeTarget = "", notice = out) }
@@ -470,8 +495,7 @@ class FusaoViewModel : ViewModel() {
 
     fun gameAdd(pkg: String) {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.GAMELIST, activeTarget = "add:$pkg") }
+        launchLocked(Busy.GAMELIST, "add:$pkg") {
             val out = FusaoBridge.gamelistAdd(pkg)
             val games = FusaoBridge.gamelist()
             _state.update { it.copy(games = games, busy = Busy.NONE, activeTarget = "", notice = out) }
@@ -480,8 +504,7 @@ class FusaoViewModel : ViewModel() {
 
     fun gameDel(pkg: String) {
         if (!guardRoot()) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = Busy.GAMELIST, activeTarget = "del:$pkg") }
+        launchLocked(Busy.GAMELIST, "del:$pkg") {
             val out = FusaoBridge.gamelistDel(pkg)
             val games = FusaoBridge.gamelist()
             _state.update { it.copy(games = games, busy = Busy.NONE, activeTarget = "", notice = out) }

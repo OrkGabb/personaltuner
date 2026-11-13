@@ -4,7 +4,7 @@
 #      fusao perf [on|off] | fusao fusaod [on|off] | fusao dnd [on|off]
 #      fusao fas [on|off|status|mode <powersave|balance|performance|fast>|target <pkg> <auto|off|30,45,60>|gen|list]
 #      fusao preload [on|off|prepare [pkg|all]|now [pkg|all]|record [pkg] [s]|status]
-#      fusao display [show|720p|810p|900p|reset]
+#      fusao display [show|720p|810p|900p|reset|adaptive|120hz|60hz|hz-reset|hz ...]
 #      fusao gamelist [list|add <pkg>|del <pkg>|count|eligible|set <pkg>...]
 #      fusao gos [on|off] | fusao reseed-stock
 #      fusao status [quick] | fusao log | fusao bugreport | fusao kill-switch [on|off]
@@ -30,11 +30,11 @@ uptime_sec() {
 
 find_fusaod() {
   local _b
-  _b=$(command -v fusaod 2>/dev/null)
-  [ -n "$_b" ] && [ -x "$_b" ] && { echo "$_b"; return 0; }
-  for _b in /system/bin/fusaod /data/adb/modules/fusao/system/bin/fusaod /data/adb/modules/encore/system/bin/fusaod "$M54_DIR/../system/bin/fusaod"; do
+  for _b in /data/adb/modules/encore/system/bin/fusaod /data/adb/modules/fusao/system/bin/fusaod "$M54_DIR/../system/bin/fusaod" /system/bin/fusaod; do
     [ -x "$_b" ] && { echo "$_b"; return 0; }
   done
+  _b=$(command -v fusaod 2>/dev/null)
+  [ -n "$_b" ] && [ -x "$_b" ] && { echo "$_b"; return 0; }
   return 1
 }
 
@@ -60,7 +60,7 @@ effective_profile() {
 }
 
 sync_fusaod_for_profile() {
-  local _prof="$1" _ga _b _p
+  local _prof="$1" _ga _b _p _w
   [ -n "$FAKE_SETTINGS_DIR" ] && return 0
   _ga=$(cat "$M54_DIR/game-active.txt" 2>/dev/null | tr -d '[:space:]')
   # FAS ligado = fas-rs dono da CPU no jogo; o fusaod escreve piso de CPU e brigaria com ele
@@ -74,6 +74,14 @@ sync_fusaod_for_profile() {
   else
     for _p in $(pgrep -f "[f]usaod serve" 2>/dev/null); do
       [ "$_p" = "$$" ] || kill -TERM "$_p" 2>/dev/null
+    done
+    _w=0
+    while pgrep -f "[f]usaod serve" >/dev/null 2>&1 && [ "$_w" -lt 10 ]; do
+      sleep 0.1 2>/dev/null || sleep 1
+      _w=$((_w + 1))
+    done
+    for _p in $(pgrep -f "[f]usaod serve" 2>/dev/null); do
+      [ "$_p" = "$$" ] || kill -KILL "$_p" 2>/dev/null
     done
   fi
 }
@@ -633,30 +641,298 @@ case "$cmd" in
     esac;;
   ramclean)
     case "$arg" in
-      # 2.12.0: sem gancho no game-enter (drop_caches no launch faz o jogo reler do disco o que estava em RAM e
-      # a compactação síncrona trava junto); a limpeza fica só manual, fora do jogo
-      on) rm -f "$M54_DIR/ramclean.enabled"; echo "ramclean=off (saiu do game-enter na 2.12.0: trava o carregamento; use fusao ramclean now)";;
+      # 2.12.0+: sem gancho no game-enter; limpeza segura apenas manual, preservando MGLRU e áudio ativo
+      on) rm -f "$M54_DIR/ramclean.enabled"; echo "ramclean=off (saiu do game-enter na 2.12.0: preserva carregamento; use fusao ramclean now)";;
       off) rm -f "$M54_DIR/ramclean.enabled"; echo "ramclean=off";;
       now)
-        _rf0=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
-        sync 2>/dev/null
-        echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
-        _rc1=$?
-        echo 1 > /proc/sys/vm/compact_memory 2>/dev/null
-        _rc2=$?
-        _rf1=$(awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null)
-        _ra1=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
-        echo "ramclean ok free=${_rf0}->${_rf1} avail=${_ra1} rc=${_rc1}/${_rc2}"
+        _rc_mem_kb() { awk -v k="$1" '$1==k":"{print $2; exit}' "$R/proc/meminfo" 2>/dev/null; }
+        _rc_pkg_from_pid() {
+          [ -n "$1" ] && [ -r "$R/proc/$1/cmdline" ] || return 1
+          tr '\0' '\n' < "$R/proc/$1/cmdline" 2>/dev/null | head -n 1 | cut -d: -f1
+        }
+        _rc_collect_excluded() {
+          printf '%s\n' \
+            "com.orkgabb.fusao" \
+            "com.android.systemui" \
+            "com.sec.android.app.launcher" \
+            "com.sec.android.app.soundalive" \
+            "com.samsung.android.honeyboard" \
+            "com.google.android.inputmethod.latin" \
+            "com.google.android.gms" \
+            "app.revanced.android.gms" \
+            "com.android.phone" \
+            "com.samsung.android.incallui" \
+            "com.sec.phone" \
+            "com.android.providers.media.module" \
+            "com.google.android.providers.media.module" \
+            "android" \
+            "system"
+          [ -n "$_game_pkg" ] && printf '%s\n' "$_game_pkg"
+          if command -v dumpsys >/dev/null 2>&1; then
+            for _apid in $(dumpsys audio 2>/dev/null | awk '
+              /AudioPlaybackConfiguration/ && /state:started/ {
+                if (match($0, /u\/pid:[0-9]+\/[0-9]+/)) {
+                  s = substr($0, RSTART, RLENGTH)
+                  sub(/^u\/pid:[0-9]+\//, "", s)
+                  print s
+                }
+              }'); do
+              _rc_pkg_from_pid "$_apid"
+            done
+            dumpsys audio 2>/dev/null | awk '
+              /AudioPlaybackConfiguration/ && /state:started/ {
+                if (match($0, /(pack|package):[[:space:]]*[A-Za-z0-9._-]+/)) {
+                  s = substr($0, RSTART, RLENGTH)
+                  sub(/^(pack|package):[[:space:]]*/, "", s)
+                  print s
+                }
+              }'
+            dumpsys media_session 2>/dev/null | awk '
+              /package=[A-Za-z0-9._-]+/ {
+                match($0, /package=[A-Za-z0-9._-]+/)
+                pkg = substr($0, RSTART + 8, RLENGTH - 8)
+                playing = 0
+              }
+              /state=(PLAYING|3[,}])/ || /PlaybackState \{state=PLAYING/ {
+                if (pkg != "" && !playing) {
+                  print pkg
+                  playing = 1
+                }
+              }'
+          fi
+        }
+        _rc_orig_ttl=""
+        _rc_orig_extra=""
+        _rc_ttl_changed=0
+        _rc_extra_changed=0
+        _rc_ttl_path="$R/sys/kernel/mm/lru_gen/min_ttl_ms"
+        _rc_mglru_path="$R/sys/kernel/mm/lru_gen/enabled"
+        _rc_extra_path="$R/proc/sys/vm/extra_free_kbytes"
+        _rc_compact_path="$R/proc/sys/vm/compact_memory"
+        _rc_dc_path="$R/proc/sys/vm/drop_caches"
+        _rc_restore_vm() {
+          if [ "${_rc_extra_changed:-0}" -eq 1 ] && [ -n "$_rc_orig_extra" ] && [ -w "$_rc_extra_path" ]; then
+            echo "$_rc_orig_extra" > "$_rc_extra_path" 2>/dev/null
+          fi
+          if [ "${_rc_ttl_changed:-0}" -eq 1 ] && [ -n "$_rc_orig_ttl" ] && [ -w "$_rc_ttl_path" ]; then
+            echo "$_rc_orig_ttl" > "$_rc_ttl_path" 2>/dev/null
+          fi
+        }
+        _rf0=$(_rc_mem_kb MemFree); _rf0=${_rf0:-0}
+        _ra0=$(_rc_mem_kb MemAvailable); _ra0=${_ra0:-0}
+        _rc0=$(_rc_mem_kb Cached); _rc0=${_rc0:-0}
+        _game_pkg=$(awk 'NR==1{print $1; exit}' "$M54_DIR/game-active.txt" 2>/dev/null)
+        _rc_excl=$(_rc_collect_excluded | awk 'NF && !seen[$0]++' | tr '\n' ' ')
+        _rc_is_frozen() {
+          local _p="$1" _cg _val _cand
+          case "$_p" in ''|*[!0-9]*) return 1;; esac
+          if [ -r "$R/proc/$_p/cgroup" ]; then
+            _cg=$(awk -F: '$1=="0"{print $3; exit}' "$R/proc/$_p/cgroup" 2>/dev/null)
+            if [ -n "$_cg" ]; then
+              for _cand in "$R/sys/fs/cgroup${_cg}/cgroup.freeze" "$R/sys/fs/cgroup${_cg%/*}/cgroup.freeze"; do
+                if [ -r "$_cand" ]; then
+                  _val=$(cat "$_cand" 2>/dev/null | tr -d '[:space:]')
+                  [ "$_val" = "1" ] && return 0
+                  return 1
+                fi
+              done
+            fi
+          fi
+          for _cand in "$R"/sys/fs/cgroup/*/uid_*/"pid_$_p"/cgroup.freeze "$R"/sys/fs/cgroup/uid_*/"pid_$_p"/cgroup.freeze; do
+            [ -r "$_cand" ] || continue
+            _val=$(cat "$_cand" 2>/dev/null | tr -d '[:space:]')
+            [ "$_val" = "1" ] && return 0
+          done
+          return 1
+        }
+        _trimmed=0
+        _trim_skip_frozen=0
+        _trim_err=0
+        _trim_attempted=0
+        _rc_trim=1
+        if command -v dumpsys >/dev/null 2>&1 && command -v am >/dev/null 2>&1; then
+          _rc_cands=$(dumpsys activity lru 2>/dev/null | awk -v excl="$_rc_excl" '
+            BEGIN {
+              n = split(excl, arr, " ")
+              for (i = 1; i <= n; i++) if (arr[i] != "") skip[arr[i]] = 1
+            }
+            /^[[:space:]]*#[0-9]+:[[:space:]]+cch([+-]|[[:space:]]|$)/ {
+              for (i = 1; i <= NF; i++) {
+                if ($i ~ /^[0-9]+:[A-Za-z0-9._:-]+(\/|$)/) {
+                  pid = $i
+                  sub(/:.*$/, "", pid)
+                  tok = $i
+                  sub(/^[0-9]+:/, "", tok)
+                  sub(/\/.*$/, "", tok)
+                  pkg = tok
+                  sub(/:.*/, "", pkg)
+                  if (pkg != "" && !(pkg in skip) && !(tok in skip) && !seen[tok]++) {
+                    print pid ":" tok
+                    cnt++
+                    if (cnt >= 24) exit
+                  }
+                  break
+                }
+              }
+            }')
+          for _entry in $_rc_cands; do
+            _pid="${_entry%%:*}"
+            _proc="${_entry#*:}"
+            [ -n "$_proc" ] || continue
+            if [ -n "$_pid" ] && _rc_is_frozen "$_pid"; then
+              _trim_skip_frozen=$((_trim_skip_frozen + 1))
+              continue
+            fi
+            _trim_attempted=$((_trim_attempted + 1))
+            if am send-trim-memory "$_proc" COMPLETE >/dev/null 2>&1; then
+              _trimmed=$((_trimmed + 1))
+            else
+              _trim_err=$((_trim_err + 1))
+            fi
+          done
+          if [ "$_trim_attempted" -gt 0 ] && [ "$_trimmed" -eq 0 ]; then
+            _rc_trim=1
+          else
+            _rc_trim=0
+          fi
+          _rc_settle_s="${RAMCLEAN_SETTLE_S:-1}"
+          [ "$_trimmed" -gt 0 ] && [ "$_rc_settle_s" != "0" ] && sleep "$_rc_settle_s" 2>/dev/null
+        fi
+        _rc_mglru_en=$(cat "$_rc_mglru_path" 2>/dev/null)
+        case "${_rc_mglru_en:-0}" in
+          ""|0|0x0|0x0000) _rc_mglru_active=0; _rc_mglru_en="${_rc_mglru_en:-0}";;
+          *) _rc_mglru_active=1;;
+        esac
+        _rc_mglru=1
+        if [ "$_rc_mglru_active" -eq 1 ] && [ -w "$_rc_ttl_path" ]; then
+          _rc_orig_ttl=$(cat "$_rc_ttl_path" 2>/dev/null)
+          case "$_rc_orig_ttl" in
+            ''|*[!0-9]*) : ;;
+            *) _rc_mglru=0 ;;
+          esac
+        fi
+        _mt=$(_rc_mem_kb MemTotal); _mt=${_mt:-0}
+        _rf_mid=$(_rc_mem_kb MemFree); _rf_mid=${_rf_mid:-$_rf0}
+        _ma_mid=$(_rc_mem_kb MemAvailable); _ma_mid=${_ma_mid:-$_ra0}
+        _need_pulse=0
+        if [ "$_mt" -gt 0 ] 2>/dev/null; then
+          if [ "$_rf_mid" -lt $((_mt / 4)) ] || [ "$_ma_mid" -lt $((_mt * 60 / 100)) ]; then
+            _need_pulse=1
+          fi
+        elif [ "$_rf_mid" -lt 524288 ]; then
+          _need_pulse=1
+        fi
+        _need_reclaim=0
+        if [ "$_need_pulse" -eq 1 ] || [ "$_trimmed" -gt 0 ]; then
+          _need_reclaim=1
+        fi
+        _did_drop=0
+        _rc_dc=0
+        _did_compact=0
+        _rc_cmp=0
+        trap '_rc_restore_vm; exit 130' INT TERM
+        if [ "$_need_reclaim" -eq 1 ]; then
+          # No MGLRU, min_ttl_ms > 0 protege workingset recente e bloqueia despejo; zerar na limpeza e restaurar depois.
+          _rc_target_ttl="${RAMCLEAN_TTL_MS:-0}"
+          if [ "$_rc_mglru_active" -eq 1 ] && [ -w "$_rc_ttl_path" ]; then
+            case "$_rc_orig_ttl" in
+              ''|*[!0-9]*) : ;;
+              *)
+                if [ "$_rc_orig_ttl" -gt "$_rc_target_ttl" ] && echo "$_rc_target_ttl" > "$_rc_ttl_path" 2>/dev/null; then
+                  _rc_ttl_changed=1
+                fi
+                ;;
+            esac
+          fi
+          if [ "$_need_pulse" -eq 1 ] && [ -w "$_rc_extra_path" ]; then
+            _rc_orig_extra=$(cat "$_rc_extra_path" 2>/dev/null)
+            case "$_rc_orig_extra" in
+              ''|*[!0-9]*) : ;;
+              *)
+                _rc_rf_target=$(( _rf_mid + 262144 ))
+                _rc_pulse_extra=$(( _rc_orig_extra + 262144 ))
+                [ "$_rc_rf_target" -gt "$_rc_pulse_extra" ] && _rc_pulse_extra="$_rc_rf_target"
+                [ "$_rc_pulse_extra" -lt 327680 ] && _rc_pulse_extra=327680
+                _rc_cap=983040
+                if [ "$_mt" -gt 0 ] 2>/dev/null; then
+                  _rc_cap=$(( _mt / 6 ))
+                  [ "$_rc_cap" -lt 524288 ] && _rc_cap=524288
+                  [ "$_rc_cap" -gt 1048576 ] && _rc_cap=1048576
+                fi
+                [ "$_rc_pulse_extra" -gt "$_rc_cap" ] && _rc_pulse_extra="$_rc_cap"
+                if [ "$_rc_pulse_extra" -gt "$_rc_orig_extra" ] && echo "$_rc_pulse_extra" > "$_rc_extra_path" 2>/dev/null; then
+                  _rc_extra_changed=1
+                  _rc_mglru=0
+                  _rc_pulse_s="${RAMCLEAN_PULSE_S:-2}"
+                  [ "$_rc_pulse_s" != "0" ] && sleep "$_rc_pulse_s" 2>/dev/null
+                fi
+                ;;
+            esac
+          fi
+          if [ "${RAMCLEAN_DROP_CACHES:-1}" = "1" ] && [ -w "$_rc_dc_path" ]; then
+            sync 2>/dev/null || :
+            if echo 1 > "$_rc_dc_path" 2>/dev/null; then
+              _did_drop=1
+              _rc_dc=0
+            else
+              _rc_dc=1
+            fi
+          fi
+        fi
+        _rc_restore_vm
+        trap - INT TERM
+        if [ -z "$_game_pkg" ] && [ "$_need_reclaim" -eq 1 ] && [ "${RAMCLEAN_COMPACT:-1}" = "1" ] && [ -w "$_rc_compact_path" ]; then
+          _did_compact=1
+          echo 1 > "$_rc_compact_path" 2>/dev/null
+          _rc_cmp=$?
+        fi
+        _rf1=$(_rc_mem_kb MemFree); _rf1=${_rf1:-$_rf0}
+        _ra1=$(_rc_mem_kb MemAvailable); _ra1=${_ra1:-$_ra0}
+        _rc1=$(_rc_mem_kb Cached); _rc1=${_rc1:-$_rc0}
+        if [ "$_rc_mglru_active" -eq 1 ]; then
+          [ "$_rc_extra_changed" -eq 1 ] && _rc_mglru_tag="${_rc_mglru_en}:pulse" || _rc_mglru_tag="${_rc_mglru_en}:ttl"
+        else
+          [ "$_rc_extra_changed" -eq 1 ] && _rc_mglru_tag="off:pulse" || _rc_mglru_tag="off:trim"
+        fi
+        _rc_actions=$(( _trimmed + _rc_ttl_changed + _rc_extra_changed + _did_drop + _did_compact ))
+        if [ "$_rc_actions" -eq 0 ]; then
+          if [ "$_rc_trim" -ne 0 ] && [ "$_rc_mglru" -ne 0 ] && [ "$_did_drop" -eq 0 ] && [ "$_did_compact" -eq 0 ]; then
+            _rc_status="fail"
+          elif [ "$_rc_trim" -ne 0 ] || [ "$_trim_err" -gt 0 ] || [ "$_rc_dc" -ne 0 ]; then
+            _rc_status="partial"
+          else
+            _rc_status="noop"
+          fi
+        elif [ "$_rc_trim" -ne 0 ] || [ "$_rc_mglru" -ne 0 ] || [ "$_trim_err" -gt 0 ] || [ "$_rc_dc" -ne 0 ] || [ "$_rc_cmp" -ne 0 ]; then
+          _rc_status="partial"
+        else
+          _rc_status="ok"
+        fi
+        set -- $(awk -v a0="$_ra0" -v a1="$_ra1" -v f0="$_rf0" -v f1="$_rf1" 'BEGIN {
+          dk = a1 - a0; dm = int(dk / 1024);
+          sk = (dk > 0 ? "+" dk : dk);
+          sm = (dm > 0 ? "+" dm : dm);
+          printf "%s %s %d %d %d %d\n", sk, sm, int(a0 / 1024), int(a1 / 1024), int(f0 / 1024), int(f1 / 1024)
+        }')
+        _dkb="${1:-0}"; _dmb="${2:-0}"; _ab_mb="${3:-0}"; _aa_mb="${4:-0}"; _fb_mb="${5:-0}"; _fa_mb="${6:-0}"
+        _rc_msg="ramclean ${_rc_status} free=${_rf0}->${_rf1} avail=${_ra0}->${_ra1} delta_kb=${_dkb} delta_mb=${_dmb} cached=${_rc0}->${_rc1} trimmed=${_trimmed} frozen_skip=${_trim_skip_frozen} mglru=${_rc_mglru_tag} rc=${_rc_trim}/${_rc_mglru}/${_rc_cmp}"
+        log_msg "$_rc_msg"
+        echo "$_rc_msg"
+        echo "MemAvailable: ${_ab_mb} MB -> ${_aa_mb} MB (${_dmb} MB) | Free: ${_fb_mb} -> ${_fa_mb} MB | trim=${_trimmed} procs (frozen_skip=${_trim_skip_frozen}) | MGLRU=${_rc_mglru_tag} (drop_caches=${_did_drop})"
+        [ "$_rc_status" = "fail" ] && exit 1
+        exit 0
         ;;
       status)
         [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off (só manual: game-enter não limpa)"
         echo "--- último ramclean no log ---"
-        { grep "ramclean ok" "$M54_DIR/fusao.log.1" 2>/dev/null; grep "ramclean ok" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 5
+        { grep -E "ramclean (ok|noop|partial|fail)" "$M54_DIR/fusao.log.1" 2>/dev/null; grep -E "ramclean (ok|noop|partial|fail)" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 5
         ;;
       *) [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off";;
     esac;;
   display)
-    M54_DIR="$M54_DIR" sh "$M54_DIR/display.sh" "${arg:-show}";;
+    shift 2>/dev/null
+    [ "$#" -gt 0 ] || set -- show
+    M54_DIR="$M54_DIR" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" sh "$M54_DIR/display.sh" "$@";;
   gos)
     case "$arg" in
       on) rm -f "$M54_DIR/gos_killer.paused"; echo "gos=on (killer ativo)";;
@@ -681,7 +957,31 @@ case "$cmd" in
       echo "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor energy_aware"
     } > "$M54_DIR/stock.snapshot" 2>/dev/null
     chmod 0600 "$M54_DIR/stock.snapshot" 2>/dev/null
-    echo "reseed-stock ok (13 entradas)";;
+    {
+      echo "$R/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 533000"
+      echo "$R/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq 2002000"
+      echo "$R/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq 533000"
+      echo "$R/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq 2400000"
+      echo "$R/sys/kernel/gpu/gpu_min_clock 221000"
+      echo "$R/sys/kernel/gpu/gpu_max_clock 949000"
+      echo "$R/sys/class/devfreq/17000010.devfreq_mif/min_freq 421000"
+      echo "$R/sys/class/devfreq/17000010.devfreq_mif/max_freq 2093000"
+      echo "$R/sys/class/devfreq/17000020.devfreq_int/min_freq 50000"
+      echo "$R/sys/class/devfreq/17000040.devfreq_disp/min_freq 66000"
+      echo "$R/proc/sys/vm/swappiness 130"
+      echo "$R/proc/sys/vm/vfs_cache_pressure 100"
+      echo "$R/proc/sys/vm/stat_interval 10"
+      echo "$R/proc/sys/vm/page-cluster 0"
+      for _bdev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
+        [ -f "$_bdev/queue/read_ahead_kb" ] && echo "$_bdev/queue/read_ahead_kb 128"
+        [ -f "$_bdev/queue/nomerges" ] && echo "$_bdev/queue/nomerges 0"
+        [ -f "$_bdev/queue/add_random" ] && echo "$_bdev/queue/add_random 0"
+      done
+      echo "$R/proc/sys/net/ipv4/tcp_congestion_control cubic"
+      echo "$R/proc/sys/net/ipv4/tcp_fastopen 3"
+    } > "$M54_DIR/tune.stock" 2>/dev/null
+    chmod 0600 "$M54_DIR/tune.stock" 2>/dev/null
+    echo "reseed-stock ok (13 entradas + tune.stock)";;
   status)
     _cur_prof=$(cat "$M54_DIR/profile" 2>/dev/null | tr -d '[:space:]')
     [ -z "$_cur_prof" ] && _cur_prof="balanced"
@@ -715,7 +1015,7 @@ case "$cmd" in
     echo "display=$(M54_DIR="$M54_DIR" sh "$M54_DIR/display.sh" show 2>/dev/null)"
     echo "thermal=$(grep -E '^thermal=' "$M54_DIR/config" 2>/dev/null | tail -1 | cut -d= -f2-)"
     echo "--- última atividade dos ganchos (foi ou não) ---"
-    { grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|tune: (apply|restore)|perf: (io|proc)|dnd: (on|off)|preload ok|preload-record ok|ramclean ok" "$M54_DIR/fusao.log.1" 2>/dev/null; grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|tune: (apply|restore)|perf: (io|proc)|dnd: (on|off)|preload ok|preload-record ok|ramclean ok" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 8
+    { grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|tune: (apply|restore)|perf: (io|proc)|dnd: (on|off)|preload ok|preload-record ok|ramclean (ok|noop|partial|fail)" "$M54_DIR/fusao.log.1" 2>/dev/null; grep -E "watch: (enter|exit|hooks)|framework: (apply|restore)|tune: (apply|restore)|perf: (io|proc)|dnd: (on|off)|preload ok|preload-record ok|ramclean (ok|noop|partial|fail)" "$M54_DIR/fusao.log" 2>/dev/null; } | tail -n 8
     pgrep -f "[f]usaod serve" >/dev/null 2>&1 && echo "fusaod=running" || echo "fusaod=stopped"
     pgrep -f "[w]atch.sh" >/dev/null 2>&1 && echo "watch=running" || echo "watch=stopped"
     pgrep -f "[f]usao.observer" >/dev/null 2>&1 && echo "observer=running" || echo "observer=stopped"

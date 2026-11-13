@@ -60,12 +60,21 @@ object FusaoBridge {
         return FusaoStatus.parse(r.output, moduleInstalled = true)
     }
 
+    private fun failMessage(output: List<String>, fallback: String): String {
+        val last = output.lastOrNull()?.trim().orEmpty()
+        return when {
+            last.isEmpty() -> "FALHOU: $fallback"
+            last.startsWith("FALHOU", ignoreCase = true) -> last
+            else -> "FALHOU: $last"
+        }
+    }
+
     /** Liga/desliga uma flag (fusaod, framework, perf, dnd, preload, ramclean, gos). */
     suspend fun setFlag(cmd: String, on: Boolean): String {
         val c = cli()
         if (c.isEmpty()) return "módulo ausente"
         val r = RootShell.run("\"$c\" $cmd ${if (on) "on" else "off"} 2>&1")
-        if (!r.isSuccess && r.output.isEmpty()) return "FALHOU: o módulo não respondeu ao $cmd"
+        if (!r.isSuccess) return failMessage(r.output, "o módulo não respondeu ao $cmd")
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
@@ -77,14 +86,15 @@ object FusaoBridge {
             else -> return "perfil inválido: $profile"
         }
         val r = RootShell.run("\"$c\" profile $safe 2>&1")
-        if (!r.isSuccess && r.output.isEmpty()) {
-            return "FALHOU: o módulo não aplicou o perfil $safe"
-        }
         // detalhe por nó (profile_mismatch/verify) fica no fusao.log da aba Log
         val pState = r.output.map { it.trim() }
             .firstOrNull { it.startsWith("profile_state=") }
             ?.removePrefix("profile_state=")
             .orEmpty()
+        if (!r.isSuccess) {
+            if (pState == "failed") return "FALHOU: perfil $safe não ficou valendo no aparelho"
+            return failMessage(r.output, "o módulo não aplicou o perfil $safe")
+        }
         return when (pState) {
             "failed" -> "FALHOU: perfil $safe não ficou valendo no aparelho"
             "partial" -> "Perfil $safe aplicado em parte"
@@ -94,13 +104,14 @@ object FusaoBridge {
         }
     }
 
-    /** Altera ou restaura o downscale via CLI `fusao display [show|720p|810p|900p|reset]`. */
+    /** Altera/restaura o downscale ou a preferência de Hz via CLI `fusao display [...]`. */
     suspend fun setDisplay(mode: String): String {
         val c = cli()
         if (c.isEmpty()) return "módulo ausente"
-        val allowed = setOf("show", "720p", "810p", "900p", "reset")
+        val allowed = setOf("show", "720p", "810p", "900p", "reset", "adaptive", "120hz", "60hz", "hz-reset", "hz-show")
         val safe = if (mode in allowed) mode else "show"
         val r = RootShell.run("\"$c\" display $safe 2>&1")
+        if (!r.isSuccess) return failMessage(r.output, "display $safe falhou")
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
@@ -110,6 +121,7 @@ object FusaoBridge {
         if (c.isEmpty()) return "módulo ausente"
         if (mode !in FAS_MODES) return "modo inválido: $mode"
         val r = RootShell.run("\"$c\" fas mode $mode 2>&1")
+        if (!r.isSuccess) return failMessage(r.output, "fas mode $mode falhou")
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
@@ -121,6 +133,7 @@ object FusaoBridge {
         val safeTargets = targets.trim().replace(Regex("[^0-9,a-z]"), "")
         if (safePkg.isEmpty() || safeTargets.isEmpty()) return "alvo inválido"
         val r = RootShell.run("\"$c\" fas target $safePkg $safeTargets 2>&1")
+        if (!r.isSuccess) return failMessage(r.output, "fas target falhou")
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
@@ -166,10 +179,19 @@ object FusaoBridge {
         return RootShell.run(cmd).output
     }
 
+    /** Interpreta o retorno do CLI `fusao ramclean now` (exit 0 para ok/partial/noop; exit != 0 reservado para falha). */
+    internal fun parseRamcleanNowResult(result: ShellRunResult): List<String> {
+        if (result.isSuccess) return result.output
+        val parsed = RamcleanTelemetry.fromLines(result.output)
+        if (parsed.lastStatus == "fail") return result.output
+        val detail = failMessage(result.output, "ramclean falhou (exit=${result.exitCode})")
+        return listOf("ramclean fail $detail") + result.output
+    }
+
     suspend fun ramcleanNow(): List<String> {
         val c = cli()
         if (c.isEmpty()) return listOf("módulo ausente")
-        return RootShell.run("\"$c\" ramclean now 2>&1").output
+        return parseRamcleanNowResult(RootShell.run("\"$c\" ramclean now 2>&1"))
     }
 
     suspend fun ramcleanStatus(): List<String> {
@@ -191,6 +213,7 @@ object FusaoBridge {
         val safe = pkg.trim().replace(Regex("[^A-Za-z0-9_.]"), "")
         if (safe.isEmpty()) return "pacote inválido"
         val r = RootShell.run("\"$c\" gamelist add $safe 2>&1")
+        if (!r.isSuccess) return failMessage(r.output, "falha ao adicionar $safe")
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
@@ -198,7 +221,9 @@ object FusaoBridge {
         val c = cli()
         if (c.isEmpty()) return "módulo ausente"
         val safe = pkg.trim().replace(Regex("[^A-Za-z0-9_.]"), "")
+        if (safe.isEmpty()) return "pacote inválido"
         val r = RootShell.run("\"$c\" gamelist del $safe 2>&1")
+        if (!r.isSuccess) return failMessage(r.output, "falha ao remover $safe")
         return r.output.lastOrNull()?.trim().orEmpty()
     }
 
@@ -506,13 +531,24 @@ data class RamcleanTelemetry(
     val stateLabel: String = "—",
     val isEnabled: Boolean = false,
     val lastTransition: String = "",
+    val lastAvailTransition: String = "",
     val lastAvailKb: String = "",
+    val lastDeltaMb: Int? = null,
+    val lastDeltaKb: Long? = null,
+    val lastTrimmedCount: Int? = null,
+    val lastMglruTag: String = "",
     val lastRc: String = "",
     val recentEvents: List<String> = emptyList(),
+    val lastStatus: String = "",
 ) {
     companion object {
+        private val STATUS_REGEX = Regex("\\bramclean\\s+(ok|noop|partial|fail)\\b")
         private val FREE_REGEX = Regex("free=([0-9]+->[0-9]+)")
-        private val AVAIL_REGEX = Regex("avail=([0-9]+)")
+        private val AVAIL_REGEX = Regex("avail=([0-9]+)(?:->([0-9]+))?")
+        private val DELTA_MB_REGEX = Regex("delta_mb=([+-]?[0-9]+)")
+        private val DELTA_KB_REGEX = Regex("delta_kb=([+-]?[0-9]+)")
+        private val TRIMMED_REGEX = Regex("trimmed=([0-9]+)")
+        private val MGLRU_REGEX = Regex("mglru=([^\\s]+)")
         private val RC_REGEX = Regex("rc=([0-9/]+)")
 
         fun fromLines(lines: List<String>): RamcleanTelemetry {
@@ -526,21 +562,49 @@ data class RamcleanTelemetry(
                 if (line.startsWith("ramclean=")) {
                     stateLabel = line.removePrefix("ramclean=")
                     isEnabled = stateLabel.startsWith("on")
-                } else if (line.contains("ramclean ok") || line.contains("free=")) {
+                } else if (STATUS_REGEX.containsMatchIn(line) || line.contains("free=")) {
                     events.add(line)
                 }
             }
             val latest = events.lastOrNull().orEmpty()
+            val statusTag = STATUS_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
             val freeMatch = FREE_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
-            val availMatch = AVAIL_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
+            val availGroups = AVAIL_REGEX.find(latest)?.groupValues
+            val availBefore = availGroups?.getOrNull(1).orEmpty()
+            val availAfter = availGroups?.getOrNull(2).orEmpty()
+            val availTransition = if (availBefore.isNotEmpty() && availAfter.isNotEmpty()) {
+                "$availBefore->$availAfter"
+            } else {
+                ""
+            }
+            val availKb = if (availAfter.isNotEmpty()) availAfter else availBefore
+            val computedDeltaKb = if (availBefore.isNotEmpty() && availAfter.isNotEmpty()) {
+                val b = availBefore.toLongOrNull()
+                val a = availAfter.toLongOrNull()
+                if (b != null && a != null) a - b else null
+            } else {
+                null
+            }
+            val deltaKb = DELTA_KB_REGEX.find(latest)?.groupValues?.getOrNull(1)?.toLongOrNull()
+                ?: computedDeltaKb
+            val deltaMb = DELTA_MB_REGEX.find(latest)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: computedDeltaKb?.let { (it / 1024L).toInt() }
+            val trimmedCount = TRIMMED_REGEX.find(latest)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val mglruTag = MGLRU_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
             val rcMatch = RC_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
             return RamcleanTelemetry(
                 stateLabel = stateLabel,
                 isEnabled = isEnabled,
                 lastTransition = freeMatch,
-                lastAvailKb = availMatch,
+                lastAvailTransition = availTransition,
+                lastAvailKb = availKb,
+                lastDeltaMb = deltaMb,
+                lastDeltaKb = deltaKb,
+                lastTrimmedCount = trimmedCount,
+                lastMglruTag = mglruTag,
                 lastRc = rcMatch,
                 recentEvents = events,
+                lastStatus = statusTag,
             )
         }
     }

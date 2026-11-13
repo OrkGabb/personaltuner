@@ -94,7 +94,7 @@ if [ -f "$MODULE_CONFIG/stock.snapshot" ]; then
 fi
 
 # IO scheduler e fila de volta ao stock (ssg + add_random=0 no M54).
-for b in sda sdb sdc sdd sde sdf mmcblk0; do
+for b in sda sdb sdc sdd sde; do
 	[ -f /sys/block/$b/queue/scheduler ] && echo "ssg" >/sys/block/$b/queue/scheduler 2>/dev/null
 	[ -f /sys/block/$b/queue/nomerges ] && echo "0" >/sys/block/$b/queue/nomerges 2>/dev/null
 	[ -f /sys/block/$b/queue/add_random ] && echo "0" >/sys/block/$b/queue/add_random 2>/dev/null

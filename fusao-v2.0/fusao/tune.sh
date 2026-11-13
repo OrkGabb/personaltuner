@@ -25,11 +25,16 @@ STATE_F="$M54_DIR/profile.state"
 MODE="${1:-auto}"
 GAME_ACTIVE="$M54_DIR/game-active.txt"
 
-# Nós de CPU / GPU / Devfreq do Exynos 1380 (validados em nodes-m54.md)
+# Nós de CPU / GPU / Devfreq / UFC do Exynos 1380 (validados em nodes-m54.md)
 P0_MIN="$R/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"
 P0_MAX="$R/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
 P4_MIN="$R/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq"
 P4_MAX="$R/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+UFC_MAX="$R/sys/devices/platform/exynos-ufcc/ufc/cpufreq_max_limit"
+UFC_MIN="$R/sys/devices/platform/exynos-ufcc/ufc/cpufreq_min_limit"
+UFC_MIN_WOB="$R/sys/devices/platform/exynos-ufcc/ufc/cpufreq_min_limit_wo_boost"
+UFC_LMAX="$R/sys/devices/platform/exynos-ufcc/ufc/little_max_limit"
+UFC_INFO="$R/sys/devices/platform/exynos-ufcc/ufc/info"
 GPU_MIN="$R/sys/kernel/gpu/gpu_min_clock"
 GPU_MAX="$R/sys/kernel/gpu/gpu_max_clock"
 MIF_MIN="$R/sys/class/devfreq/17000010.devfreq_mif/min_freq"
@@ -143,7 +148,112 @@ w() {
   got=$(rval "$1")
   if [ "$got" != "$want" ]; then
     log "WARN tune: clamp $1 pedido=$want lido=$got"
+    _APPLY_CLAMP=1
     return 1
+  fi
+  return 0
+}
+
+# thermal_cpu_throttled — rc 0 se o driver térmico do kernel (cooling_device* thermal-cpufreq-*)
+# está reduzindo CPU ativamente (cur_state > 0); nunca limpar latch do UFC por cima de throttle térmico real.
+thermal_cpu_throttled() {
+  local _c _t _s
+  for _c in "$R"/sys/class/thermal/cooling_device*; do
+    [ -r "$_c/type" ] && [ -r "$_c/cur_state" ] || continue
+    _t=$(rval "$_c/type")
+    case "$_t" in thermal-cpufreq-*) ;; *) continue;; esac
+    _s=$(num_or "$(rval "$_c/cur_state")" "0")
+    [ "$_s" -gt 0 ] 2>/dev/null && return 0
+  done
+  return 1
+}
+
+# clear_ufc_max_if_safe <alvo_p4_max> — Samsung Hyper/SDHMS grava teto em exynos-ufcc/ufc/cpufreq_max_limit
+# (PM_QOS_MAX_LIMIT | user0) que trava policy4/scaling_max_freq abaixo de 2400000 mesmo com cooling_device*=0
+# e pós-jogo (nodes-m54.md §10). Gravar -1 libera o latch quando não há throttle térmico do kernel.
+# Retorna 0 APENAS se houve escrita efetiva (-1) e readback confirmou; retorna 1 em qualquer no-op.
+clear_ufc_max_if_safe() {
+  local want_max="${1:-2400000}" cur_ufc after_ufc
+  [ -e "$UFC_MAX" ] || return 1
+  cur_ufc=$(rval "$UFC_MAX" 2>/dev/null) || return 1
+  case "$cur_ufc" in
+    ''|-1|*[!0-9]*) return 1;;
+  esac
+  [ "$cur_ufc" -lt "$want_max" ] 2>/dev/null || return 1
+  if thermal_cpu_throttled; then
+    return 1
+  fi
+  chmod 0664 "$UFC_MAX" 2>/dev/null
+  [ -w "$UFC_MAX" ] || return 1
+  sysfs_put "$UFC_MAX" "-1" >/dev/null 2>&1 || return 1
+  after_ufc=$(rval "$UFC_MAX" 2>/dev/null)
+  [ "$after_ufc" = "-1" ] || return 1
+  log "tune: ufc cpufreq_max_limit liberado (${cur_ufc} -> -1)"
+  return 0
+}
+
+# ufc_boost_floor — lê /sys/devices/platform/exynos-ufcc/ufc/info e devolve o maior piso positivo
+# ativo em PM_QOS_MIN_LIMIT / PM_QOS_MIN_LIMIT_WO_BOOST (0 se ausente ou inativo).
+ufc_boost_floor() {
+  local max_f=0 _line _tok
+  [ -r "$UFC_INFO" ] || { echo 0; return 0; }
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    case "$_line" in
+      *PM_QOS_MIN_LIMIT*)
+        for _tok in ${_line#*|}; do
+          case "$_tok" in
+            ''|-1|0|*[!0-9]*) continue;;
+            *) [ "$_tok" -gt "$max_f" ] 2>/dev/null && max_f="$_tok";;
+          esac
+        done
+        ;;
+    esac
+  done < "$UFC_INFO" 2>/dev/null
+  echo "$max_f"
+}
+
+_clear_ufc_min_node() {
+  local node="$1" label="$2" want_min="$3" cur_v after_v
+  [ -e "$node" ] || return 1
+  cur_v=$(rval "$node" 2>/dev/null) || return 1
+  case "$cur_v" in
+    ''|-1|0|*[!0-9]*) return 1;;
+  esac
+  [ "$cur_v" -gt "$want_min" ] 2>/dev/null || return 1
+  chmod 0664 "$node" 2>/dev/null
+  [ -w "$node" ] || return 1
+  sysfs_put "$node" "-1" >/dev/null 2>&1 || return 1
+  after_v=$(rval "$node" 2>/dev/null)
+  [ "$after_v" = "-1" ] || [ "$after_v" = "0" ] || sysfs_put "$node" "0" >/dev/null 2>&1 || :
+  after_v=$(rval "$node" 2>/dev/null)
+  log "tune: ufc $label liberado (${cur_v} -> ${after_v:--1})"
+  return 0
+}
+
+# clear_ufc_qos_if_safe <dom> <want_min> <want_max> — fora de throttle térmico, limpa tetos/pisos
+# sysfs residuais do UFC sem encerrar daemons proprietários (SDHMS/HyPer/perfmond/SystemUI).
+clear_ufc_qos_if_safe() {
+  local dom="$1" want_min="$2" want_max="$3" cur_v
+  _UFC_QOS_CLEARED=0
+  thermal_cpu_throttled && return 0
+  if [ "$dom" = "p4" ]; then
+    clear_ufc_max_if_safe "$want_max" && _UFC_QOS_CLEARED=1 || :
+    _clear_ufc_min_node "$UFC_MIN" "cpufreq_min_limit" "$want_min" && _UFC_QOS_CLEARED=1 || :
+    _clear_ufc_min_node "$UFC_MIN_WOB" "cpufreq_min_limit_wo_boost" "$want_min" && _UFC_QOS_CLEARED=1 || :
+  elif [ "$dom" = "p0" ] && [ -e "$UFC_LMAX" ]; then
+    cur_v=$(rval "$UFC_LMAX" 2>/dev/null)
+    case "$cur_v" in
+      ''|-1|0|*[!0-9]*) ;;
+      *)
+        if [ "$cur_v" -lt "$want_max" ] 2>/dev/null; then
+          chmod 0664 "$UFC_LMAX" 2>/dev/null
+          if [ -w "$UFC_LMAX" ] && sysfs_put "$UFC_LMAX" "-1" >/dev/null 2>&1; then
+            log "tune: ufc little_max_limit liberado (${cur_v} -> -1)"
+            _UFC_QOS_CLEARED=1
+          fi
+        fi
+        ;;
+    esac
   fi
   return 0
 }
@@ -261,24 +371,25 @@ snap_domain() {
 # set_cpu_domain <p0|p4> <nó min> <nó max> <alvo min> <alvo max>
 # Ordem segura (min <= max o tempo todo) e descida do piso por degraus REAIS da tabela
 # (nodes-m54.md §10: policy0/min só desce via intermediário). rc 1 se algum nó final não guardou o pedido.
+# set_cpu_domain <dom> <node_min> <node_max> <alvo_min> <alvo_max>
+# Ordem segura p/ drivers que rejeitam min > max atual e p/ boost QoS (PM_QOS_MIN_LIMIT_WO_BOOST):
+# nunca aborta a gravação de n_max quando o UFC/QoS segurou um piso transitório de boot/launch.
 set_cpu_domain() {
-  local dom="$1" n_min="$2" n_max="$3" t_min t_max c_min c_max _s rev="" rc=0
+  local dom="$1" n_min="$2" n_max="$3" t_min t_max c_min c_max _s rev="" rc=0 boost_floor=0 got
   [ -f "$n_min" ] || [ -f "$n_max" ] || return 0
   load_domains
   t_min=$(snap_domain min "$dom" "$4")
   t_max=$(snap_domain max "$dom" "$5")
+  clear_ufc_qos_if_safe "$dom" "$t_min" "$t_max"
   dom_select "$dom"
   c_min=$(num_or "$(rval "$n_min")" "$D_LO")
   c_max=$(num_or "$(rval "$n_max")" "$D_HI")
+  [ "$dom" = "p4" ] && boost_floor=$(num_or "$(ufc_boost_floor)" "0")
   # Se o novo max é maior que o atual, sobe o max primeiro p/ não rejeitar o min
   if [ "$t_max" -gt "$c_max" ]; then
-    w "$n_max" "$t_max"
+    w "$n_max" "$t_max" || :
   fi
-  if [ "$t_min" -lt "$c_min" ]; then
-    # degraus da tabela do aparelho, do maior p/ o menor, estritamente entre o alvo e o piso atual.
-    # Degrau que não pega = piso EXTERNO (boost de boot / hint de launch da Samsung segura o QoS de min):
-    # os degraus abaixo falhariam igual, então para no primeiro (no aparelho, 2026-10-18 15:29: 15 WARN
-    # seguidos com lido=2002000). O pedido final abaixo ainda é gravado e vale quando o piso externo solta.
+  if [ "$t_min" -lt "$c_min" ] && [ "$boost_floor" -le "$t_min" ] 2>/dev/null; then
     for _s in $D_TBL; do rev="$_s $rev"; done
     for _s in $rev; do
       if [ "$_s" -lt "$c_min" ] && [ "$_s" -gt "$t_min" ]; then
@@ -286,8 +397,42 @@ set_cpu_domain() {
       fi
     done
   fi
-  w "$n_min" "$t_min" || rc=1
-  w "$n_max" "$t_max" || rc=1
+  if [ "$boost_floor" -gt "$t_min" ] 2>/dev/null && [ -e "$n_min" ]; then
+    chmod 0644 "$n_min" 2>/dev/null
+    if [ -w "$n_min" ] && sysfs_put "$n_min" "$t_min" >/dev/null 2>&1; then
+      got=$(rval "$n_min")
+      if [ "$got" != "$t_min" ] && [ "${got:-0}" -lt "$t_min" ] 2>/dev/null; then
+        log "WARN tune: clamp $n_min pedido=$t_min lido=$got"
+        _APPLY_CLAMP=1
+        rc=1
+      elif [ "$got" != "$t_min" ]; then
+        log "tune: $dom boost QoS UFC ativo ($boost_floor); min=$t_min registrado (efetivo=$got)"
+      fi
+    else
+      log "WARN tune: falha de escrita $n_min pedido=$t_min"
+      rc=1
+    fi
+  else
+    w "$n_min" "$t_min" || rc=1
+  fi
+  if [ "$boost_floor" -gt "$t_max" ] 2>/dev/null && [ -e "$n_max" ]; then
+    chmod 0644 "$n_max" 2>/dev/null
+    if [ -w "$n_max" ] && sysfs_put "$n_max" "$t_max" >/dev/null 2>&1; then
+      got=$(rval "$n_max")
+      if [ "$got" != "$t_max" ] && [ "$got" != "$boost_floor" ]; then
+        log "WARN tune: clamp $n_max pedido=$t_max lido=$got"
+        _APPLY_CLAMP=1
+        rc=1
+      elif [ "$got" != "$t_max" ]; then
+        log "tune: $dom boost QoS UFC ($boost_floor) acima do teto $t_max; max registrado (efetivo=$got)"
+      fi
+    else
+      log "WARN tune: falha de escrita $n_max pedido=$t_max"
+      rc=1
+    fi
+  else
+    w "$n_max" "$t_max" || rc=1
+  fi
   return "$rc"
 }
 
@@ -344,6 +489,7 @@ restore_stock() {
   s_p4max=$(stock_of "$P4_MAX"); [ -z "$s_p4max" ] && s_p4max=2400000
   s_gmin=$(stock_of "$GPU_MIN"); [ -z "$s_gmin" ] && s_gmin=221000
   s_gmax=$(stock_of "$GPU_MAX"); [ -z "$s_gmax" ] && s_gmax=949000
+  clear_ufc_max_if_safe "$s_p4max"
   set_policy0 "$s_p0min" "$s_p0max"
   set_policy4 "$s_p4min" "$s_p4max"
   set_gpu "$s_gmin" "$s_gmax"
@@ -357,25 +503,26 @@ restore_stock() {
   log "tune: restore stock"
 }
 
-bbr_if_avail() {
-  local avail="$R/proc/sys/net/ipv4/tcp_available_congestion_control"
-  if grep -qw "bbr" "$avail" 2>/dev/null; then
-    echo "bbr"
-  else
-    stock_of "$R/proc/sys/net/ipv4/tcp_congestion_control"
-  fi
+# nomerges_node — primeiro nó queue/nomerges de bloco presente (sda no M546B).
+nomerges_node() {
+  for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
+    [ -f "$dev/queue/nomerges" ] && { echo "$dev/queue/nomerges"; return 0; }
+  done
+  return 1
 }
 
 # profile_targets <game|balanced|battery> — SSOT dos alvos de cada perfil. CPU/GPU saem JÁ com snap
 # (T_P0_MIN T_P0_MAX T_P4_MIN T_P4_MAX T_GMIN T_GMAX): o valor que existe na tabela do aparelho.
 # apply_* escrevem estes valores e verify_profile confere EXATAMENTE estes, então N/N significa
-# "o aparelho aceitou o que o perfil realmente pede" (e não "o arquivo falso engoliu qualquer número").
+# "o aparelho aceitou o que o perfil realmente pede" (e não "o arquivo falso engurliu qualquer número").
 # Alvos já são degraus reais do Exynos 1380; o snap fica de rede de proteção (loga se algum desviar).
 # Mantém a intenção de cada perfil. game-active.txt não vazio sobe pisos e MIF/INT (jogo em foco).
 profile_targets() {
   local p="$1" act=0 r_p0min r_p0max r_p4min r_p4max r_gmin r_gmax
   [ -s "$GAME_ACTIVE" ] && act=1
   load_domains
+  T_PAGE_CLUSTER=0
+  T_NOMERGES=0
   case "$p" in
     game)
       # P0 piso era 999000 (1104000 com jogo) e P4 889000 (999000): de outro SoC, agora degraus reais.
@@ -390,10 +537,11 @@ profile_targets() {
       # FUSAO agir; em jogo o verify ficava 4/5. Ganho do piso nunca medido; reescrever = briga com a ROM.
       r_gmin=221000;   r_gmax=949000
       T_MIF_MIN=845000; T_INT_MIN=266000; T_DISP_MIN=200000
-      T_SWAP=60; T_VFS=50
+      T_SWAP=60; T_VFS=50; T_STAT_INT=10
       if [ "$act" = 1 ]; then
         r_p0min=1152000; r_p4min=1056000
         T_MIF_MIN=1014000; T_INT_MIN=333000
+        T_NOMERGES=1
       fi
       ;;
     battery)
@@ -406,7 +554,7 @@ profile_targets() {
       r_p4min=533000; r_p4max=1440000
       r_gmin=221000;  r_gmax=949000
       T_MIF_MIN=421000; T_INT_MIN=50000; T_DISP_MIN=66000
-      T_SWAP=160; T_VFS=150
+      T_SWAP=160; T_VFS=150; T_STAT_INT=15
       ;;
     *)
       # teto da GPU era 858000 (não existe na tabela); 845000 é o degrau logo abaixo do máximo 949000.
@@ -416,7 +564,7 @@ profile_targets() {
       r_p4min=533000; r_p4max=1824000
       r_gmin=221000;  r_gmax=845000
       T_MIF_MIN=421000; T_INT_MIN=133000; T_DISP_MIN=133000
-      T_SWAP=120; T_VFS=100
+      T_SWAP=120; T_VFS=100; T_STAT_INT=5
       if [ "$act" = 1 ]; then
         r_p0min=672000; r_p4min=672000
         T_MIF_MIN=676000
@@ -445,6 +593,10 @@ REVERIFY_STEPS="${REVERIFY_STEPS:-30 60 95}"
 # battery pedindo 1728000/1440000, e ficou assim 9+ min. Uma regravação, uma vez, REASSERT_DELAY_S depois do
 # apply; nunca agenda outra (loop de reescrita contra a ROM continua proibido).
 REASSERT_DELAY_S="${REASSERT_DELAY_S:-30}"
+# Estabilização única pós-launch em perfil game (hint Samsung AMS_ACT_START/901 dura até ~4 s e pode
+# travar ufc_max/gpu_max/pisos durante o apply_game): 1 passe após SETTLE_GAME_S sem laço de reescrita.
+SETTLE_GAME_S="${SETTLE_GAME_S:-6}"
+SETTLE_QOS_S="${SETTLE_QOS_S:-3}"
 
 # now_s — segundos inteiros de uptime (= cut -d. -f1 /proc/uptime, 0 se ilegível), por builtins.
 now_s() {
@@ -462,6 +614,21 @@ state_field() {
   case "$1" in ''|*[!A-Za-z0-9_]*) grep -E "^$1=" "$STATE_F" 2>/dev/null | tail -n 1 | cut -d= -f2-; return;; esac
   { while IFS= read -r _l || [ -n "$_l" ]; do case "$_l" in "$1="*) _v=${_l#*=};; esac; done; } 2>/dev/null < "$STATE_F"
   case "$_v" in -*|*\\*) printf '%s\n' "$_v";; *) echo "$_v";; esac
+}
+
+# build_sysfs_summary <with_fas:0|1> — formata linha compacta com o estado real dos nós principais.
+build_sysfs_summary() {
+  local with_fas="${1:-0}" _ra_node p0_s p4_s gpu_s mif_s vm_s io_s summary
+  _ra_node=$(readahead_nodes | head -n 1)
+  p0_s="$(rval "$P0_MIN")-$(rval "$P0_MAX")"
+  p4_s="$(rval "$P4_MIN")-$(rval "$P4_MAX")"
+  gpu_s="$(rval "$GPU_MIN")-$(rval "$GPU_MAX")"
+  mif_s="$(rval "$MIF_MIN")"
+  vm_s="$(rval "$R/proc/sys/vm/swappiness")/$(rval "$R/proc/sys/vm/vfs_cache_pressure")"
+  io_s="$( [ -n "$_ra_node" ] && rval "$_ra_node" || echo "-" )k"
+  summary="P0:${p0_s} P4:${p4_s} GPU:${gpu_s} MIF:${mif_s} VM:${vm_s} IO:${io_s}"
+  [ "$with_fas" = 1 ] && summary="$summary CPU:FAS"
+  printf '%s' "$summary"
 }
 
 # Verifica por readback se os nós presentes no sistema refletem o perfil alvo
@@ -534,21 +701,28 @@ verify_profile() {
     [ "$fas_cpu" = 1 ] || check_eq "$P4_MIN" "$T_P4_MIN" "p4_min" floor
     check_eq "$GPU_MIN" "$T_GMIN" "gpu_min" floor
     check_eq "$MIF_MIN" "$T_MIF_MIN" "mif_min"
+    check_eq "$INT_MIN" "$T_INT_MIN" "int_min"
   else
     [ "$fas_cpu" = 1 ] || check_ge "$P0_MIN" "$T_P0_MIN" "p0_min"
     [ "$fas_cpu" = 1 ] || check_ge "$P4_MIN" "$T_P4_MIN" "p4_min"
     check_ge "$GPU_MIN" "$T_GMIN" "gpu_min"
     check_ge "$MIF_MIN" "$T_MIF_MIN" "mif_min"
+    check_ge "$INT_MIN" "$T_INT_MIN" "int_min"
   fi
   [ "$fas_cpu" = 1 ] || check_eq "$P0_MAX" "$T_P0_MAX" "p0_max" ceil
   [ "$fas_cpu" = 1 ] || check_eq "$P4_MAX" "$T_P4_MAX" "p4_max" ceil
-  check_eq "$GPU_MAX" "$T_GMAX" "gpu_max"
+  if [ "$target" = "game" ]; then
+    check_eq "$GPU_MAX" "$T_GMAX" "gpu_max" ceil
+  else
+    check_eq "$GPU_MAX" "$T_GMAX" "gpu_max"
+  fi
   check_eq "$R/proc/sys/vm/swappiness" "$T_SWAP" "swappiness"
   check_eq "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS" "vfs_pressure"
-
-  # read_ahead saiu dos perfis (2.10.0): fica só no sysfs_summary como leitura informativa
-  local _ra_node
-  _ra_node=$(readahead_nodes | head -n 1)
+  check_eq "$R/proc/sys/vm/stat_interval" "$T_STAT_INT" "stat_interval"
+  check_eq "$R/proc/sys/vm/page-cluster" "$T_PAGE_CLUSTER" "page_cluster"
+  local _nm_node
+  _nm_node=$(nomerges_node)
+  [ -n "$_nm_node" ] && check_eq "$_nm_node" "$T_NOMERGES" "nomerges"
 
   # tetos de CPU acima do pedido (rótulos p0_max/p4_max) p/ o reassert único
   VERIFY_OVER=""
@@ -582,15 +756,8 @@ verify_profile() {
     state="failed"
   fi
 
-  local p0_s p4_s gpu_s mif_s vm_s io_s summary
-  p0_s="$(rval "$P0_MIN")-$(rval "$P0_MAX")"
-  p4_s="$(rval "$P4_MIN")-$(rval "$P4_MAX")"
-  gpu_s="$(rval "$GPU_MIN")-$(rval "$GPU_MAX")"
-  mif_s="$(rval "$MIF_MIN")"
-  vm_s="$(rval "$R/proc/sys/vm/swappiness")/$(rval "$R/proc/sys/vm/vfs_cache_pressure")"
-  io_s="$( [ -n "$_ra_node" ] && rval "$_ra_node" || echo "-" )k"
-  summary="P0:${p0_s} P4:${p4_s} GPU:${gpu_s} MIF:${mif_s} VM:${vm_s} IO:${io_s}"
-  [ "$fas_cpu" = 1 ] && summary="$summary CPU:FAS"
+  local summary
+  summary=$(build_sysfs_summary "$fas_cpu")
 
   {
     echo "profile=$target"
@@ -628,6 +795,79 @@ verify_after_apply() {
     log "tune: $1 teto de CPU acima do pedido ($VERIFY_OVER); regrava 1x em +${REASSERT_DELAY_S} s se seguir assim"
     [ "${TUNE_NO_DEFER:-0}" = "1" ] || nohup sh "$DIR/tune.sh" reassert "$1" "$APPLIED_AT" >/dev/null 2>&1 &
   fi
+  if [ "$1" = "game" ]; then
+    if [ -s "$GAME_ACTIVE" ] && { [ "$VERIFY_STATE" != "applied" ] || [ "${_APPLY_CLAMP:-0}" = "1" ]; }; then
+      [ "${TUNE_NO_DEFER:-0}" = "1" ] || nohup sh "$DIR/tune.sh" settle "$1" "$APPLIED_AT" >/dev/null 2>&1 &
+    fi
+  elif [ "$1" = "balanced" ] || [ "$1" = "battery" ]; then
+    # Aguarda janela transitória do UFC/PM_QOS_MIN_LIMIT_WO_BOOST (~3 s) para liberar QoS e garantir teto/piso.
+    [ "${TUNE_NO_DEFER:-0}" = "1" ] || nohup sh "$DIR/tune.sh" settle "$1" "$APPLIED_AT" >/dev/null 2>&1 &
+  fi
+}
+
+# settle_once <perfil> <applied_at> — passe único pós-apply/launch para limpar QoS residual do UFC
+# e reconvergir nós (inclusive p4_max elevado por PM_QOS_MIN_LIMIT_WO_BOOST em balanced/battery).
+# Cancela imediatamente se game-active esvaziou (perfil game), applied_at ou perfil efetivo mudou.
+settle_once() {
+  local target="$1" stamp="$2" fas_cpu=0 need_vfy=0 cur delay boost_floor=0
+  if [ -z "$target" ] || [ "$target" = "game" ]; then
+    [ -s "$GAME_ACTIVE" ] || return 0
+    target="game"
+    delay="$SETTLE_GAME_S"
+  else
+    delay="$SETTLE_QOS_S"
+  fi
+  echo "$$" > "$M54_DIR/settle.pid" 2>/dev/null
+  [ "${delay:-0}" = "0" ] || sleep "$delay"
+  rm -f "$M54_DIR/settle.pid" 2>/dev/null
+  if [ "$target" = "game" ]; then
+    [ -s "$GAME_ACTIVE" ] || return 0
+  fi
+  [ "$(state_field applied_at)" = "$stamp" ] || return 0
+  [ "$(effective_profile)" = "$target" ] || return 0
+  SNAP_QUIET=1
+  profile_targets "$target"
+  SNAP_QUIET=""
+  fas_owns_cpu && fas_cpu=1
+  clear_ufc_qos_if_safe p0 "$T_P0_MIN" "$T_P0_MAX"
+  [ "${_UFC_QOS_CLEARED:-0}" = "1" ] && need_vfy=1
+  clear_ufc_qos_if_safe p4 "$T_P4_MIN" "$T_P4_MAX"
+  [ "${_UFC_QOS_CLEARED:-0}" = "1" ] && need_vfy=1
+  if [ "$fas_cpu" != "1" ] && ! thermal_cpu_throttled; then
+    boost_floor=$(num_or "$(ufc_boost_floor)" "0")
+    if [ "${delay:-0}" != "0" ] && [ "$boost_floor" -gt "$T_P4_MAX" ] 2>/dev/null; then
+      sleep 1
+      [ "$(state_field applied_at)" = "$stamp" ] || return 0
+      [ "$(effective_profile)" = "$target" ] || return 0
+      clear_ufc_qos_if_safe p4 "$T_P4_MIN" "$T_P4_MAX"
+      [ "${_UFC_QOS_CLEARED:-0}" = "1" ] && need_vfy=1
+      boost_floor=$(num_or "$(ufc_boost_floor)" "0")
+    fi
+    cur=$(num_or "$(rval "$P4_MAX")" "$T_P4_MAX")
+    [ "$cur" -ne "$T_P4_MAX" ] 2>/dev/null && { set_policy4 "$T_P4_MIN" "$T_P4_MAX"; need_vfy=1; }
+    cur=$(num_or "$(rval "$P0_MAX")" "$T_P0_MAX")
+    [ "$cur" -ne "$T_P0_MAX" ] 2>/dev/null && { set_policy0 "$T_P0_MIN" "$T_P0_MAX"; need_vfy=1; }
+    cur=$(num_or "$(rval "$P4_MIN")" "$T_P4_MIN")
+    if [ "$cur" -lt "$T_P4_MIN" ] 2>/dev/null || { [ "$cur" -gt "$T_P4_MIN" ] 2>/dev/null && [ "$boost_floor" -le "$T_P4_MIN" ] 2>/dev/null; }; then
+      set_policy4 "$T_P4_MIN" "$T_P4_MAX"; need_vfy=1
+    fi
+    cur=$(num_or "$(rval "$P0_MIN")" "$T_P0_MIN")
+    [ "$cur" -ne "$T_P0_MIN" ] 2>/dev/null && { set_policy0 "$T_P0_MIN" "$T_P0_MAX"; need_vfy=1; }
+  fi
+  if ! thermal_cpu_throttled; then
+    cur=$(num_or "$(rval "$GPU_MAX")" "$T_GMAX")
+    [ "$cur" -lt "$T_GMAX" ] 2>/dev/null && { set_gpu "$T_GMIN" "$T_GMAX"; need_vfy=1; }
+  fi
+  cur=$(num_or "$(rval "$MIF_MIN")" "$T_MIF_MIN")
+  [ "$cur" -lt "$T_MIF_MIN" ] 2>/dev/null && { w "$MIF_MAX" "2093000"; w "$MIF_MIN" "$T_MIF_MIN"; need_vfy=1; }
+  cur=$(num_or "$(rval "$INT_MIN")" "$T_INT_MIN")
+  [ "$cur" -lt "$T_INT_MIN" ] 2>/dev/null && { w "$INT_MIN" "$T_INT_MIN"; need_vfy=1; }
+  cur=$(num_or "$(rval "$DISP_MIN")" "$T_DISP_MIN")
+  [ "$cur" -lt "$T_DISP_MIN" ] 2>/dev/null && { w "$DISP_MIN" "$T_DISP_MIN"; need_vfy=1; }
+  if [ "$need_vfy" = "1" ] || [ "$(state_field profile_state)" != "applied" ]; then
+    verify_profile "$target"
+    log "tune: settle $target -> $VERIFY_STATE $(state_field profile_verify)"
+  fi
 }
 
 # reassert <perfil> <applied_at> — UMA regravação dos tetos de CPU que seguem acima do pedido (VERIFY_OVER).
@@ -661,9 +901,11 @@ reverify_loop() {
   done
 }
 
-apply_game() {
+apply_profile_targets() {
+  local p="$1" dev
+  _APPLY_CLAMP=0
   snapshot_stock
-  profile_targets game
+  profile_targets "$p"
   set_policy0 "$T_P0_MIN" "$T_P0_MAX"
   set_policy4 "$T_P4_MIN" "$T_P4_MAX"
   set_gpu "$T_GMIN" "$T_GMAX"
@@ -674,52 +916,28 @@ apply_game() {
 
   w "$R/proc/sys/vm/swappiness" "$T_SWAP"
   w "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS"
-  w "$R/proc/sys/vm/stat_interval" "10"
-  w "$R/proc/sys/vm/page-cluster" "0"
+  w "$R/proc/sys/vm/stat_interval" "$T_STAT_INT"
+  w "$R/proc/sys/vm/page-cluster" "$T_PAGE_CLUSTER"
 
   restore_readahead
   for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
-    [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "1"
-    [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"
-  done
-
-  local b
-  b=$(bbr_if_avail)
-  [ -n "$b" ] && w "$R/proc/sys/net/ipv4/tcp_congestion_control" "$b"
-  w "$R/proc/sys/net/ipv4/tcp_fastopen" "3"
-
-  verify_after_apply game
-  log "tune: apply game"
-}
-
-apply_balanced() {
-  snapshot_stock
-  profile_targets balanced
-  set_policy0 "$T_P0_MIN" "$T_P0_MAX"
-  set_policy4 "$T_P4_MIN" "$T_P4_MAX"
-  set_gpu "$T_GMIN" "$T_GMAX"
-  w "$MIF_MAX" "2093000"
-  w "$MIF_MIN" "$T_MIF_MIN"
-  w "$INT_MIN" "$T_INT_MIN"
-  w "$DISP_MIN" "$T_DISP_MIN"
-
-  w "$R/proc/sys/vm/swappiness" "$T_SWAP"
-  w "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS"
-  w "$R/proc/sys/vm/stat_interval" "5"
-  w "$R/proc/sys/vm/page-cluster" "0"
-
-  restore_readahead
-  for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
-    [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "0"
+    [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "$T_NOMERGES"
     [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"
   done
 
   restore_one "$R/proc/sys/net/ipv4/tcp_congestion_control"
-  w "$R/proc/sys/net/ipv4/tcp_fastopen" "3"
+  if [ "$p" = "battery" ]; then
+    restore_one "$R/proc/sys/net/ipv4/tcp_fastopen"
+  else
+    w "$R/proc/sys/net/ipv4/tcp_fastopen" "3"
+  fi
 
-  verify_after_apply balanced
-  log "tune: apply balanced"
+  verify_after_apply "$p"
+  log "tune: apply $p"
 }
+
+apply_game() { apply_profile_targets game; }
+apply_balanced() { apply_profile_targets balanced; }
 
 # ATENÇÃO (medido ao vivo em 2026-10-18): os tetos de CPU do battery (P0 max 1728000 / P4 max 1440000)
 # SOMEM sozinhos quando a tela entra em Dozing — a Samsung reescreve os nós (presentes até uptime ~3194s,
@@ -728,33 +946,18 @@ apply_balanced() {
 # vez, com releitura (w/verify_profile) — não implementado.
 # GPU: o battery NÃO capa mais o teto (2.10.0). O cap 650000 era sobrescrito no boot e pelo térmico ao
 # liberar (kernlab game-tetos: 650000 -> 845000/949000/754000); em jogo o battery vira game (effective_profile).
-apply_battery() {
-  snapshot_stock
-  profile_targets battery
-  set_policy0 "$T_P0_MIN" "$T_P0_MAX"
-  set_policy4 "$T_P4_MIN" "$T_P4_MAX"
-  set_gpu "$T_GMIN" "$T_GMAX"
-  w "$MIF_MAX" "2093000"
-  w "$MIF_MIN" "$T_MIF_MIN"
-  w "$INT_MIN" "$T_INT_MIN"
-  w "$DISP_MIN" "$T_DISP_MIN"
+apply_battery() { apply_profile_targets battery; }
 
-  w "$R/proc/sys/vm/swappiness" "$T_SWAP"
-  w "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS"
-  w "$R/proc/sys/vm/stat_interval" "15"
-  w "$R/proc/sys/vm/page-cluster" "0"
-
-  restore_readahead
-  for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do
-    [ -f "$dev/queue/nomerges" ] && w "$dev/queue/nomerges" "0"
-    [ -f "$dev/queue/add_random" ] && w "$dev/queue/add_random" "0"
-  done
-
-  restore_one "$R/proc/sys/net/ipv4/tcp_congestion_control"
-  restore_one "$R/proc/sys/net/ipv4/tcp_fastopen"
-
-  verify_after_apply battery
-  log "tune: apply battery"
+update_idle_state() {
+  local summary
+  summary=$(build_sysfs_summary 0)
+  {
+    echo "profile=idle"
+    echo "profile_state=idle"
+    echo "profile_verify=stock"
+    echo "sysfs_summary=$summary"
+    echo "applied_at=$(now_s)"
+  } | atomic_write "$STATE_F" 0644
 }
 
 resolve_mode() {
@@ -774,6 +977,7 @@ case "$MODE" in
   idle|restore)
     snapshot_stock
     restore_stock
+    update_idle_state
     exit 0
     ;;
   game)
@@ -800,6 +1004,10 @@ case "$MODE" in
     ;;
   reassert)
     reassert_once "$2" "$3"
+    exit 0
+    ;;
+  settle)
+    settle_once "$2" "$3"
     exit 0
     ;;
   effective)

@@ -55,11 +55,11 @@ selected_profile() {
 
 find_fusaod() {
   local _b
-  _b=$(command -v fusaod 2>/dev/null)
-  [ -n "$_b" ] && [ -x "$_b" ] && { echo "$_b"; return 0; }
-  for _b in /system/bin/fusaod /data/adb/modules/fusao/system/bin/fusaod /data/adb/modules/encore/system/bin/fusaod "$M54_DIR/../system/bin/fusaod"; do
+  for _b in /data/adb/modules/encore/system/bin/fusaod /data/adb/modules/fusao/system/bin/fusaod "$M54_DIR/../system/bin/fusaod" /system/bin/fusaod; do
     [ -x "$_b" ] && { echo "$_b"; return 0; }
   done
+  _b=$(command -v fusaod 2>/dev/null)
+  [ -n "$_b" ] && [ -x "$_b" ] && { echo "$_b"; return 0; }
   return 1
 }
 
@@ -72,7 +72,7 @@ find_fusao_cli() {
 }
 
 sync_fusaod_session() {
-  local _in_game="$1" _prof _b _p
+  local _in_game="$1" _prof _b _p _w
   [ -n "$FAKE_SETTINGS_DIR" ] && return 0
   _prof=$(selected_profile)
   # FAS ligado = fas-rs dono da CPU no jogo; o fusaod escreve piso de CPU e brigaria com ele
@@ -86,6 +86,14 @@ sync_fusaod_session() {
   else
     for _p in $(pgrep -f "[f]usaod serve" 2>/dev/null); do
       [ "$_p" = "$$" ] || kill -TERM "$_p" 2>/dev/null
+    done
+    _w=0
+    while pgrep -f "[f]usaod serve" >/dev/null 2>&1 && [ "$_w" -lt 10 ]; do
+      sleep 0.1 2>/dev/null || sleep 1
+      _w=$((_w + 1))
+    done
+    for _p in $(pgrep -f "[f]usaod serve" 2>/dev/null); do
+      [ "$_p" = "$$" ] || kill -KILL "$_p" 2>/dev/null
     done
   fi
 }
@@ -249,8 +257,19 @@ fire_enter() {
 }
 
 fire_exit() {
+  local _spid
   _exited_pkg="$1"
   log "watch: exit (foco fora da lista)"
+  # Invalida settle/reverify pendentes ANTES dos hooks de saída ([A-01])
+  if [ -s "$M54_DIR/settle.pid" ]; then
+    _spid=$(cat "$M54_DIR/settle.pid" 2>/dev/null)
+    case "$_spid" in ''|*[!0-9]*) ;; *) kill -TERM "$_spid" 2>/dev/null || : ;; esac
+    rm -f "$M54_DIR/settle.pid" 2>/dev/null
+  fi
+  if [ -f "$M54_DIR/profile.state" ]; then
+    grep -v "^applied_at=" "$M54_DIR/profile.state" > "$M54_DIR/profile.state.tmp" 2>/dev/null &&
+      mv -f "$M54_DIR/profile.state.tmp" "$M54_DIR/profile.state" 2>/dev/null || :
+  fi
   # FAS antes do tune: o fas-rs sai com min=max cravados e o tune.sh do exit tem de escrever por último.
   # Sem checar o .enabled: desligado no meio do jogo, o daemon ainda pode estar vivo.
   [ -x "$(dirname "$0")/fas.sh" ] && M54_DIR="$M54_DIR" sh "$(dirname "$0")/fas.sh" exit 2>/dev/null
@@ -269,7 +288,10 @@ fire_exit() {
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/tune.sh" auto 2>/dev/null
   fi
   if [ -f "$M54_DIR/dnd.enabled" ] && [ -x "$(dirname "$0")/dnd.sh" ]; then
-    M54_DIR="$M54_DIR" nohup sh "$(dirname "$0")/dnd.sh" off >>"$M54_DIR/fusao.log" 2>&1 &
+    read_gamefile
+    if [ -z "$CUR" ]; then
+      M54_DIR="$M54_DIR" nohup sh "$(dirname "$0")/dnd.sh" off >>"$M54_DIR/fusao.log" 2>&1 &
+    fi
   fi
 }
 
