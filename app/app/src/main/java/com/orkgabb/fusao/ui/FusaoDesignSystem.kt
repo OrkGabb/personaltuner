@@ -3,10 +3,12 @@ package com.orkgabb.fusao.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -52,6 +54,8 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,6 +78,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -85,12 +90,38 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orkgabb.fusao.AppIconCache
 import com.orkgabb.fusao.R
 import kotlin.math.cos
 import kotlin.math.sin
+
+private class ConstantFloatState(override val value: Float) : State<Float>
+
+private const val AMBIENT_GLOW_ALPHA: Float = 0.12f
+
+private const val PULSE_BURST_COUNT: Int = 3
+private val PULSE_WAVE_SPEC: TweenSpec<Float> = tween(durationMillis = 1750, easing = FastOutSlowInEasing)
+
+private const val SPECTRUM_BAR_COUNT: Int = 4
+private val SPECTRUM_BAR_WIDTH: Dp = 2.5.dp
+private val SPECTRUM_BAR_GAP: Dp = 2.dp
+private val SPECTRUM_WIDTH: Dp = 16.dp
+private val SPECTRUM_HEIGHT: Dp = 14.dp
+private val IDLE_SPECTRUM_LEVELS: List<State<Float>> = listOf(
+    ConstantFloatState(0.32f),
+    ConstantFloatState(0.56f),
+    ConstantFloatState(0.40f),
+    ConstantFloatState(0.28f),
+)
+
+private val IDLE_SPIN_ANGLE: State<Float> = ConstantFloatState(0f)
+
+private val REACTOR_SWEEP_GAME_SPEC: TweenSpec<Float> = tween(durationMillis = 1400, easing = FastOutSlowInEasing)
+private val REACTOR_SWEEP_IDLE_SPEC: TweenSpec<Float> = tween(durationMillis = 2200, easing = FastOutSlowInEasing)
 
 private val TELEMETRY_TS_REGEX = Regex(
     "^([0-9]{4}-[0-9]{2}-[0-9]{2}\\s+[0-9]{2}:[0-9]{2}:[0-9]{2}|[0-9]{2}:[0-9]{2}:[0-9]{2})\\s+"
@@ -260,17 +291,8 @@ fun FusaoAmbientCanvas(
         animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing),
         label = "ambientSecondary",
     )
-    val breathTransition = rememberInfiniteTransition(label = "ambientBreath")
-    val glowAlpha by breathTransition.animateFloat(
-        initialValue = 0.09f,
-        targetValue = 0.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 5200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "glowAlpha",
-    )
-
+    // Brilho fixo: a "respiração" infinita redesenhava o fundo da tela inteira a cada frame (120 fps) com a
+    // UI parada. O fundo agora só redesenha na troca de perfil (animAccent/animSecondary).
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -279,8 +301,8 @@ fun FusaoAmbientCanvas(
                 drawRect(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            animAccent.copy(alpha = glowAlpha),
-                            animSecondary.copy(alpha = glowAlpha * 0.35f),
+                            animAccent.copy(alpha = AMBIENT_GLOW_ALPHA),
+                            animSecondary.copy(alpha = AMBIENT_GLOW_ALPHA * 0.35f),
                             Color.Transparent,
                         ),
                         center = Offset(size.width * 0.78f, size.height * 0.06f),
@@ -522,7 +544,8 @@ fun TelemetryPill(
 }
 
 /**
- * LED indicador com onda de pulso contínua suave enquanto ativo.
+ * LED indicador: ao ficar ativo (ou trocar de cor) solta [PULSE_BURST_COUNT] ondas e repousa. A onda
+ * infinita mantinha a tela gerando frames sem parar com a UI ociosa.
  */
 @Composable
 fun StatusPulseDot(
@@ -530,25 +553,18 @@ fun StatusPulseDot(
     active: Boolean,
     size: Dp = 8.dp,
 ) {
-    val pulseTransition = rememberInfiniteTransition(label = "dotPulse")
-    val ringScale by pulseTransition.animateFloat(
-        initialValue = 1.0f,
-        targetValue = 2.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1750, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "dotRingScale",
-    )
-    val ringAlpha by pulseTransition.animateFloat(
-        initialValue = 0.50f,
-        targetValue = 0.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1750, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "dotRingAlpha",
-    )
+    // 0 = onda nascendo sob o LED, 1 = onda dissipada (repouso, invisível)
+    val pulse = remember { Animatable(1f) }
+    LaunchedEffect(active, color) {
+        if (active) {
+            repeat(PULSE_BURST_COUNT) {
+                pulse.snapTo(0f)
+                pulse.animateTo(targetValue = 1f, animationSpec = PULSE_WAVE_SPEC)
+            }
+        } else {
+            pulse.snapTo(1f)
+        }
+    }
 
     Box(
         modifier = Modifier.size(size * 2.1f),
@@ -559,9 +575,11 @@ fun StatusPulseDot(
                 modifier = Modifier
                     .size(size)
                     .graphicsLayer {
+                        val progress = pulse.value
+                        val ringScale = 1.0f + 1.15f * progress
                         scaleX = ringScale
                         scaleY = ringScale
-                        alpha = ringAlpha
+                        alpha = 0.50f * (1f - progress)
                     }
                     .background(color, CircleShape)
             )
@@ -591,49 +609,81 @@ fun LiveSpectrumBars(
         animationSpec = tween(220),
         label = "specColor",
     )
-    val t = rememberInfiniteTransition(label = "spectrum")
-    val b1 by t.animateFloat(
+    // A transição infinita só existe enquanto há áudio com DSP; parado, as barras são estáticas e nenhum
+    // frame é pedido. Os níveis são lidos na fase de desenho: animar não recompõe nem refaz o layout.
+    val levels: List<State<Float>> = if (active) rememberLiveSpectrumLevels() else IDLE_SPECTRUM_LEVELS
+    Canvas(modifier = modifier.size(width = SPECTRUM_WIDTH, height = SPECTRUM_HEIGHT)) {
+        val barWidth = SPECTRUM_BAR_WIDTH.toPx()
+        val barStep = barWidth + SPECTRUM_BAR_GAP.toPx()
+        val radius = CornerRadius(barWidth / 2f, barWidth / 2f)
+        for (index in 0 until SPECTRUM_BAR_COUNT) {
+            val barHeight = size.height * levels[index].value
+            drawRoundRect(
+                color = animColor,
+                topLeft = Offset(index * barStep, size.height - barHeight),
+                size = Size(barWidth, barHeight),
+                cornerRadius = radius,
+            )
+        }
+    }
+}
+
+@Composable
+private fun rememberLiveSpectrumLevels(): List<State<Float>> {
+    val transition = rememberInfiniteTransition(label = "spectrum")
+    val b1 = transition.animateFloat(
         initialValue = 0.35f,
         targetValue = 0.95f,
         animationSpec = infiniteRepeatable(tween(420, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "bar1",
     )
-    val b2 by t.animateFloat(
+    val b2 = transition.animateFloat(
         initialValue = 0.90f,
         targetValue = 0.30f,
         animationSpec = infiniteRepeatable(tween(520, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "bar2",
     )
-    val b3 by t.animateFloat(
+    val b3 = transition.animateFloat(
         initialValue = 0.45f,
         targetValue = 1.00f,
         animationSpec = infiniteRepeatable(tween(370, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "bar3",
     )
-    val b4 by t.animateFloat(
+    val b4 = transition.animateFloat(
         initialValue = 0.75f,
         targetValue = 0.25f,
         animationSpec = infiniteRepeatable(tween(480, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "bar4",
     )
-
-    val levels = if (active) listOf(b1, b2, b3, b4) else listOf(0.32f, 0.56f, 0.40f, 0.28f)
-    Row(
-        modifier = modifier.height(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        levels.forEach { ratio ->
-            Box(
-                modifier = Modifier
-                    .width(2.5.dp)
-                    .height(14.dp * ratio)
-                    .clip(CircleShape)
-                    .background(animColor)
-            )
-        }
-    }
+    return remember(b1, b2, b3, b4) { listOf(b1, b2, b3, b4) }
 }
+
+/**
+ * Ângulo (graus) de um indicador girando enquanto [active]. Ocioso devolve um estado fixo em 0 e não cria
+ * transição: um `rememberInfiniteTransition` criado sem condição pede frames mesmo sem ninguém ler o valor.
+ */
+@Composable
+fun rememberBusySpinAngle(active: Boolean, periodMs: Int = 850): State<Float> {
+    if (!active) return IDLE_SPIN_ANGLE
+    val transition = rememberInfiniteTransition(label = "busySpin")
+    return transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = periodMs, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "busySpinAngle",
+    )
+}
+
+/**
+ * Tamanho de texto que não acompanha o `font_scale` do sistema, para faixas de largura fixa (dock): com
+ * 7 abas na tela não sobra espaço para o rótulo crescer, e fonte grande cortava as abas.
+ */
+@Composable
+@ReadOnlyComposable
+fun fixedTextSize(size: Dp): TextUnit = with(LocalDensity.current) { size.toSp() }
 
 /**
  * Switch tátil com física de mola (spring), cápsula moderna e escala ao pressionar.
@@ -709,7 +759,7 @@ fun CyberSwitch(
     ) {
         Box(
             modifier = Modifier
-                .offset(x = thumbOffset)
+                .offset { IntOffset(x = thumbOffset.roundToPx(), y = 0) }
                 .size(20.dp)
                 .clip(CircleShape)
                 .background(thumbColor),
@@ -1130,24 +1180,20 @@ fun ReactorCoreEmblem(
         label = "daemonArc",
     )
 
-    val inf = rememberInfiniteTransition(label = "reactorOrbit")
-    val orbitAngle by inf.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (inGame) 5500 else 11000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "orbitAngle",
-    )
-    val haloBreath by inf.animateFloat(
-        initialValue = if (inGame) 0.22f else 0.12f,
-        targetValue = if (inGame) 0.38f else 0.22f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (inGame) 1600 else 3200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "haloBreath",
+    // Uma volta do arco a cada mudança real (perfil, jogo, serviços) e repouso: a órbita e o halo infinitos
+    // redesenhavam o emblema a cada frame com a aba Status parada.
+    val orbit = remember { Animatable(0f) }
+    LaunchedEffect(profile, inGame, daemonsAlive) {
+        orbit.snapTo(0f)
+        orbit.animateTo(
+            targetValue = 360f,
+            animationSpec = if (inGame) REACTOR_SWEEP_GAME_SPEC else REACTOR_SWEEP_IDLE_SPEC,
+        )
+    }
+    val haloAlpha by animateFloatAsState(
+        targetValue = if (inGame) 0.32f else 0.17f,
+        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+        label = "haloAlpha",
     )
 
     Box(
@@ -1165,8 +1211,8 @@ fun ReactorCoreEmblem(
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                accent.copy(alpha = haloBreath),
-                                secondary.copy(alpha = haloBreath * 0.35f),
+                                accent.copy(alpha = haloAlpha),
+                                secondary.copy(alpha = haloAlpha * 0.35f),
                                 Color.Transparent,
                             )
                         ),
@@ -1181,7 +1227,7 @@ fun ReactorCoreEmblem(
                         size = arcSize,
                         style = Stroke(width = strokeOuter),
                     )
-                    rotate(degrees = orbitAngle) {
+                    rotate(degrees = orbit.value) {
                         drawArc(
                             brush = sweepBrush,
                             startAngle = -90f,

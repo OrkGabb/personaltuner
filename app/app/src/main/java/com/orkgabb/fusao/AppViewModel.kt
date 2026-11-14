@@ -107,6 +107,8 @@ data class FusaoUiState(
     val games: List<String> = emptyList(),
     /** Alvos do FAS por jogo (pkg -> lista), lidos de `fusao fas list` (sem regravar a lista do fas-rs). */
     val fasTargets: Map<String, List<Int>> = emptyMap(),
+    /** false até um `fusao fas list` responder: mapa vazio sem leitura não significa "todos em AUTO". */
+    val fasTargetsLoaded: Boolean = false,
     val logLines: List<String> = emptyList(),
     val logFusaod: Boolean = false,
     val logLineLimit: Int = 120,
@@ -176,6 +178,7 @@ class FusaoViewModel : ViewModel() {
             } else {
                 _state.value.games
             }
+            val fas = if (present && st.fasSupported) FusaoBridge.fasTargetsOrNull() else null
             _state.update {
                 it.copy(
                     ready = true,
@@ -184,6 +187,8 @@ class FusaoViewModel : ViewModel() {
                     moduleVersion = version,
                     status = st,
                     games = games,
+                    fasTargets = fas ?: emptyMap(),
+                    fasTargetsLoaded = fas != null,
                     busy = Busy.NONE,
                     activeTarget = "",
                     notice = noticeAfterModuleCheck(it.notice),
@@ -218,6 +223,7 @@ class FusaoViewModel : ViewModel() {
             val version = if (present) FusaoBridge.moduleVersion() else ""
             val cur = _state.value
             val games = if (present) FusaoBridge.gamelist() else emptyList()
+            val fas = if (present && st.fasSupported) FusaoBridge.fasTargetsOrNull() else null
             val rInfo = if (present && cur.ramcleanInfo.isNotEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
             val lLines = if (present && cur.logLines.isNotEmpty()) {
                 FusaoBridge.logTail(cur.logLineLimit, cur.logFusaod)
@@ -232,6 +238,8 @@ class FusaoViewModel : ViewModel() {
                     status = st,
                     moduleVersion = version,
                     games = games,
+                    fasTargets = fas ?: emptyMap(),
+                    fasTargetsLoaded = fas != null,
                     ramcleanInfo = rInfo,
                     logLines = lLines,
                     busy = Busy.NONE,
@@ -365,8 +373,16 @@ class FusaoViewModel : ViewModel() {
         if (!guardRoot()) return
         launchLocked(Busy.GAMELIST, "gamelist_load") {
             val games = FusaoBridge.gamelist()
-            val fasTargets = if (_state.value.status.fasSupported) FusaoBridge.fasTargets() else emptyMap()
-            _state.update { it.copy(games = games, fasTargets = fasTargets, busy = Busy.NONE, activeTarget = "") }
+            val fas = if (_state.value.status.fasSupported) FusaoBridge.fasTargetsOrNull() else null
+            _state.update {
+                it.copy(
+                    games = games,
+                    fasTargets = fas ?: emptyMap(),
+                    fasTargetsLoaded = fas != null,
+                    busy = Busy.NONE,
+                    activeTarget = "",
+                )
+            }
         }
     }
 
@@ -379,16 +395,35 @@ class FusaoViewModel : ViewModel() {
         }
     }
 
-    /** Toque no FAS de um jogo: avança para o próximo limite (AUTO -> 30 -> 40 -> ... -> 144 -> OFF -> AUTO). */
+    /** Toque no FAS de um jogo: avança para o próximo limite (AUTO -> 30 -> 40 -> ... -> 120 -> SEM LIMITE -> OFF -> AUTO). */
     fun cycleFasCap(pkg: String) {
         if (!guardRoot()) return
         launchLocked(Busy.FLAG, "fas_target:$pkg") {
-            val cur = fasCapOf(_state.value.fasTargets[pkg])
-            val idx = FAS_CAP_PRESETS.indexOf(cur).coerceAtLeast(0)
-            val next = FAS_CAP_PRESETS[(idx + 1) % FAS_CAP_PRESETS.size]
+            // a base do ciclo é o que o módulo tem agora, relido aqui; nunca o que a tela guardou
+            val live = FusaoBridge.fasTargetsOrNull()
+            if (live == null) {
+                _state.update {
+                    it.copy(
+                        fasTargetsLoaded = false,
+                        busy = Busy.NONE,
+                        activeTarget = "",
+                        notice = "FALHOU: não foi possível ler o limite atual do FAS (fas list)",
+                    )
+                }
+                return@launchLocked
+            }
+            val next = nextFasCap(fasCapOf(live[pkg]))
             val out = FusaoBridge.setFasTarget(pkg, fasTargetsForCap(next))
-            val fasTargets = FusaoBridge.fasTargets()
-            _state.update { it.copy(fasTargets = fasTargets, busy = Busy.NONE, activeTarget = "", notice = out) }
+            val after = FusaoBridge.fasTargetsOrNull()
+            _state.update {
+                it.copy(
+                    fasTargets = after ?: live,
+                    fasTargetsLoaded = after != null,
+                    busy = Busy.NONE,
+                    activeTarget = "",
+                    notice = out,
+                )
+            }
         }
     }
 

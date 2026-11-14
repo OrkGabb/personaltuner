@@ -10,6 +10,8 @@ data class RouteEvaluation(
     val route: SpeakerOutputRoute,
     val deviceLabel: String,
     val activePlayback: Boolean,
+    /** Há player visível ao `AudioPlaybackCallback`: o fim da reprodução chega por callback, sem sondagem. */
+    val playbackTracked: Boolean = false,
 ) {
     val isSpeakerOnly: Boolean get() = route == SpeakerOutputRoute.SPEAKER
 }
@@ -60,11 +62,17 @@ object SpeakerOutputGuard {
         val mode = runCatching { audioManager.mode }.getOrDefault(AudioManager.MODE_NORMAL)
         val activeConfigs = configs ?: runCatching { audioManager.activePlaybackConfigurations }.getOrDefault(emptyList())
 
-        val activePlayback = runCatching { audioManager.isMusicActive }.getOrDefault(false) ||
-            activeConfigs.any { it.audioAttributes.usage in ENHANCEABLE_USAGES }
+        val playbackTracked = activeConfigs.any { it.audioAttributes.usage in ENHANCEABLE_USAGES }
+        val activePlayback = playbackTracked || runCatching { audioManager.isMusicActive }.getOrDefault(false)
 
-        @Suppress("DEPRECATION")
-        val playbackDevices: List<AudioDeviceInfo> = activeConfigs.mapNotNull { it.audioDeviceInfo }
+        // getAudioDeviceInfo() só existe a partir da API 31. Abaixo dela a rota sai só dos devices de saída
+        // (routedDevices): qualquer Bluetooth/fone conectado já tira a rota de SPEAKER (fail-closed).
+        val playbackDevices: List<AudioDeviceInfo> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            @Suppress("DEPRECATION")
+            activeConfigs.mapNotNull { it.audioDeviceInfo }
+        } else {
+            emptyList()
+        }
         val playbackTypes = playbackDevices.map { it.type }
 
         val routedDevices: List<AudioDeviceInfo> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -95,6 +103,7 @@ object SpeakerOutputGuard {
             route = route,
             deviceLabel = label,
             activePlayback = activePlayback,
+            playbackTracked = playbackTracked,
         )
     }
 

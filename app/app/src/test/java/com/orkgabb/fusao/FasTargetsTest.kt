@@ -30,13 +30,45 @@ class FasTargetsTest {
 
     @Test
     fun cycleReachesOffAndReturnsToAuto() {
-        val i = FAS_CAP_PRESETS.indexOf(144)
+        val i = FAS_CAP_PRESETS.indexOf(FAS_CAP_UNLIMITED)
         assertEquals(FAS_CAP_OFF, FAS_CAP_PRESETS[(i + 1) % FAS_CAP_PRESETS.size])
         val j = FAS_CAP_PRESETS.indexOf(FAS_CAP_OFF)
         assertNull(FAS_CAP_PRESETS[(j + 1) % FAS_CAP_PRESETS.size])
         for (cap in FAS_CAP_PRESETS) {
             assertEquals(cap, fasCapOf(parseFasToml(tomlLine("com.a.b", fasTargetsForCap(cap)))["com.a.b"]))
         }
+    }
+
+    /**
+     * M-4: o toque parte do limite que o `fas list` devolveu. O controle negativo é o estado do bug (alvos
+     * nunca lidos, mapa vazio): dele o mesmo toque cai em 30, não em 60.
+     */
+    @Test
+    fun tapStartsFromTheCapReadFromFasList() {
+        val live = parseFasToml(
+            listOf(
+                "[game_list]",
+                "\"com.a.cap45\" = [45]",
+                "\"com.a.cap60\" = [60]",
+                "\"com.a.auto\" = [30, 45, 60, 90, 120]",
+                "# \"com.a.off\" = off",
+            ),
+        )
+        assertEquals(60, nextFasCap(fasCapOf(live["com.a.cap45"])))
+        assertEquals(90, nextFasCap(fasCapOf(live["com.a.cap60"])))
+        assertEquals(30, nextFasCap(fasCapOf(live["com.a.auto"])))
+        assertNull(nextFasCap(fasCapOf(live["com.a.off"])))
+
+        val neverLoaded: Map<String, List<Int>> = emptyMap()
+        assertEquals(30, nextFasCap(fasCapOf(neverLoaded["com.a.cap45"])))
+        assertEquals(30, nextFasCap(fasCapOf(neverLoaded["com.a.cap60"])))
+    }
+
+    @Test
+    fun capOutsideThePresetsAdvancesToTheNextPresetAbove() {
+        assertEquals(60, nextFasCap(50))
+        assertEquals(FAS_CAP_UNLIMITED, nextFasCap(130))
+        assertEquals(FAS_CAP_OFF, nextFasCap(165))
     }
 
     @Test
@@ -58,6 +90,12 @@ class FasTargetsTest {
         assertEquals("AUTO", fasCapLabel(null))
         assertEquals("OFF", fasCapLabel(FAS_CAP_OFF))
         assertEquals("45 FPS", fasCapLabel(45))
+        assertEquals("120 FPS", fasCapLabel(120))
+        // 144 numa tela de 120 Hz não é um limite: o rótulo diz o que o alvo faz, e o módulo segue recebendo 144
+        assertEquals("SEM LIMITE", fasCapLabel(FAS_CAP_UNLIMITED))
+        assertEquals("144", fasTargetsForCap(FAS_CAP_UNLIMITED))
+        assertEquals(FAS_CAP_UNLIMITED, nextFasCap(120))
+        assertEquals(FAS_CAP_OFF, nextFasCap(FAS_CAP_UNLIMITED))
     }
 
     /** A linha que o fas.sh gera para o alvo (mesmo formato do `fas list`). */

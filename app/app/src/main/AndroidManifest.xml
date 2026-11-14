@@ -6,7 +6,13 @@
          As duas permissões são só do bloqueio de chamadas e SMS (aba Bloqueio) e ficam negadas
          até o dono ligar o recurso: RECEIVE_SMS dá o número real de quem mandou o SMS;
          READ_CONTACTS serve à regra "fora dos contatos" e faz o sistema mandar para a triagem
-         também as chamadas de quem está na agenda. -->
+         também as chamadas de quem está na agenda.
+         RECEIVE_SMS implica android.hardware.telephony como obrigatório; o bloqueio é opcional,
+         então o hardware é declarado como não exigido. -->
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
+
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 

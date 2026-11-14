@@ -93,10 +93,43 @@ data class SpeakerBoostConfig(
             15000f,  // 6200–15000 Hz: ar e extensão leve de agudos
         )
 
-        /** Curva alvo de DSP (MBC + PostEQ + Limiter + Loudness) para o volume atual ([volumeRatio] em 0f..1f). */
-        fun computeDsp(config: SpeakerBoostConfig, volumeRatio: Float): SpeakerDspTarget {
+        /**
+         * Recuo térmico pela temperatura que o próprio TFA9878 reporta (`curr_temperature_0`). Medido no M54
+         * em 2026-11-14, 60% de volume, 24 s: perfil Forte chegou a 104 °C ainda subindo; sem boost estabilizou
+         * em 62–63 °C. Acima de [THERMAL_ATTACK_C] o reforço recua rápido; só volta, devagar, abaixo de
+         * [THERMAL_RELEASE_C] (a faixa entre os dois segura o nível e evita o ganho "bombear").
+         */
+        const val THERMAL_RELEASE_C: Int = 70
+        const val THERMAL_ATTACK_C: Int = 80
+        const val THERMAL_CRITICAL_C: Int = 92
+        const val THERMAL_ATTACK_STEP: Float = 0.25f
+        const val THERMAL_CRITICAL_STEP: Float = 0.50f
+        const val THERMAL_RELEASE_STEP: Float = 0.05f
+
+        /**
+         * Próximo nível de recuo térmico (0 = reforço inteiro, 1 = sem reforço) a partir do nível [current] e
+         * da temperatura lida. Sem leitura ([ampTempC] null) o nível fica como está.
+         */
+        fun nextThermalBackoff(current: Float, ampTempC: Int?): Float {
+            val level: Float = current.coerceIn(0f, 1f)
+            val next: Float = when {
+                ampTempC == null -> level
+                ampTempC >= THERMAL_CRITICAL_C -> level + THERMAL_CRITICAL_STEP
+                ampTempC >= THERMAL_ATTACK_C -> level + THERMAL_ATTACK_STEP
+                ampTempC < THERMAL_RELEASE_C -> level - THERMAL_RELEASE_STEP
+                else -> level
+            }
+            return next.coerceIn(0f, 1f)
+        }
+
+        /**
+         * Curva alvo de DSP (MBC + PostEQ + Limiter + Loudness) para o volume atual ([volumeRatio] em 0f..1f).
+         * [thermalBackoff] (0f..1f, de [nextThermalBackoff]) escala o reforço de grave e o loudness até zero.
+         */
+        fun computeDsp(config: SpeakerBoostConfig, volumeRatio: Float, thermalBackoff: Float = 0f): SpeakerDspTarget {
             val safe = config.clamped()
             val vol = volumeRatio.coerceIn(0f, 1f)
+            val thermalScale = 1.0f - thermalBackoff.coerceIn(0f, 1f)
 
             val highVolProgress = if (safe.adaptiveVolume && vol > ADAPTIVE_KNEE) {
                 ((vol - ADAPTIVE_KNEE) / (1.0f - ADAPTIVE_KNEE)).coerceIn(0f, 1f)
@@ -109,13 +142,14 @@ data class SpeakerBoostConfig(
 
             // No volume alto, preserva grave perceptível sem saturar o DAC/TFA9878
             val bassScale = 1.0f - 0.52f * highVolProgress
-            val effectiveBass = safe.bassBoostDb * bassScale
+            val effectiveBass = safe.bassBoostDb * bassScale * thermalScale
             val strengthFraction = (effectiveBass / MAX_SAFE_BASS_DB).coerceIn(0f, 1f)
 
             val loudness = if (safe.adaptiveVolume) {
-                (safe.loudnessMb * (1.0f - highVolProgress)).roundToInt().coerceIn(0, MAX_SAFE_LOUDNESS_MB)
+                (safe.loudnessMb * (1.0f - highVolProgress) * thermalScale).roundToInt().coerceIn(0, MAX_SAFE_LOUDNESS_MB)
             } else {
-                (safe.loudnessMb * (1.0f - 0.45f * highVolProgress)).roundToInt().coerceIn(0, MAX_SAFE_LOUDNESS_MB)
+                (safe.loudnessMb * (1.0f - 0.45f * highVolProgress) * thermalScale)
+                    .roundToInt().coerceIn(0, MAX_SAFE_LOUDNESS_MB)
             }
 
             val bandsDb = FloatArray(M54_BAND_CUTOFFS_HZ.size)

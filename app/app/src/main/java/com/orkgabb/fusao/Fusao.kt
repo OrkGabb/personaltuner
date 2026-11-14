@@ -141,10 +141,18 @@ object FusaoBridge {
      * Alvos em vigor por jogo: `fusao fas list` (módulo >= 2.11.9) imprime a lista do fas-rs sem regravá-la; o
      * `fas gen` trocava o arquivo que o fas-rs vigia e ele recarregava a config a cada abertura da aba Jogos.
      */
-    suspend fun fasTargets(): Map<String, List<Int>> {
+    suspend fun fasTargets(): Map<String, List<Int>> = fasTargetsOrNull() ?: emptyMap()
+
+    /**
+     * Igual a [fasTargets], mas separa "não deu para ler" (null: sem CLI ou `fas list` falhou) de "nenhum jogo
+     * com alvo" (mapa vazio). Sem essa diferença uma leitura que falhou virava AUTO em todos os jogos.
+     */
+    suspend fun fasTargetsOrNull(): Map<String, List<Int>>? {
         val c = cli()
-        if (c.isEmpty()) return emptyMap()
-        return parseFasToml(RootShell.run("\"$c\" fas list 2>/dev/null").output)
+        if (c.isEmpty()) return null
+        val r = RootShell.run("\"$c\" fas list 2>/dev/null")
+        if (!r.isSuccess) return null
+        return parseFasToml(r.output)
     }
 
     /** Interpreta o retorno do CLI `fusao ramclean now` (exit 0 para ok/partial/noop; exit != 0 reservado para falha). */
@@ -492,8 +500,15 @@ val FAS_AUTO_STEPS = listOf(30, 45, 60, 90, 120)
 /** Jogo fora do FAS (`fusao fas target <pkg> off`, módulo >= 2.12.0): a CPU fica com o perfil. */
 const val FAS_CAP_OFF = 0
 
+/**
+ * "Sem limite" dentro do FAS: alvo único acima dos 120 Hz da tela do M54. Com alvo único o fas-rs solta a CPU
+ * abaixo de alvo - 10 (134 fps), e o jogo nunca passa de 120, então o FAS segue ligado mas nunca freia.
+ * Diferente de [FAS_CAP_OFF], que tira o jogo do FAS e deixa a CPU com o perfil.
+ */
+const val FAS_CAP_UNLIMITED = 144
+
 /** Limites de fps que o app oferece por jogo; null = automático, [FAS_CAP_OFF] = fora do FAS. */
-val FAS_CAP_PRESETS: List<Int?> = listOf(null, 30, 40, 45, 60, 90, 120, 144, FAS_CAP_OFF)
+val FAS_CAP_PRESETS: List<Int?> = listOf(null, 30, 40, 45, 60, 90, 120, FAS_CAP_UNLIMITED, FAS_CAP_OFF)
 
 /**
  * Lista do fas-rs para um jogo travado em [cap]: só o próprio limite. A escada abaixo dele (30,45,60) era uma
@@ -513,10 +528,22 @@ fun fasCapOf(targets: List<Int>?): Int? = when {
     else -> targets.last()
 }
 
-/** Texto do limite na aba Jogos: AUTO, OFF ou "60 FPS". */
+/**
+ * Próximo limite do ciclo a partir do limite em vigor [current] (o que o `fas list` devolveu, não o que a tela
+ * supõe). Limite fora dos presets (gravado à mão ou por outra versão) avança para o primeiro preset acima dele.
+ */
+fun nextFasCap(current: Int?): Int? {
+    val idx: Int = FAS_CAP_PRESETS.indexOf(current)
+    if (idx >= 0) return FAS_CAP_PRESETS[(idx + 1) % FAS_CAP_PRESETS.size]
+    val base: Int = current ?: return FAS_CAP_PRESETS.first()
+    return FAS_CAP_PRESETS.firstOrNull { it != null && it > base } ?: FAS_CAP_OFF
+}
+
+/** Texto do limite na aba Jogos: AUTO, OFF, SEM LIMITE ou "60 FPS". */
 fun fasCapLabel(cap: Int?): String = when (cap) {
     null -> "AUTO"
     FAS_CAP_OFF -> "OFF"
+    FAS_CAP_UNLIMITED -> "SEM LIMITE"
     else -> "$cap FPS"
 }
 

@@ -26,7 +26,10 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.orkgabb.fusao.MainActivity
 import com.orkgabb.fusao.R
+import java.io.FileDescriptor
+import java.io.PrintWriter
 import java.util.concurrent.Executor
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -46,6 +49,13 @@ class SpeakerBoostService : Service() {
     private var lastAppliedTarget: SpeakerDspTarget? = null
     private var lastNotificationText: String = ""
 
+    /** Resultado da última conferência da curva ([verifyApplied]): "" = o efeito tem o que foi pedido. */
+    private var lastCurveMismatch: String = ""
+
+    /** Última leitura de volta da curva (ou o desvio encontrado), para o `dumpsys` do serviço. */
+    @Volatile
+    private var lastCurveReport: String = ""
+
     private var modeListener: Any? = null
 
     private val idleReleaseRunnable = Runnable {
@@ -53,13 +63,33 @@ class SpeakerBoostService : Service() {
         refreshStateLocked(forceEvalPlayback = false)
     }
 
-    private val activeTickRunnable = object : Runnable {
-        override fun run() {
+    /**
+     * Reavaliação única (não periódica) para o que a plataforma não avisa por callback: áudio que só
+     * `isMusicActive` enxerga (cauda do buffer depois do stop, players AAudio sem PlayerBase) e, abaixo da
+     * API 31, a entrada em chamada. Com player rastreado pelo [playbackCallback] nada fica agendado.
+     */
+    private var untrackedRecheckDelayMs: Long = UNTRACKED_RECHECK_MIN_MS
+
+    private val untrackedRecheckRunnable = Runnable { evaluateAndApply(configs = null) }
+
+    /** Nível de recuo térmico em vigor (0 = reforço inteiro, 1 = sem reforço); ver [thermalWatchRunnable]. */
+    private var thermalBackoff: Float = 0f
+    private var lastAmpTempC: Int? = null
+
+    /**
+     * Malha térmica do TFA9878: lê a temperatura do amplificador e ajusta [thermalBackoff]. Só reaplica o DSP
+     * quando o nível muda; do contrário é uma leitura de sysfs. Só fica agendada na zona de risco
+     * ([thermalWatchNeeded]): em volume baixo e amplificador frio nada roda.
+     */
+    private val thermalWatchRunnable = Runnable {
+        val tempC: Int? = store.readAmpTelemetry().first
+        lastAmpTempC = tempC
+        val next: Float = SpeakerBoostConfig.nextThermalBackoff(thermalBackoff, tempC)
+        if (next != thermalBackoff) {
+            thermalBackoff = next
             evaluateAndApply(configs = null)
-            val rt = store.state.value.runtime
-            if (store.state.value.config.enabled && rt.effectsAttached) {
-                dspHandler.postDelayed(this, ACTIVE_POLL_MS)
-            }
+        } else {
+            scheduleThermalWatch(attached = dynamicsProcessing != null, volumeRatio = readMusicVolumeRatio())
         }
     }
 
@@ -88,6 +118,12 @@ class SpeakerBoostService : Service() {
 
     private val audioEventReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            // VOLUME_CHANGED sai para todo stream (toque, notificação, alarme): só o de mídia muda o DSP
+            if (intent?.action == ACTION_VOLUME_CHANGED &&
+                intent.getIntExtra(EXTRA_VOLUME_STREAM_TYPE, AudioManager.STREAM_MUSIC) != AudioManager.STREAM_MUSIC
+            ) {
+                return
+            }
             scheduleEvaluate(delayMs = 0L)
         }
     }
@@ -112,7 +148,13 @@ class SpeakerBoostService : Service() {
             audioManager.addOnModeChangedListener(executor, listener)
         }
 
-        contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, volumeObserver)
+        // só a chave do volume de mídia no alto-falante: observar Settings.System inteiro acordava o
+        // serviço a cada ajuste de brilho, rotação ou qualquer outra configuração do sistema
+        contentResolver.registerContentObserver(
+            Settings.System.getUriFor(SETTING_MEDIA_VOLUME_SPEAKER),
+            false,
+            volumeObserver,
+        )
 
         val filter = IntentFilter().apply {
             addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
@@ -196,13 +238,16 @@ class SpeakerBoostService : Service() {
         if (!evaluation.isSpeakerOnly) {
             // Garantia absoluta: fora do speaker (Bluetooth, USB, fone, chamada), zera imediatamente
             dspHandler.removeCallbacks(idleReleaseRunnable)
-            dspHandler.removeCallbacks(activeTickRunnable)
+            cancelUntrackedRecheck()
+            cancelThermalWatch()
             releaseEffects()
             publishRuntime(evaluation, target = null, attached = false, error = "")
             return
         }
 
         if (!evaluation.activePlayback) {
+            cancelUntrackedRecheck()
+            cancelThermalWatch()
             if (dynamicsProcessing != null || loudnessEnhancer != null) {
                 dspHandler.removeCallbacks(idleReleaseRunnable)
                 dspHandler.postDelayed(idleReleaseRunnable, IDLE_RELEASE_MS)
@@ -214,15 +259,59 @@ class SpeakerBoostService : Service() {
 
         dspHandler.removeCallbacks(idleReleaseRunnable)
         val volumeRatio = readMusicVolumeRatio()
-        val target = SpeakerBoostConfig.computeDsp(cfg, volumeRatio)
+        val target = SpeakerBoostConfig.computeDsp(cfg, volumeRatio, thermalBackoff)
         val error = applyEffects(target)
         val attached = (dynamicsProcessing != null || loudnessEnhancer != null) && error.isEmpty()
 
         publishRuntime(evaluation, target, attached, error)
 
-        dspHandler.removeCallbacks(activeTickRunnable)
-        if (attached) {
-            dspHandler.postDelayed(activeTickRunnable, ACTIVE_POLL_MS)
+        scheduleUntrackedRecheck(attached = attached, playbackTracked = evaluation.playbackTracked)
+        scheduleThermalWatch(attached = attached, volumeRatio = volumeRatio)
+    }
+
+    /** Sem áudio no alto-falante o amplificador desliga (reporta 25 °C): a malha para e o recuo zera. */
+    private fun cancelThermalWatch() {
+        dspHandler.removeCallbacks(thermalWatchRunnable)
+        thermalBackoff = 0f
+    }
+
+    /**
+     * Zona de risco: volume a partir de [THERMAL_WATCH_MIN_VOLUME], amplificador já morno ou recuo ainda em
+     * vigor. Medido no M54: a 33% de volume o Forte fica em ~50 °C; a 60% passa de 100 °C em 20 s.
+     */
+    private fun thermalWatchNeeded(volumeRatio: Float): Boolean =
+        volumeRatio >= THERMAL_WATCH_MIN_VOLUME ||
+            thermalBackoff > 0f ||
+            (lastAmpTempC ?: 0) >= THERMAL_WATCH_MIN_TEMP_C
+
+    private fun scheduleThermalWatch(attached: Boolean, volumeRatio: Float) {
+        dspHandler.removeCallbacks(thermalWatchRunnable)
+        if (attached && thermalWatchNeeded(volumeRatio)) {
+            dspHandler.postDelayed(thermalWatchRunnable, THERMAL_WATCH_MS)
+        }
+    }
+
+    private fun cancelUntrackedRecheck() {
+        dspHandler.removeCallbacks(untrackedRecheckRunnable)
+        untrackedRecheckDelayMs = UNTRACKED_RECHECK_MIN_MS
+    }
+
+    /**
+     * Player rastreado pelo [playbackCallback]: o stop chega por callback e nada é agendado. Sem player
+     * rastreado, uma reavaliação com espera crescente (1 s -> 30 s) até o áudio parar. Abaixo da API 31 não
+     * existe callback de modo de áudio, então a espera fica no mínimo para soltar o DSP ao entrar em chamada.
+     */
+    private fun scheduleUntrackedRecheck(attached: Boolean, playbackTracked: Boolean) {
+        dspHandler.removeCallbacks(untrackedRecheckRunnable)
+        if (!attached || (playbackTracked && HAS_MODE_CALLBACK)) {
+            untrackedRecheckDelayMs = UNTRACKED_RECHECK_MIN_MS
+            return
+        }
+        dspHandler.postDelayed(untrackedRecheckRunnable, untrackedRecheckDelayMs)
+        untrackedRecheckDelayMs = if (HAS_MODE_CALLBACK) {
+            (untrackedRecheckDelayMs * 2L).coerceAtMost(UNTRACKED_RECHECK_MAX_MS)
+        } else {
+            UNTRACKED_RECHECK_MIN_MS
         }
     }
 
@@ -239,6 +328,7 @@ class SpeakerBoostService : Service() {
     ) {
         val volumePct = (readMusicVolumeRatio() * 100f).roundToInt()
         val (ampTemp, ampExc) = store.readAmpTelemetry()
+        lastAmpTempC = ampTemp
         val effBass = if (attached && target != null) target.bandGainsDb[2] else 0f
         val effLoud = if (attached && target != null) target.loudnessMb else 0
 
@@ -263,6 +353,8 @@ class SpeakerBoostService : Service() {
             evaluation.route == SpeakerOutputRoute.BLUETOOTH -> "Pausado · Bluetooth detectado"
             evaluation.route == SpeakerOutputRoute.EXTERNAL -> "Pausado · Fone/saída externa"
             evaluation.route == SpeakerOutputRoute.IN_CALL -> "Pausado · Chamada em curso"
+            attached && thermalBackoff > 0f ->
+                "Speaker ativo · +${"%.1f".format(effBass)} dB · vol $volumePct% · recuo térmico (amp ${ampTemp ?: "?"} °C)"
             attached -> "Speaker ativo · +${"%.1f".format(effBass)} dB · vol $volumePct%"
             else -> "Armado para speaker · aguardando áudio"
         }
@@ -329,6 +421,7 @@ class SpeakerBoostService : Service() {
 
                 le.setTargetGain(target.loudnessMb)
                 lastAppliedTarget = target
+                lastCurveMismatch = verifyApplied(dp, le, target)
             }
 
             if (!dp.enabled) dp.enabled = true
@@ -341,12 +434,81 @@ class SpeakerBoostService : Service() {
             if (!dp.hasControl()) {
                 Log.w(TAG, "Controle do DynamicsProcessing cedido a outro app")
             }
-            ""
+            lastCurveMismatch
         } catch (t: Throwable) {
             Log.e(TAG, "Falha ao aplicar DSP na sessão 0", t)
             releaseEffects()
             t.message ?: "falha ao aplicar DSP"
         }
+    }
+
+    /**
+     * Confere a curva pelo resultado, não pelo pedido: lê de volta do motor de efeitos (sessão 0) o que ficou
+     * valendo em cada canal e compara com o alvo. Devolve "" quando tudo bate, senão o primeiro desvio. Roda
+     * só quando o alvo muda (troca de volume/preset), nunca por frame de áudio.
+     */
+    private fun verifyApplied(dp: DynamicsProcessing, le: LoudnessEnhancer, target: SpeakerDspTarget): String {
+        val eqBands: Int = target.bandGainsDb.size
+        val mbcBands: Int = target.mbcBands.size
+        val readBack = StringBuilder(160)
+        for (channel in 0 until CHANNEL_COUNT) {
+            val eq: DynamicsProcessing.Eq = dp.getPostEqByChannelIndex(channel)
+            for (band in 0 until eqBands) {
+                val read: Float = eq.getBand(band).gain
+                if (channel == 0) readBack.append(CURVE_FORMAT.format(read)).append(' ')
+                if (abs(read - target.bandGainsDb[band]) > CURVE_TOLERANCE_DB) {
+                    return curveMismatch("EQ banda ${band + 1} canal $channel", read, target.bandGainsDb[band])
+                }
+            }
+            val mbc: DynamicsProcessing.Mbc = dp.getMbcByChannelIndex(channel)
+            for (band in 0 until mbcBands) {
+                val read: Float = mbc.getBand(band).threshold
+                if (abs(read - target.mbcBands[band].thresholdDb) > CURVE_TOLERANCE_DB) {
+                    return curveMismatch("compressor banda ${band + 1} canal $channel", read, target.mbcBands[band].thresholdDb)
+                }
+            }
+            val inputGain: Float = dp.getInputGainByChannelIndex(channel)
+            if (abs(inputGain - target.inputGainDb) > CURVE_TOLERANCE_DB) {
+                return curveMismatch("ganho de entrada canal $channel", inputGain, target.inputGainDb)
+            }
+            val limiterThreshold: Float = dp.getLimiterByChannelIndex(channel).threshold
+            if (abs(limiterThreshold - target.limiterThresholdDb) > CURVE_TOLERANCE_DB) {
+                return curveMismatch("limiter canal $channel", limiterThreshold, target.limiterThresholdDb)
+            }
+        }
+        val loudness: Float = le.targetGain
+        if (abs(loudness - target.loudnessMb.toFloat()) > LOUDNESS_TOLERANCE_MB) {
+            Log.w(TAG, "curva: loudness leu $loudness mB, pedido ${target.loudnessMb} mB")
+            return "Curva não aplicada: loudness leu ${loudness.roundToInt()} mB, pedido ${target.loudnessMb} mB"
+        }
+        val report = "curva conferida (lida do efeito): eq_db=[${readBack.trim()}] " +
+            "entrada=${dp.getInputGainByChannelIndex(0)} limiter=${dp.getLimiterByChannelIndex(0).threshold} " +
+            "loudness_mb=${loudness.roundToInt()}"
+        lastCurveReport = report
+        Log.i(TAG, report)
+        return ""
+    }
+
+    private fun curveMismatch(what: String, read: Float, wanted: Float): String {
+        val message = "Curva não aplicada: $what leu ${CURVE_FORMAT.format(read)} dB, " +
+            "pedido ${CURVE_FORMAT.format(wanted)} dB"
+        lastCurveReport = message
+        Log.w(TAG, message)
+        return message
+    }
+
+    /**
+     * `dumpsys activity service com.orkgabb.fusao/.misc.SpeakerBoostService`: estado real do DSP sem depender
+     * do logcat (o M54 descarta logs abaixo de WARN).
+     */
+    override fun dump(fd: FileDescriptor?, writer: PrintWriter, args: Array<out String>?) {
+        val runtime: SpeakerBoostRuntime = store.state.value.runtime
+        writer.println("speaker_boost route=${runtime.route} attached=${runtime.effectsAttached} " +
+            "playback=${runtime.activePlayback} vol=${runtime.volumePercent}%")
+        writer.println("amp temp_c=${runtime.ampTempC} excursion_max_mm=${runtime.ampExcursionMaxMm}")
+        writer.println("termico recuo=$thermalBackoff ultima_temp_c=$lastAmpTempC")
+        writer.println(lastCurveReport.ifEmpty { "curva: nenhuma aplicada desde o início do serviço" })
+        writer.println("erro=${runtime.lastError.ifEmpty { "-" }}")
     }
 
     private fun ensureDynamicsProcessing(): DynamicsProcessing {
@@ -393,6 +555,7 @@ class SpeakerBoostService : Service() {
 
     private fun releaseEffects() {
         lastAppliedTarget = null
+        lastCurveMismatch = ""
         runCatching {
             dynamicsProcessing?.apply {
                 enabled = false
@@ -411,19 +574,17 @@ class SpeakerBoostService : Service() {
     }
 
     private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(NotificationManager::class.java)
-            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-                val ch = NotificationChannel(
-                    CHANNEL_ID,
-                    "Speaker Boost (M54)",
-                    NotificationManager.IMPORTANCE_LOW,
-                ).apply {
-                    description = "DSP exclusivo do alto-falante interno; desliga em Bluetooth e fones."
-                    setShowBadge(false)
-                }
-                nm.createNotificationChannel(ch)
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            val ch = NotificationChannel(
+                CHANNEL_ID,
+                "Speaker Boost (M54)",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "DSP exclusivo do alto-falante interno; desliga em Bluetooth e fones."
+                setShowBadge(false)
             }
+            nm.createNotificationChannel(ch)
         }
     }
 
@@ -471,8 +632,20 @@ class SpeakerBoostService : Service() {
         private const val GLOBAL_SESSION = 0
         private const val CHANNEL_COUNT = 2
         private const val IDLE_RELEASE_MS = 2500L
-        private const val ACTIVE_POLL_MS = 1000L
+        private const val CURVE_TOLERANCE_DB = 0.05f
+        private const val LOUDNESS_TOLERANCE_MB = 1.0f
+        private const val CURVE_FORMAT = "%.2f"
+        private const val THERMAL_WATCH_MS = 2000L
+        private const val THERMAL_WATCH_MIN_VOLUME = 0.40f
+        private const val THERMAL_WATCH_MIN_TEMP_C = 60
+        private const val UNTRACKED_RECHECK_MIN_MS = 1000L
+        private const val UNTRACKED_RECHECK_MAX_MS = 30_000L
+        private val HAS_MODE_CALLBACK: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         private const val ACTION_VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION"
+        private const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
+
+        /** Chave do AudioService para o volume de mídia no alto-falante (`volume_music` + sufixo do device). */
+        private const val SETTING_MEDIA_VOLUME_SPEAKER = "volume_music_speaker"
         private const val ACTION_STOP = "com.orkgabb.fusao.misc.SPEAKER_BOOST_STOP"
         private const val ACTION_REFRESH = "com.orkgabb.fusao.misc.SPEAKER_BOOST_REFRESH"
 

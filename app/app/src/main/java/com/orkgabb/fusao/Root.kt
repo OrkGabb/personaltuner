@@ -17,9 +17,11 @@ object RootShell {
 
     init {
         Shell.enableVerboseLogging = false
+        // stderr junto do stdout em todo comando. No libsu 6 o FLAG_REDIRECT_STDERR (deprecado) só liga este
+        // mesmo campo ao montar o shell; ligá-lo direto dá o mesmo redirecionamento sem a API deprecada.
+        Shell.enableLegacyStderrRedirection = true
         Shell.setDefaultBuilder(
             Shell.Builder.create()
-                .setFlags(Shell.FLAG_REDIRECT_STDERR)
                 // a ação mais longa (ramclean now, bugreport) leva poucos segundos;
                 // 60s cobre tudo sem travar a UI (tudo roda em Dispatchers.IO).
                 .setTimeout(60)

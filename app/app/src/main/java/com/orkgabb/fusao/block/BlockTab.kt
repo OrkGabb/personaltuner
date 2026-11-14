@@ -28,7 +28,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -107,8 +106,9 @@ fun BlockTab(
     }
     var draft: RuleDraft? by remember { mutableStateOf(null) }
 
-    val events: List<BlockEvent> by produceState(initialValue = emptyList(), store, logVersion) {
-        value = withContext(Dispatchers.IO) { store.readLog(LOG_SHOWN) }
+    var events: List<BlockEvent> by remember { mutableStateOf(emptyList()) }
+    LaunchedEffect(store, logVersion) {
+        events = withContext(Dispatchers.IO) { store.readLog(LOG_SHOWN) }
     }
     val canGrantByRoot: Boolean = rooted && moduleInstalled
 

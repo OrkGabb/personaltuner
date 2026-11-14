@@ -9,7 +9,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -121,7 +120,9 @@ import com.orkgabb.fusao.ui.StatusPulseDot
 import com.orkgabb.fusao.ui.TacticalButton
 import com.orkgabb.fusao.ui.TacticalPanel
 import com.orkgabb.fusao.ui.TelemetryPill
+import com.orkgabb.fusao.ui.fixedTextSize
 import com.orkgabb.fusao.ui.highlightTelemetryLine
+import com.orkgabb.fusao.ui.rememberBusySpinAngle
 
 private data class FlagSpec(
     val cmd: String,
@@ -352,16 +353,8 @@ class MainActivity : ComponentActivity() {
             rawVersion.contains("staged:") || rawVersion.contains("|")
         }
         val isRefreshing = state.isBusy(Busy.REFRESH)
-        val spinTransition = rememberInfiniteTransition(label = "refreshSpin")
-        val spinAngle by spinTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 850, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart,
-            ),
-            label = "refreshAngle",
-        )
+        // só existe transição enquanto atualiza: criada sem condição ela pedia frames com a tela parada
+        val spinAngle = rememberBusySpinAngle(active = isRefreshing)
 
         val statusDotColor = when {
             !state.rooted -> FusaoPalette.CrimsonCore
@@ -489,7 +482,7 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier
                                 .size(14.dp)
                                 .graphicsLayer {
-                                    rotationZ = if (isRefreshing) spinAngle else 0f
+                                    rotationZ = spinAngle.value
                                 },
                         )
                         Text(
@@ -529,11 +522,19 @@ class MainActivity : ComponentActivity() {
                 DockTabSpec("Log", FusaoNavIcon.LOG, null),
             )
         }
-        val dockScroll = rememberScrollState()
-        LaunchedEffect(selectedTab) {
-            val approxStepPx = (selectedTab - 2).coerceAtLeast(0) * 180
-            dockScroll.animateScrollTo(approxStepPx.coerceAtMost(dockScroll.maxValue))
-        }
+        // As 7 abas dividem a largura da tela por igual (weight): a faixa rolável de 66 dp por aba somava
+        // 502 dp e cortava Misc/Log em 1080x2400 @450 dpi (384 dp). Os textos do dock usam tamanho fixo em dp
+        // (fixedTextSize) para um font_scale > 1.0 não voltar a cortar os rótulos.
+        val dockLabelStyle = MaterialTheme.typography.labelSmall.copy(
+            fontSize = fixedTextSize(9.5.dp),
+            lineHeight = fixedTextSize(12.5.dp),
+            letterSpacing = 0.sp,
+        )
+        val dockBadgeStyle = MaterialTheme.typography.labelSmall.copy(
+            fontSize = fixedTextSize(8.dp),
+            lineHeight = fixedTextSize(10.dp),
+            letterSpacing = 0.sp,
+        )
 
         Surface(
             color = FusaoPalette.VoidBlack.copy(alpha = 0.96f),
@@ -544,9 +545,8 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .horizontalScroll(dockScroll)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 tabs.forEachIndexed { idx, spec ->
@@ -581,7 +581,7 @@ class MainActivity : ComponentActivity() {
 
                     Box(
                         modifier = Modifier
-                            .width(66.dp)
+                            .weight(1f)
                             .graphicsLayer {
                                 scaleX = scale
                                 scaleY = scale
@@ -593,7 +593,7 @@ class MainActivity : ComponentActivity() {
                                 indication = null,
                                 onClick = { onSelectTab(idx) },
                             )
-                            .padding(vertical = 6.dp, horizontal = 2.dp),
+                            .padding(vertical = 6.dp, horizontal = 1.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(
@@ -609,7 +609,7 @@ class MainActivity : ComponentActivity() {
                             )
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 modifier = Modifier.height(19.dp),
                             ) {
                                 FusaoVectorGlyph(
@@ -620,24 +620,22 @@ class MainActivity : ComponentActivity() {
                                 if (spec.badge != null) {
                                     Text(
                                         text = spec.badge,
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontSize = 8.sp,
-                                            lineHeight = 10.sp,
-                                            letterSpacing = 0.2.sp,
-                                        ),
+                                        style = dockBadgeStyle,
                                         color = if (selected) FusaoPalette.VoidBlack else accentColor,
                                         maxLines = 1,
                                         softWrap = false,
+                                        overflow = TextOverflow.Clip,
                                         modifier = Modifier
+                                            .weight(1f, fill = false)
                                             .clip(CircleShape)
                                             .background(if (selected) accentColor else FusaoPalette.ElevatedHud)
-                                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                                            .padding(horizontal = 3.dp, vertical = 1.dp),
                                     )
                                 }
                             }
                             Text(
                                 text = spec.label,
-                                style = MaterialTheme.typography.labelSmall.copy(
+                                style = dockLabelStyle.copy(
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                 ),
                                 color = itemColor,
@@ -1625,8 +1623,10 @@ class MainActivity : ComponentActivity() {
         var showAllCatalog by rememberSaveable { mutableStateOf(false) }
         val busy = state.anyBusy()
 
-        LaunchedEffect(state.rooted) {
-            if (state.rooted && state.games.isEmpty()) {
+        // Sempre relê ao abrir a aba: a gamelist já vem preenchida do bootstrap, e condicionar a leitura a
+        // "lista vazia" deixava os alvos do FAS sem carregar (todo jogo aparecia como AUTO).
+        LaunchedEffect(state.rooted, state.moduleInstalled) {
+            if (state.rooted && state.moduleInstalled) {
                 vm.loadGames()
             }
         }
@@ -1854,16 +1854,21 @@ class MainActivity : ComponentActivity() {
                                             )
                                         }
                                         if (state.status.fas && state.status.fasSupported) {
+                                            // sem a leitura do `fas list` o limite é desconhecido: não mostra AUTO
+                                            // nem aceita toque, para o ciclo nunca partir de uma base inventada
+                                            val fasKnown = state.fasTargetsLoaded
                                             val fasCap = fasCapOf(state.fasTargets[pkg])
                                             val isFasBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "fas_target:$pkg"
-                                            val fasOff = fasCap == FAS_CAP_OFF
+                                            val fasOff = fasKnown && fasCap == FAS_CAP_OFF
                                             TelemetryPill(
-                                                text = if (isFasBusy) "FAS · …" else "FAS · ${fasCapLabel(fasCap)}",
-                                                color = if (fasOff) FusaoPalette.TextMuted else FusaoPalette.MintPulse,
-                                                filled = fasCap != null && !fasOff,
+                                                text = if (isFasBusy || !fasKnown) "FAS · …" else "FAS · ${fasCapLabel(fasCap)}",
+                                                color = if (fasOff || !fasKnown) FusaoPalette.TextMuted else FusaoPalette.MintPulse,
+                                                filled = fasKnown && fasCap != null && !fasOff,
                                                 modifier = Modifier
                                                     .clip(CircleShape)
-                                                    .clickable(enabled = state.rooted && !busy) { vm.cycleFasCap(pkg) },
+                                                    .clickable(enabled = state.rooted && !busy && fasKnown) {
+                                                        vm.cycleFasCap(pkg)
+                                                    },
                                             )
                                         }
                                     }

@@ -58,6 +58,47 @@ class SpeakerBoostConfigTest {
         assertTrue(fullVol.limiterThresholdDb < midVol.limiterThresholdDb)
     }
 
+    /**
+     * Recuo térmico do TFA9878, alimentado com a série medida no M54 (Forte, 60% de volume, leitura a cada 2 s:
+     * chegou a 104 °C). Controle negativo: sem recuo (nível 0) a curva é a de antes, com o pico inteiro.
+     */
+    @Test
+    fun thermalBackoffFollowsTheMeasuredAmpTemperature() {
+        // os ganhos são campos próprios da config (o preset é só o rótulo): Forte = +5,8 dB / 800 mB
+        val cfg = SpeakerBoostConfig(
+            enabled = true,
+            preset = SpeakerPreset.STRONG,
+            adaptiveVolume = true,
+            bassBoostDb = SpeakerPreset.STRONG.bassBoostDb,
+            loudnessMb = SpeakerPreset.STRONG.loudnessMb,
+        )
+        val untouched = SpeakerBoostConfig.computeDsp(cfg, 0.60f)
+        assertEquals(5.8f, untouched.bandGainsDb[2], 0.001f)
+        assertEquals(800, untouched.loudnessMb)
+        assertEquals(untouched, SpeakerBoostConfig.computeDsp(cfg, 0.60f, thermalBackoff = 0f))
+
+        var level = 0f
+        for (tempC in intArrayOf(51, 81, 88, 89, 95)) {
+            level = SpeakerBoostConfig.nextThermalBackoff(level, tempC)
+        }
+        // 51 não mexe; 81, 88 e 89 sobem 0,25 cada; 95 (crítico) fecha em 1
+        assertEquals(1.0f, level, 0.001f)
+        val backedOff = SpeakerBoostConfig.computeDsp(cfg, 0.60f, thermalBackoff = level)
+        assertEquals(0.0f, backedOff.bandGainsDb[2], 0.001f)
+        assertEquals(0, backedOff.loudnessMb)
+        assertTrue("o corte abaixo de 75 Hz continua com recuo total", backedOff.bandGainsDb[0] < 0f)
+
+        // faixa 70–79 °C segura o nível; abaixo de 70 devolve devagar; sem leitura não mexe
+        assertEquals(1.0f, SpeakerBoostConfig.nextThermalBackoff(level, 75), 0.001f)
+        assertEquals(0.95f, SpeakerBoostConfig.nextThermalBackoff(level, 62), 0.001f)
+        assertEquals(0.5f, SpeakerBoostConfig.nextThermalBackoff(0.5f, null), 0.001f)
+        assertEquals(0.0f, SpeakerBoostConfig.nextThermalBackoff(0f, 62), 0.001f)
+
+        val half = SpeakerBoostConfig.computeDsp(cfg, 0.60f, thermalBackoff = 0.5f)
+        assertEquals(2.9f, half.bandGainsDb[2], 0.001f)
+        assertEquals(400, half.loudnessMb)
+    }
+
     @Test
     fun outputGuardStrictlyIsolatesSpeakerAndBlocksBluetooth() {
         assertEquals(
