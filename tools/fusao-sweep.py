@@ -104,6 +104,8 @@ def scan():
             fails.append(f"{rel}: thermal-spoof extreme2/lite2 banido")
         if "thermal_zone" in t and "mount" in t:
             fails.append(f"{rel}: bind-mount thermal (spoof)")
+        if "sys/kernel/ems" in t:
+            fails.append(f"{rel}: acesso proibido a /sys/kernel/ems (Regra n.1 — causa reboot)")
 
 SINGLE_BANNED = ["encored", "encore_profiler", "encore_utility", "binder_resolver.apk",
                  "gpu_max", "gpu_balance", "gpu_eco", "gpu_reset", "balance1", "balance2",

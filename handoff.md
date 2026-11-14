@@ -10,6 +10,10 @@ ADB WiFi + WSL com NDK + Python. Celular: Galaxy M54 (SM-M546B, Exynos 1380, Mal
 OneUI 8.5/Android 16, temp-root via KernelSU, soft-reboot preserva root; ADB WiFi com porta
 ROTATIVA — sempre confirmar a porta antes, `su` sem prompt).
 
+## REGRA Nº 1 DO PROJETO (OBRIGATÓRIA)
+- **NUNCA ler, listar, tocar ou escrever em `/sys/kernel/ems` (nem `cat /sys/kernel/ems/*`, `ls`, `grep`, etc.).**
+- Motivo: no Galaxy M54 (Exynos 1380), acessar nós de `/sys/kernel/ems` dispara Kernel Panic / reset pelo watchdog imediatamente (confirmado novamente em teste ao vivo; causa mais antiga de reboot do projeto). Bloqueado também em `tools/fusao-sweep.py`.
+
 ## 1. Material de referência (somente leitura — nada disso executa no aparelho)
 
 **Pacote de referência A v22.5** (cópia em `C:\Users\gabri\Downloads\test\_referencia\Stellar-v22.5-testing1.1-101026.zip`,

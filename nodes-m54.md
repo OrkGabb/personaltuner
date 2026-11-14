@@ -105,6 +105,7 @@ o que sobrevive do `core.cpp` são as **funções de medição**, não a busca. 
 | `thermal/extreme2` + `lite2` (ELF) | **BANIDOS — adulteração de sensores térmicos.** `extreme2` deu bind-mount de arquivos em 50+ nós (`temp`, `trip_point_*`, `battery/temp`: 30000/250 flat, `/proc/mounts` provou). Cega o step_wise = risco de hardware. Removido ao vivo (`unspoof-thermal.sh`, 53 umounts, sensores 39–42°C de volta). `lite2` tem `mount/umount2/thermal_zone` nas strings = mesma família, nunca executar |
 | `thermal_guard.sh` (PUCTuner) | Único fail-safe térmico da fusão (histerese real, sem adulteração). Adotar intacto |
 | `$MOD` em `perf1.sh` | Bug: `export MOD` não existe → `gpu_max` nunca executava (kill-list Fase 7) |
+| `/sys/kernel/ems/*` | **REGRA Nº 1 — PROIBIDO LER OU ESCREVER.** Qualquer acesso/leitura (ex: `cat /sys/kernel/ems/*`) causa reboot imediato neste Exynos 1380 (reconfirmado ao vivo em 2026-11-13; causa histórica desde o início do projeto). Bloqueado em `tools/fusao-sweep.py` |
 
 Teto do P4 = `cpuinfo_max_freq` 2400000 (topo de `scaling_available_frequencies`, lido 2026-10-23);
 o antigo "teto rígido 1824000" era errado (o `game-tetos` mediu 2400000 segurando; o térmico da

@@ -917,6 +917,8 @@ sweep_run && ok "sweep ignora rm -rf comentado" || bad "sweep ignora rm -rf come
 # o CLI não tem sufixo: era tratado como binário e pulava as checagens de texto
 sweep_copy; echo 'X=202.155.143.189' >> "$FAKE/swp/system/bin/fusao"
 sweep_run && bad "sweep confere o CLI sem sufixo" || ok "sweep confere o CLI sem sufixo"
+sweep_copy; echo 'cat /sys/kernel/ems/mode' >> "$FAKE/swp/fusao/perf.sh"
+sweep_run && bad "sweep bloqueia acesso a /sys/kernel/ems" || ok "sweep bloqueia acesso a /sys/kernel/ems"
 # build: self-check antes de gravar (customize sem fas.sh = rc!=0 e nenhum zip no disco)
 sweep_copy; sed -i 's#fusao/fas\.sh#fusao/FAS_X#g' "$FAKE/swp/customize.sh"; rm -f "$FAKE/b.zip"
 python3 "$ROOT/tools/fusao-build.py" --stage "$FAKE/swp" --out "$FAKE/b.zip" > /dev/null 2>&1 && bad "build self-check falho nao grava zip" || {
