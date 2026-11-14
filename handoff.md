@@ -55,7 +55,9 @@ decisão). Detalhes ao vivo em `status.md`.
 `/data/adb/modules/fusao/`), com migração automática no `customize.sh` apagando resíduos antigos
 de `/data/adb/modules/encore/` sem tocar em `/data/adb/fusao/`. O `NOTICE.md` (em `fusao-v2.0/`)
 mantém exclusivamente o aviso GNU GPL v3.0 do binário agregado `system/bin/fas-rs` (fork M54,
-fonte/patches em `tools/fas-rs-m54/`).
+fonte/patches em `tools/fas-rs-m54/`). No boot (`fusao-v2.0/service.sh`), o módulo também define
+`zram0` como **`lz4` padrão** (mantendo intactos `4 GiB` e `max_comp_streams`, sem troca dinâmica
+em jogo; fallback transiente tenta recuperação automática `30s/60s/120s`, ver `nodes-m54.md`).
 
 ## 3. Como trabalhar comigo
 

@@ -1590,6 +1590,78 @@ _migrc=$?
 [ "$(readlink "$MIG/adb/ksu/bin/fusao" 2>/dev/null)" = "$MIG/adb/modules/fusao/system/bin/fusao" ] && ok "symlink ksu aponta para modules/fusao" || bad "symlink ksu aponta para modules/fusao"
 [ -f "$MIG/mod/system/bin/fusaod" ] && [ -f "$MIG/mod/fusao/tune.sh" ] && [ ! -e "$MIG/mod/action.sh" ] && ok "customize KSU extrai tudo e remove action.sh" || bad "customize KSU extrai tudo e remove action.sh"
 
+# 21) service.sh setup_zram_lz4: preserva 4 GB e streams, idempotente, fallback seguro e recuperacao retry
+ZR="$FAKE/zr"; mkdir -p "$ZR/bin" "$ZR/sys" "$ZR/fusao"
+sed -n '/^setup_zram_lz4()/,/^}/p;/^zram_lz4_boot_ensure()/,/^}/p' "$STAGE/service.sh" > "$ZR/fn.sh"
+cat > "$ZR/bin/swapoff" <<'ZEOF'
+#!/bin/sh
+if [ -f "$ZR/fail_swapoff_once" ]; then
+  rm -f "$ZR/fail_swapoff_once"
+  exit 1
+fi
+[ -f "$ZR/fail_swapoff" ] && exit 1
+echo "swapoff $1" >> "$ZR/calls"
+ZEOF
+cat > "$ZR/bin/mkswap" <<'ZEOF'
+#!/bin/sh
+echo "mkswap $1" >> "$ZR/calls"
+ZEOF
+cat > "$ZR/bin/swapon" <<'ZEOF'
+#!/bin/sh
+if [ -f "$ZR/fail_swapon_lz4" ] && grep -qx "lz4" "$ZR/sys/comp_algorithm" 2>/dev/null; then
+  exit 1
+fi
+echo "swapon $1 $(tr -d '\n' < "$ZR/sys/comp_algorithm" 2>/dev/null)" >> "$ZR/calls"
+ZEOF
+chmod +x "$ZR/bin/"*
+zr_reset_mock() {
+  : > "$ZR/calls"; : > "$ZR/fusao/fusao.log"; : > "$ZR/fusao/game-active.txt"
+  rm -f "$ZR/fail_swapoff" "$ZR/fail_swapoff_once" "$ZR/fail_swapon_lz4" "$ZR/fusao/disable"
+  printf 'lzo [lzo-rle] lz4 zstd\n' > "$ZR/sys/comp_algorithm"
+  printf '4294967296\n' > "$ZR/sys/disksize"
+  printf '8\n' > "$ZR/sys/max_comp_streams"
+  printf '0\n' > "$ZR/sys/reset"
+  printf '/dev/block/fakezram0 partition 4194300 0 -2\n' > "$ZR/swaps"
+}
+zr_run() {
+  PATH="$ZR/bin:$PATH" ZR="$ZR" FUSAO_DIR="$ZR/fusao" \
+    ZRAM_SYS="$ZR/sys" ZRAM_DEV="/dev/block/fakezram0" ZRAM_SWAPS="$ZR/swaps" ZRAM_WAIT_S=0 \
+    ZRAM_RETRY_DELAYS="${ZRAM_RETRY_DELAYS:-0 0}" \
+    sh -c ". \"\$ZR/fn.sh\"; ${1:-setup_zram_lz4}"
+}
+zr_reset_mock; zr_run
+_zr_rc=$?
+[ "$_zr_rc" = 0 ] && [ "$(cat "$ZR/sys/comp_algorithm")" = "lz4" ] && [ "$(cat "$ZR/sys/disksize")" = "4294967296" ] && [ "$(cat "$ZR/sys/max_comp_streams")" = "8" ] && grep -q "swapon /dev/block/fakezram0 lz4" "$ZR/calls" && ok "zram lz4 boot preserva 4GB+streams e remonta" || bad "zram lz4 boot preserva 4GB+streams e remonta (rc=$_zr_rc)"
+grep -q "comp_algorithm=lz4 (disksize=4294967296 streams=8)" "$ZR/fusao/fusao.log" && ok "zram lz4 loga disksize 4GB" || bad "zram lz4 loga disksize 4GB"
+# idempotente quando ja esta em [lz4]
+: > "$ZR/calls"; printf 'lzo lzo-rle [lz4] zstd\n' > "$ZR/sys/comp_algorithm"
+zr_run
+[ "$?" = 0 ] && [ ! -s "$ZR/calls" ] && ok "zram idempotente com [lz4] ativo" || bad "zram idempotente com [lz4] ativo"
+# fallback 1: swapoff falha -> nao reseta nem altera zram0
+zr_reset_mock; : > "$ZR/fail_swapoff"
+zr_run >/dev/null 2>&1
+_zr_rc=$?
+[ "$_zr_rc" = 1 ] && [ "$(cat "$ZR/sys/reset")" = "0" ] && grep -q '\[lzo-rle\]' "$ZR/sys/comp_algorithm" && [ "$(cat "$ZR/sys/disksize")" = "4294967296" ] && grep -q "swapoff falhou" "$ZR/fusao/fusao.log" && ok "zram fallback swapoff preserva stock sem reset" || bad "zram fallback swapoff preserva stock sem reset"
+# fallback 1b: recuperacao automatica por retry volta ao padrao lz4 quando swapoff normaliza
+zr_reset_mock; : > "$ZR/fail_swapoff_once"
+zr_run zram_lz4_boot_ensure >/dev/null 2>&1
+_zr_rc=$?
+[ "$_zr_rc" = 0 ] && [ "$(cat "$ZR/sys/comp_algorithm")" = "lz4" ] && [ "$(cat "$ZR/sys/disksize")" = "4294967296" ] && grep -q "swapoff falhou" "$ZR/fusao/fusao.log" && grep -q "comp_algorithm=lz4" "$ZR/fusao/fusao.log" && ok "zram retry recupera lz4 apos fallback transitorio" || bad "zram retry recupera lz4 apos fallback transitorio (rc=$_zr_rc)"
+# retry pula enquanto houver jogo ativo em game-active.txt
+zr_reset_mock; : > "$ZR/fail_swapoff_once"; printf 'com.meu.jogo\n' > "$ZR/fusao/game-active.txt"
+zr_run zram_lz4_boot_ensure >/dev/null 2>&1
+_zr_rc=$?
+[ "$_zr_rc" = 1 ] && [ ! -s "$ZR/calls" ] && grep -q '\[lzo-rle\]' "$ZR/sys/comp_algorithm" && ok "zram retry nao roda durante jogo ativo" || bad "zram retry nao roda durante jogo ativo"
+# fallback 2: swapon falha com lz4 -> volta para lzo-rle (rc 2 = erro duro, nao fica em loop)
+zr_reset_mock; : > "$ZR/fail_swapon_lz4"
+zr_run zram_lz4_boot_ensure >/dev/null 2>&1
+_zr_rc=$?
+[ "$_zr_rc" = 2 ] && [ "$(cat "$ZR/sys/comp_algorithm")" = "lzo-rle" ] && [ "$(cat "$ZR/sys/disksize")" = "4294967296" ] && [ "$(grep -c '^swapon ' "$ZR/calls")" = 1 ] && grep -q "fallback permanente para lzo-rle" "$ZR/fusao/fusao.log" && ok "zram fallback swapon devolve lzo-rle 4GB e encerra retry" || bad "zram fallback swapon devolve lzo-rle 4GB e encerra retry (rc=$_zr_rc)"
+# disable ativo -> nao mexe em nada
+zr_reset_mock; : > "$ZR/fusao/disable"
+zr_run
+[ "$?" = 0 ] && [ ! -s "$ZR/calls" ] && grep -q '\[lzo-rle\]' "$ZR/sys/comp_algorithm" && ok "zram respeita disable" || bad "zram respeita disable"
+
 echo "----"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

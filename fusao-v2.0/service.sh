@@ -181,3 +181,83 @@ if [ ! -f "$FUSAO_DIR/disable" ] && [ -f "$FUSAO_DIR/fusaod.enabled" ] && [ -s "
 		nohup "$MODDIR/system/bin/fusaod" serve >>"$FUSAO_DIR/fusaod.log" 2>&1 &
 	fi
 fi
+
+# Aplica comp_algorithm=lz4 uma unica vez no boot, mantendo o mesmo disksize (4 GB) e streams stock.
+setup_zram_lz4() {
+	[ ! -f "$FUSAO_DIR/disable" ] || return 0
+	_zsys="${ZRAM_SYS:-/sys/block/zram0}"
+	_zdev="${ZRAM_DEV:-/dev/block/zram0}"
+	_zswp="${ZRAM_SWAPS:-/proc/swaps}"
+	_zwait_max="${ZRAM_WAIT_S:-15}"
+	[ -f "$_zsys/comp_algorithm" ] || return 0
+
+	# Espera init.ramplus.rc (on property:sys.boot_completed=1) concluir swapon_all.
+	_zw=0
+	while [ "$_zw" -lt "$_zwait_max" ] && ! grep -Eq "^${_zdev}[[:space:]]" "$_zswp" 2>/dev/null; do
+		sleep 1
+		_zw=$((_zw + 1))
+	done
+	if ! grep -Eq "^${_zdev}[[:space:]]" "$_zswp" 2>/dev/null; then
+		echo "$(date '+%H:%M:%S') service: zram0 inativo no swap; algoritmo inalterado" >>"$FUSAO_DIR/fusao.log" 2>/dev/null
+		return 0
+	fi
+
+	_algos=" $(tr '\n\t' '  ' <"$_zsys/comp_algorithm" 2>/dev/null) "
+	case "$_algos" in
+	*" [lz4] "*)
+		echo "$(date '+%H:%M:%S') service: zram lz4 ja ativo" >>"$FUSAO_DIR/fusao.log" 2>/dev/null
+		return 0
+		;;
+	*" lz4 "*) ;;
+	*) return 0 ;;
+	esac
+
+	_z_sz=$(tr -d '[:space:]' <"$_zsys/disksize" 2>/dev/null)
+	case "$_z_sz" in '' | 0 | *[!0-9]*) _z_sz=4294967296 ;; esac
+	_z_st=$(tr -d '[:space:]' <"$_zsys/max_comp_streams" 2>/dev/null)
+	case "$_z_st" in '' | 0 | *[!0-9]*) _z_st="" ;; esac
+
+	# Fallback seguro: se swapoff falhar, nao reseta nem altera o zram0 stock.
+	if ! swapoff "$_zdev" >/dev/null 2>&1; then
+		echo "$(date '+%H:%M:%S') service: zram swapoff falhou; mantendo stock" >>"$FUSAO_DIR/fusao.log" 2>/dev/null
+		return 1
+	fi
+
+	echo 1 >"$_zsys/reset" 2>/dev/null
+	if echo "lz4" >"$_zsys/comp_algorithm" 2>/dev/null; then
+		[ -n "$_z_st" ] && echo "$_z_st" >"$_zsys/max_comp_streams" 2>/dev/null
+		echo "$_z_sz" >"$_zsys/disksize" 2>/dev/null
+		if mkswap "$_zdev" >/dev/null 2>&1 && swapon "$_zdev" >/dev/null 2>&1; then
+			echo "$(date '+%H:%M:%S') service: zram comp_algorithm=lz4 (disksize=$_z_sz streams=${_z_st:-auto})" >>"$FUSAO_DIR/fusao.log" 2>/dev/null
+			return 0
+		fi
+	fi
+
+	# Fallback se escrever lz4 ou remontar falhar: restabelece lzo-rle no mesmo tamanho (erro duro = rc 2).
+	echo 1 >"$_zsys/reset" 2>/dev/null
+	echo "lzo-rle" >"$_zsys/comp_algorithm" 2>/dev/null
+	[ -n "$_z_st" ] && echo "$_z_st" >"$_zsys/max_comp_streams" 2>/dev/null
+	echo "$_z_sz" >"$_zsys/disksize" 2>/dev/null
+	mkswap "$_zdev" >/dev/null 2>&1
+	swapon "$_zdev" >/dev/null 2>&1
+	echo "$(date '+%H:%M:%S') service: zram fallback permanente para lzo-rle nesta sessao (disksize=$_z_sz)" >>"$FUSAO_DIR/fusao.log" 2>/dev/null
+	return 2
+}
+
+zram_lz4_boot_ensure() {
+	setup_zram_lz4
+	_zr=$?
+	[ "$_zr" = 1 ] || return "$_zr"
+	for _zd in ${ZRAM_RETRY_DELAYS:-30 60 120}; do
+		sleep "$_zd"
+		[ ! -f "$FUSAO_DIR/disable" ] || return 0
+		[ ! -s "$FUSAO_DIR/game-active.txt" ] || continue
+		setup_zram_lz4
+		_zr=$?
+		[ "$_zr" = 0 ] || [ "$_zr" = 2 ] && return "$_zr"
+	done
+	return 1
+}
+
+setup_zram_lz4
+[ "$?" = 1 ] && ( zram_lz4_boot_ensure ) >/dev/null 2>&1 &
