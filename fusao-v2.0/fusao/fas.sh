@@ -24,6 +24,13 @@ FAS_MODE_F="$M54_DIR/fas.mode"
 FAS_NODE="${FAS_NODE:-/dev/fas_rs/mode}"
 # fas-rs escolhe o primeiro alvo >= fps atual - 3 (e não controla abaixo do primeiro - 10)
 FAS_AUTO="30, 45, 60, 90, 120"
+# Piso do teto de CPU que o fas-rs pode gravar (kHz; patch 0010 do fork, env FAS_CEIL_FLOOR_KHZ). O controle
+# dimensiona o clock só pelo jogo: num jogo leve com alvo baixo ele crava os DOIS clusters em 533 MHz e o resto
+# do sistema fica sem CPU. Medido no aparelho em 2026-11-14 (Plague Inc. alvo 30, modo fast, YT Music por
+# Bluetooth A2DP/AAC codificado em software, underflows do A2DP em 45 s na mesma cena): sem piso +88 / +686 /
+# +235 (binário antigo), piso 768000 +235, piso 960000 +1, piso 1152000 0. No piso a política não é cravada:
+# o governor fica com [mínimo, piso]. Config: fas_floor_khz (0 = sem piso, comportamento do upstream).
+FAS_FLOOR_DEFAULT=1152000
 
 fas_pids() { pgrep -f "[f]as-rs run" 2>/dev/null; }
 
@@ -31,6 +38,11 @@ fas_mode() {
   local _m=""
   [ -f "$FAS_MODE_F" ] && _m=$(tr -d '[:space:]' < "$FAS_MODE_F" 2>/dev/null)
   case "$_m" in powersave|balance|performance|fast) echo "$_m";; *) echo "balance";; esac
+}
+
+# fas_floor — o piso em vigor (config fas_floor_khz, senão o padrão), 0..2002000
+fas_floor() {
+  clamp_int "$(read_cfg fas_floor_khz "$FAS_FLOOR_DEFAULT")" 0 2002000 "$FAS_FLOOR_DEFAULT"
 }
 
 # fas_targets_for <pkg> — "30, 45, 60" do override (fas.targets: pkg=30,45,60), "off" ou o automático
@@ -111,7 +123,7 @@ fas_apply_mode() {
 }
 
 fas_start() {
-  local _bin _pkg="$1"
+  local _bin _pkg="$1" _floor
   [ -f "$M54_DIR/fas.enabled" ] || return 1
   [ -f "$M54_DIR/disable" ] && return 1
   # fora do FAS: nem sobe o daemon (o watch já parou o de um jogo anterior antes de aplicar o perfil)
@@ -128,8 +140,9 @@ fas_start() {
   fi
   # uma sessão por log: o status lê a última linha de controle sem pegar a da sessão anterior
   [ -f "$FAS_LOG" ] && mv -f "$FAS_LOG" "$FAS_LOG.1" 2>/dev/null
-  nohup "$_bin" run "$FAS_TOML" >> "$FAS_LOG" 2>&1 &
-  log "fas: on pid=$! modo=$(fas_mode) [$_pkg]"
+  _floor=$(fas_floor)
+  FAS_CEIL_FLOOR_KHZ="$_floor" nohup "$_bin" run "$FAS_TOML" >> "$FAS_LOG" 2>&1 &
+  log "fas: on pid=$! modo=$(fas_mode) piso=$_floor [$_pkg]"
   fas_apply_mode &
   return 0
 }
@@ -152,6 +165,7 @@ fas_status() {
   local _last _game _gpu
   [ -f "$M54_DIR/fas.enabled" ] && echo "fas=on" || echo "fas=off"
   echo "fas_mode=$(fas_mode)"
+  echo "fas_floor_khz=$(fas_floor)"
   if [ -z "$(fas_pids)" ]; then
     echo "fas_state=stopped"
   else

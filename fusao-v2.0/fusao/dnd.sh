@@ -20,8 +20,31 @@ DIR=$(dirname "$0")
 MODE="${1:-}"
 STATE="$M54_DIR/dnd.state"
 SEQF="$M54_DIR/dnd.seq"
+# Estado do USUÁRIO antes do 1º `on` (M-6): zen=<0|1|2|3> e heads_up=<0|1>. Existe enquanto o FUSAO "deve" um
+# off; o off devolve exatamente isto e apaga o arquivo. Antes o off sempre forçava zen_mode 0 e heads-up 1:
+# quem já estava em Não Perturbe (ou sem heads-up) perdia a configuração ao sair do jogo, no `fusao dnd off`
+# e no uninstall.
+PREVF="$M54_DIR/dnd.prev"
+
+# dnd_fake <comando...> — backend de teste com ESTADO (DND_FAKE_DIR): zen e heads_up vivem em arquivos e os
+# comandos os alteram como o aparelho faz (set_dnd priority=1 / on=2 / off=0; `settings put zen_mode` sozinho
+# não move nada). Permite ao teste offline conferir o estado FINAL, não a sequência de comandos.
+dnd_fake() {
+  echo "$*" >> "$DND_FAKE_DIR/calls" 2>/dev/null
+  case "$*" in
+    "cmd notification set_dnd priority") echo 1 > "$DND_FAKE_DIR/zen";;
+    "cmd notification set_dnd on") echo 2 > "$DND_FAKE_DIR/zen";;
+    "cmd notification set_dnd off") echo 0 > "$DND_FAKE_DIR/zen";;
+    "settings put global heads_up_notifications_enabled "*) echo "$5" > "$DND_FAKE_DIR/heads";;
+  esac
+  return 0
+}
 
 run() {
+  if [ -n "$DND_FAKE_DIR" ]; then
+    dnd_fake "$@"
+    return 0
+  fi
   if [ -n "$DND_DRYRUN" ]; then
     echo "dryrun: $*"
     return 0
@@ -38,10 +61,15 @@ run() {
 
 nap() {
   [ -n "$DND_DRYRUN" ] && return 0
+  [ -n "$DND_FAKE_DIR" ] && return 0
   sleep "$1" 2>/dev/null
 }
 
 zen_get() {
+  if [ -n "$DND_FAKE_DIR" ]; then
+    tr -d '[:space:]' < "$DND_FAKE_DIR/zen" 2>/dev/null
+    return
+  fi
   if [ -n "$DND_DRYRUN" ]; then
     printf "%s" "$DND_FAKE_ZEN"
     return
@@ -49,9 +77,33 @@ zen_get() {
   settings get global zen_mode 2>/dev/null | tr -d '[:space:]'
 }
 
+# heads_get — heads_up_notifications_enabled atual (0|1; vazio/null se o sistema não respondeu).
+heads_get() {
+  if [ -n "$DND_FAKE_DIR" ]; then
+    tr -d '[:space:]' < "$DND_FAKE_DIR/heads" 2>/dev/null
+    return
+  fi
+  if [ -n "$DND_DRYRUN" ]; then
+    printf "%s" "${DND_FAKE_HEADS:-1}"
+    return
+  fi
+  settings get global heads_up_notifications_enabled 2>/dev/null | tr -d '[:space:]'
+}
+
 zen_on_ok() {
   _z="$1"
   [ "$_z" = "1" ] || [ "$_z" = "2" ]
+}
+
+# prev_field <zen|heads_up> — campo do snapshot do usuário (vazio se não há snapshot).
+prev_field() {
+  grep "^$1=" "$PREVF" 2>/dev/null | tail -n 1 | cut -d= -f2-
+}
+
+# user_dnd_active <zen> — o usuário já estava em algum modo Não Perturbe (1 prioridade, 2 silêncio, 3 alarmes).
+user_dnd_active() {
+  case "$1" in 1|2|3) return 0;; esac
+  return 1
 }
 
 # Guarda de geração: enter/exit novos cancelam o run em voo (sem flip-flop).
@@ -63,6 +115,19 @@ mine() {
 
 case "$MODE" in
   on)
+    # Snapshot do usuário só quando o FUSAO ainda não deve um off: jogo A -> jogo B sem exit (ou um on repetido)
+    # não pode regravar o snapshot com o estado que o próprio FUSAO ligou.
+    if [ ! -s "$PREVF" ]; then
+      { echo "zen=$(zen_get)"; echo "heads_up=$(heads_get)"; } | atomic_write "$PREVF" 0600
+    fi
+    _pz=$(prev_field zen)
+    if user_dnd_active "$_pz"; then
+      # o usuário já está em Não Perturbe: o modo dele vale, o FUSAO não mexe (e por isso não desliga no off)
+      mine || { log "dnd: on preterido (evento novo)"; exit 0; }
+      printf "on" | atomic_write "$STATE" 0600
+      log "dnd: on (Não Perturbe do usuário já ativo, zen=$_pz: nada alterado)"
+      exit 0
+    fi
     _n=0
     _got=""
     for _wait in 0 2 4 8 16; do
@@ -86,6 +151,24 @@ case "$MODE" in
     fi
     ;;
   off)
+    # Sem snapshot e sem estado "on" o FUSAO não ligou nada: não desliga nada (fusao dnd off, uninstall e
+    # cleanup com o usuário em Não Perturbe por conta própria).
+    _st=""
+    [ -f "$STATE" ] && _st=$(cat "$STATE" 2>/dev/null)
+    if [ ! -s "$PREVF" ] && [ "$_st" != "on" ]; then
+      printf "off" | atomic_write "$STATE" 0600
+      exit 0
+    fi
+    _pz=$(prev_field zen)
+    _ph=$(prev_field heads_up)
+    if user_dnd_active "$_pz"; then
+      # o on não mexeu (o usuário já estava em Não Perturbe): o off também não
+      mine || { log "dnd: off preterido (evento novo)"; exit 0; }
+      rm -f "$PREVF" 2>/dev/null
+      printf "off" | atomic_write "$STATE" 0600
+      log "dnd: off (Não Perturbe do usuário preservado, zen=$_pz)"
+      exit 0
+    fi
     _got="?"
     for _wait in 0 2 4 8 16; do
       [ "$_wait" != "0" ] && nap "$_wait"
@@ -97,9 +180,14 @@ case "$MODE" in
     done
     mine || { log "dnd: off preterido (evento novo)"; exit 0; }
     run settings put global zen_mode 0
-    run settings put global heads_up_notifications_enabled 1
+    # heads-up volta ao que o usuário tinha (0 = ele já usava sem heads-up); sem snapshot, o padrão 1
+    case "$_ph" in
+      0) run settings put global heads_up_notifications_enabled 0;;
+      *) run settings put global heads_up_notifications_enabled 1;;
+    esac
     _got=$(zen_get)
     if [ "$_got" = "0" ]; then
+      rm -f "$PREVF" 2>/dev/null
       printf "off" | atomic_write "$STATE" 0600
       log "dnd: off"
     else

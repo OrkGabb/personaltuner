@@ -101,6 +101,24 @@ current_focus() {
   echo "$_dump" | grep -oE "[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+" | head -1 | tr -d '[:space:]'
 }
 
+# focused_window_pkg — pacote da JANELA em foco: só a linha mCurrentFocus, sem cair para mFocusedApp.
+# current_focus (acima) pega o primeiro pacote de mCurrentFocus|mFocusedApp; com a tela apagada ou no keyguard a
+# janela em foco é NotificationShade (sem pacote) e o primeiro pacote que aparece é o mFocusedApp = o jogo
+# parado atrás do bloqueio. Para decidir se uma sessão continua de pé isso é um falso "em foco" (A-1).
+focused_window_pkg() {
+  local _line=""
+  if [ -n "$FOCUS_FAKE" ] && [ -f "$FOCUS_FAKE" ]; then
+    cat "$FOCUS_FAKE" 2>/dev/null | tr -d '[:space:]'
+    return
+  fi
+  if [ -n "$DUMPSYS_FAKE" ] && [ -f "$DUMPSYS_FAKE" ]; then
+    _line=$(grep -E "mCurrentFocus" "$DUMPSYS_FAKE" 2>/dev/null | head -1)
+  else
+    _line=$(dumpsys window 2>/dev/null | grep -E "mCurrentFocus" | head -1)
+  fi
+  echo "$_line" | grep -oE "[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+" | head -1 | tr -d '[:space:]'
+}
+
 in_gamelist() {
   _pkg="$1"
   [ -z "$_pkg" ] && return 1
@@ -233,6 +251,120 @@ fire_exit() {
   fi
 }
 
+# --- Sessão SEGURADA (A-1) ---------------------------------------------------------------------------------
+# O observer grava "" quando o jogo perde a activity em primeiro plano; no loading do NTE isso é um bounce de
+# segundos, então o watch regrava o jogo no game-active (os outros leitores — tune/fas/gos/CLI — seguem vendo a
+# sessão) e SEGURA. Antes a história acabava aí: com o arquivo igual ao LAST nada mais era reavaliado, e como o
+# observer já tinha o jogo como "fora" ele nunca mais gravava o exit — jogo morto com a tela apagada = perfil
+# game, fas-rs e Não Perturbe presos até a próxima sessão. Agora a sessão segurada é reconferida:
+#   - o observer regravou o arquivo (mais novo que o marcador) => foco confirmado por evento, solta a segurada;
+#   - senão, a cada HOLD_EVERY voltas (2 s cada): processo morto OU janela em foco não é a do jogo => exit.
+HOLD=0
+HOLD_TICK=0
+HOLD_MARK="$M54_DIR/.watch.hold"
+HOLD_EVERY="${WATCH_HOLD_EVERY:-5}"
+case "$HOLD_EVERY" in ''|*[!0-9]*) HOLD_EVERY=5;; esac
+
+hold_begin() {
+  write_state "$LAST"
+  : > "$HOLD_MARK" 2>/dev/null
+  HOLD=1
+  HOLD_TICK=0
+}
+
+hold_end() {
+  HOLD=0
+  HOLD_TICK=0
+  rm -f "$HOLD_MARK" 2>/dev/null
+}
+
+# hold_still_valid — a sessão segurada continua de pé: o processo do jogo vive e a JANELA em foco é a dele.
+hold_still_valid() {
+  pidof "$LAST" >/dev/null 2>&1 || return 1
+  [ "$(focused_window_pkg)" = "$LAST" ]
+}
+
+# hold_tick — uma volta com a sessão segurada. rc 0 = segue segurada/solta; rc 1 = sessão encerrada (exit feito).
+hold_tick() {
+  if [ -e "$HOLD_MARK" ] && [ "$GAMEFILE" -nt "$HOLD_MARK" ]; then
+    hold_end
+    return 0
+  fi
+  HOLD_TICK=$((HOLD_TICK + 1))
+  [ "$HOLD_TICK" -ge "$HOLD_EVERY" ] || return 0
+  HOLD_TICK=0
+  hold_still_valid && return 0
+  log "watch: sessão segurada sem o jogo em foco ($LAST), encerrando"
+  write_state ""
+  hold_end
+  fire_exit "$LAST"
+  LAST=""
+  return 1
+}
+
+# --- Deriva de teto de CPU e de GPU (M-3) ---------------------------------------------------------------------------
+# O tune grava no profile.state o teto que o perfil pede (target_p0_max/target_p4_max; ausentes com o FAS dono
+# da CPU) e target_gpu_max. O watch NÃO escreve nó: a cada DRIFT_EVERY voltas lê os tetos (builtins, sem fork) e,
+# fora de jogo, se algum está ACIMA do alvo — o nosso pedido regravado por outro escritor, como o battery ao entrar em
+# Dozing — pede UMA regravação ao `tune.sh reassert` (verify -> regrava só o que está acima -> verify -> log).
+# No máximo uma a cada DRIFT_MIN_GAP_S: é reação a um evento (o nó mudou), nunca laço de reescrita. O intervalo
+# era 900 s e a GPU ficava de fora; regra do dono, 2026-11-14 ("não tem essa de OneUI mandar"): a GPU entra e o
+# intervalo cai para 60 s. Cada regravação fica no log, então o log conta quantas vezes a ROM insistiu.
+DRIFT_EVERY="${WATCH_DRIFT_EVERY:-15}"
+DRIFT_MIN_GAP_S="${WATCH_DRIFT_MIN_GAP_S:-60}"
+case "$DRIFT_EVERY" in ''|*[!0-9]*) DRIFT_EVERY=15;; esac
+case "$DRIFT_MIN_GAP_S" in ''|*[!0-9]*) DRIFT_MIN_GAP_S=60;; esac
+DRIFT_TICK=0
+DRIFT_FIRED=0
+DRIFT_LAST_FIRE=0
+DRIFT_P0_MAX="${FS_ROOT:-}/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+DRIFT_P4_MAX="${FS_ROOT:-}/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+DRIFT_GPU_MAX="${FS_ROOT:-}/sys/kernel/gpu/gpu_max_clock"
+
+# node_over <nó> <alvo> — rc 0 só se o nó lê um inteiro MAIOR que o alvo (ilegível/sem alvo = rc 1).
+node_over() {
+  local _v=""
+  case "$2" in ''|*[!0-9]*) return 1;; esac
+  [ -r "$1" ] || return 1
+  IFS= read -r _v < "$1" 2>/dev/null
+  case "$_v" in ''|*[!0-9]*) return 1;; esac
+  [ "$_v" -gt "$2" ]
+}
+
+check_cap_drift() {
+  local _l _prof="" _stamp="" _t0="" _t4="" _tg="" _now
+  [ "$DRIFT_EVERY" = 0 ] && return 0
+  DRIFT_TICK=$((DRIFT_TICK + 1))
+  [ "$DRIFT_TICK" -ge "$DRIFT_EVERY" ] || return 0
+  DRIFT_TICK=0
+  # em jogo o apply/settle e o FAS são os donos da CPU; com o kill-switch ninguém escreve
+  [ -n "$LAST" ] && return 0
+  [ -f "$M54_DIR/disable" ] && return 0
+  [ -r "$M54_DIR/profile.state" ] || return 0
+  [ -x "$(dirname "$0")/tune.sh" ] || return 0
+  while IFS= read -r _l || [ -n "$_l" ]; do
+    case "$_l" in
+      profile=*) _prof=${_l#*=};;
+      applied_at=*) _stamp=${_l#*=};;
+      target_p0_max=*) _t0=${_l#*=};;
+      target_p4_max=*) _t4=${_l#*=};;
+      target_gpu_max=*) _tg=${_l#*=};;
+    esac
+  done < "$M54_DIR/profile.state" 2>/dev/null
+  case "$_prof" in battery|balanced|game) ;; *) return 0;; esac
+  case "$_stamp" in ''|*[!0-9]*) return 0;; esac
+  node_over "$DRIFT_P0_MAX" "$_t0" || node_over "$DRIFT_P4_MAX" "$_t4" || node_over "$DRIFT_GPU_MAX" "$_tg" || return 0
+  _now=$(uptime_s)
+  case "$_now" in ''|*[!0-9]*) _now=0;; esac
+  if [ "$DRIFT_FIRED" = 1 ] && [ $((_now - DRIFT_LAST_FIRE)) -lt "$DRIFT_MIN_GAP_S" ]; then
+    return 0
+  fi
+  DRIFT_FIRED=1
+  DRIFT_LAST_FIRE=$_now
+  log "watch: teto de CPU/GPU acima do perfil $_prof (regravado por fora), reassert 1x"
+  REASSERT_DELAY_S=0 M54_DIR="$M54_DIR" FS_ROOT="${FS_ROOT:-}" nohup sh "$(dirname "$0")/tune.sh" reassert "$_prof" "$_stamp" >/dev/null 2>&1 &
+}
+
 while true; do
   if observer_alive; then
     if [ "$STANDBY" = 0 ]; then
@@ -240,7 +372,11 @@ while true; do
       log "watch: observer ativo, standby (consome game-active, sem poll)"
     fi
     read_gamefile
-    if [ "$CUR" != "$LAST" ]; then
+    if [ "$HOLD" = 1 ] && [ "$CUR" = "$LAST" ]; then
+      hold_tick
+    elif [ "$CUR" != "$LAST" ]; then
+      # o arquivo mudou por evento do observer: a segurada (se havia) acabou
+      [ "$HOLD" = 1 ] && hold_end
       if [ -n "$CUR" ] && ! in_gamelist "$CUR"; then
         LAST="$CUR"
       elif [ -n "$CUR" ]; then
@@ -258,9 +394,10 @@ while true; do
             sleep 2
             continue
           fi
-          FOCUS_CHK=$(current_focus)
+          # janela em foco (mCurrentFocus), não o app em foco: atrás do keyguard o mFocusedApp ainda é o jogo
+          FOCUS_CHK=$(focused_window_pkg)
           if [ "$FOCUS_CHK" = "$LAST" ]; then
-            write_state "$LAST"
+            hold_begin
             sleep 2
             continue
           fi
@@ -269,8 +406,12 @@ while true; do
         LAST=""
       fi
     fi
+    check_cap_drift
     nap 2
     continue
+  fi
+  if [ "$HOLD" = 1 ]; then
+    hold_end
   fi
   if [ "$STANDBY" = 1 ]; then
     STANDBY=0
@@ -279,6 +420,7 @@ while true; do
     relaunch_observer
   fi
   relaunch_observer
+  check_cap_drift
   nap 5
   FOCUS=$(current_focus)
   if [ -n "$FOCUS" ] && in_gamelist "$FOCUS"; then

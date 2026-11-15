@@ -1,0 +1,91 @@
+From c48d201274267ae729561e82959a2688b79c0212 Mon Sep 17 00:00:00 2001
+From: OrkGabb <OrkGabb@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 20:02:03 -0300
+Subject: [PATCH] cpu_info: floor for the ceiling FAS writes (env
+ FAS_CEIL_FLOOR_KHZ), unpinned at the floor
+
+The controller sizes the clock for the game alone. A light game with a low target drags every policy to the table minimum and starves the rest of the system: on the M54 (Plague Inc. target 30, fast mode, A2DP AAC software encoder) both policies sat at 533 MHz and the A2DP source underflowed ~10 times per second. With the floor the ceiling never goes below it, and at the floor the policy is not pinned (min = table min), so the governor keeps the range. Unset or 0 keeps upstream behaviour.
+---
+ src/cpu_common/cpu_info.rs | 24 +++++++++++++++++++++---
+ src/cpu_common/mod.rs      |  6 +++++-
+ 2 files changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/src/cpu_common/cpu_info.rs b/src/cpu_common/cpu_info.rs
+index 309c17d..03ea6d4 100644
+--- a/src/cpu_common/cpu_info.rs
++++ b/src/cpu_common/cpu_info.rs
+@@ -18,7 +18,7 @@
+ use std::{
+     fs,
+     path::{Path, PathBuf},
+-    sync::atomic::Ordering,
++    sync::{OnceLock, atomic::Ordering},
+     time::{Duration, Instant},
+ };
+ 
+@@ -29,6 +29,21 @@ use nix::sched::CpuSet;
+ use super::IGNORE_MAP;
+ use crate::file_handler::FileHandler;
+ 
++/// M54: lowest ceiling FAS may write, in kHz (env `FAS_CEIL_FLOOR_KHZ`; unset or 0 = upstream).
++/// The controller sizes the clock for the game alone; a light game drags every policy to the
++/// table minimum and starves everything else on those cores (measured: A2DP software encoder
++/// underflowing ~10 times per second with both policies at 533 MHz).
++pub fn ceil_floor() -> isize {
++    static FLOOR: OnceLock<isize> = OnceLock::new();
++    *FLOOR.get_or_init(|| {
++        std::env::var("FAS_CEIL_FLOOR_KHZ")
++            .ok()
++            .and_then(|value| value.trim().parse::<isize>().ok())
++            .filter(|floor| *floor > 0)
++            .unwrap_or(0)
++    })
++}
++
+ #[derive(Debug)]
+ pub struct Info {
+     pub policy: i32,
+@@ -136,11 +151,14 @@ impl Info {
+         let min_freq = *self.freqs.first().context("No frequencies available")?;
+         let max_freq = *self.freqs.last().context("No frequencies available")?;
+ 
+-        let adjusted_freq = freq.clamp(min_freq, max_freq);
++        // M54: never below the floor, and at the floor the policy is not pinned: the governor
++        // keeps [table min, floor], so an idle scene still clocks down by itself
++        let floor = ceil_floor().clamp(min_freq, max_freq);
++        let adjusted_freq = freq.clamp(floor, max_freq);
+         self.cur_fas_freq = adjusted_freq;
+ 
+         if !self.ignore_write()? {
+-            if self.critical_policy(top_used_cores) {
++            if adjusted_freq > floor && self.critical_policy(top_used_cores) {
+                 self.verify_freq(adjusted_freq);
+                 let adjusted_freq = adjusted_freq.to_string();
+                 file_handler.write_with_workround(self.max_freq_path(), &adjusted_freq)?;
+diff --git a/src/cpu_common/mod.rs b/src/cpu_common/mod.rs
+index 07e669a..71af648 100644
+--- a/src/cpu_common/mod.rs
++++ b/src/cpu_common/mod.rs
+@@ -32,7 +32,7 @@ use std::{
+ use anyhow::{Context, Result};
+ #[cfg(debug_assertions)]
+ use log::debug;
+-use log::warn;
++use log::{info, warn};
+ use nix::{
+     sched::{CpuSet, sched_getaffinity},
+     unistd::Pid,
+@@ -90,6 +90,10 @@ impl Controller {
+             .copied()
+             .unwrap_or(0);
+ 
++        if cpu_info::ceil_floor() > 0 {
++            info!("CPU ceiling floor: {} kHz", cpu_info::ceil_floor());
++        }
++
+         Ok(Self {
+             max_freq,
+             cpu_infos,
+-- 
+2.53.0
+

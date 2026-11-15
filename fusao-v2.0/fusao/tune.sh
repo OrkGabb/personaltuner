@@ -557,17 +557,24 @@ profile_targets() {
       T_SWAP=160; T_VFS=150; T_STAT_INT=15
       ;;
     *)
-      # teto da GPU era 858000 (não existe na tabela); 845000 é o degrau logo abaixo do máximo 949000.
-      # Teto do P4 1824000 aqui é escolha de eficiência do perfil casual (não limite de hardware): de 1824000 a
-      # 2400000 o A78 ganha 32% de capacidade por 2,2x a potência dinâmica (598 -> 1323, kernlab energy_table).
+      # Tetos de eficiência do perfil casual (escolha do dono): P4 1824000 (598 -> 1323 de potência dinâmica até
+      # 2400000, kernlab energy_table) e GPU 845000, o degrau real logo abaixo do máximo. A ROM regrava os dois nós
+      # (aparelho 2026-11-13/14: profile_mismatch=p4_max:2400000!=1824000,gpu_max:949000!=845000, partial 11/13):
+      # os dois voltam pelo reassert de deriva do watch (check_cap_drift, no máximo 1x por DRIFT_MIN_GAP_S). O da GPU
+      # ficava de fora ("o Hyper é dono do nó") e o perfil vivia em partial 12/13; regra do dono, 2026-11-14: o
+      # módulo existe para a ROM não mandar, então o teto da GPU é regravado como os de CPU. 2026-11-14: os dois tetos chegaram a sair por suspeita de estrangular a SystemUI/o player num
+      # caso real; o log do aparelho não sustentou a suspeita (nas sessões conferidas o teto em vigor ou era o
+      # térmico da ROM, abaixo do pedido, ou já estava solto) e eles voltaram.
       r_p0min=533000; r_p0max=2002000
       r_p4min=533000; r_p4max=1824000
       r_gmin=221000;  r_gmax=845000
-      T_MIF_MIN=421000; T_INT_MIN=133000; T_DISP_MIN=133000
+      # Barramentos: fora de jogo ficam no stock (INT 50000 / DISP 66000, os mesmos do battery). O piso antigo
+      # 133000/133000 valia o tempo todo, inclusive com a tela apagada tocando música, sem ganho medido.
+      T_MIF_MIN=421000; T_INT_MIN=50000; T_DISP_MIN=66000
       T_SWAP=120; T_VFS=100; T_STAT_INT=5
       if [ "$act" = 1 ]; then
         r_p0min=672000; r_p4min=672000
-        T_MIF_MIN=676000
+        T_MIF_MIN=676000; T_INT_MIN=133000; T_DISP_MIN=133000
       fi
       ;;
   esac
@@ -591,7 +598,10 @@ REVERIFY_STEPS="${REVERIFY_STEPS:-30 60 95}"
 # Teto de CPU lido ACIMA do pedido não é QoS (o QoS só abaixa teto): é o NOSSO pedido regravado por outro
 # escritor. Aparelho 2026-10-20 19:53 (saída do Roblox com a tela apagando): P0/P4 max 2002000/2400000 com
 # battery pedindo 1728000/1440000, e ficou assim 9+ min. Uma regravação, uma vez, REASSERT_DELAY_S depois do
-# apply; nunca agenda outra (loop de reescrita contra a ROM continua proibido).
+# apply; o reassert nunca agenda outro (loop de reescrita contra a ROM continua proibido).
+# 2026-11-14: a mesma regravação única também é pedida pelo watch quando ELE vê a deriva depois (o battery perde os
+# tetos quando a tela entra em Dozing): o gatilho é o evento "nó lido acima do alvo", não um relógio, e o watch
+# limita a uma por DRIFT_MIN_GAP_S (watch.sh check_cap_drift). Cada uma fica no log.
 REASSERT_DELAY_S="${REASSERT_DELAY_S:-30}"
 # Estabilização única pós-launch em perfil game (hint Samsung AMS_ACT_START/901 dura até ~4 s e pode
 # travar ufc_max/gpu_max/pisos durante o apply_game): 1 passe após SETTLE_GAME_S sem laço de reescrita.
@@ -724,12 +734,12 @@ verify_profile() {
   _nm_node=$(nomerges_node)
   [ -n "$_nm_node" ] && check_eq "$_nm_node" "$T_NOMERGES" "nomerges"
 
-  # tetos de CPU acima do pedido (rótulos p0_max/p4_max) p/ o reassert único
+  # tetos de CPU e da GPU acima do pedido (rótulos p0_max/p4_max/gpu_max) p/ o reassert
   VERIFY_OVER=""
   local _m _m_cur
   for _m in $(echo "$mis" | tr ',' ' '); do
     case "$_m" in
-      p0_max:*|p4_max:*)
+      p0_max:*|p4_max:*|gpu_max:*)
         _m_cur=${_m#*:}; _m_cur=${_m_cur%%!=*}
         case "$_m_cur" in ''|*[!0-9]*) ;; *)
           [ "$_m_cur" -gt "${_m##*!=}" ] && VERIFY_OVER="${VERIFY_OVER}${VERIFY_OVER:+ }${_m%%:*}";;
@@ -767,6 +777,14 @@ verify_profile() {
     [ -n "$mis" ] && echo "profile_mismatch=$mis"
     [ -n "$ext" ] && echo "profile_external=$ext"
     [ -n "$applied_at" ] && echo "applied_at=$applied_at"
+    # Tetos de CPU que o perfil pede, para o watch detectar deriva (lido > alvo) sem carregar o tune. Com o FAS
+    # dono da CPU não há alvo: o fas-rs reescreve os nós por frame e o watch não pode brigar com ele.
+    if [ "$fas_cpu" != 1 ]; then
+      [ -f "$P0_MAX" ] && echo "target_p0_max=$T_P0_MAX"
+      [ -f "$P4_MAX" ] && echo "target_p4_max=$T_P4_MAX"
+    fi
+    # Teto da GPU: o fas-rs não escreve a GPU, então o alvo vale com ou sem FAS.
+    [ -f "$GPU_MAX" ] && echo "target_gpu_max=$T_GMAX"
   } | atomic_write "$STATE_F" 0644
 
   VERIFY_STATE="$state"
@@ -792,7 +810,7 @@ verify_after_apply() {
     [ "${TUNE_NO_DEFER:-0}" = "1" ] || nohup sh "$DIR/tune.sh" reverify "$1" "$APPLIED_AT" >/dev/null 2>&1 &
   fi
   if [ -n "$VERIFY_OVER" ]; then
-    log "tune: $1 teto de CPU acima do pedido ($VERIFY_OVER); regrava 1x em +${REASSERT_DELAY_S} s se seguir assim"
+    log "tune: $1 teto acima do pedido ($VERIFY_OVER); regrava 1x em +${REASSERT_DELAY_S} s se seguir assim"
     [ "${TUNE_NO_DEFER:-0}" = "1" ] || nohup sh "$DIR/tune.sh" reassert "$1" "$APPLIED_AT" >/dev/null 2>&1 &
   fi
   if [ "$1" = "game" ]; then
@@ -870,7 +888,7 @@ settle_once() {
   fi
 }
 
-# reassert <perfil> <applied_at> — UMA regravação dos tetos de CPU que seguem acima do pedido (VERIFY_OVER).
+# reassert <perfil> <applied_at> — UMA regravação dos tetos (CPU e GPU) que seguem acima do pedido (VERIFY_OVER).
 # Sai sem tocar em nada se outro apply veio depois ou se o teto já voltou. Nunca agenda outra.
 reassert_once() {
   local _l _over
@@ -883,6 +901,7 @@ reassert_once() {
     case "$_l" in
       p0_max) w "$P0_MAX" "$T_P0_MAX";;
       p4_max) w "$P4_MAX" "$T_P4_MAX";;
+      gpu_max) w "$GPU_MAX" "$T_GMAX";;
     esac
   done
   verify_profile "$1"
@@ -942,8 +961,10 @@ apply_balanced() { apply_profile_targets balanced; }
 # ATENÇÃO (medido ao vivo em 2026-10-18): os tetos de CPU do battery (P0 max 1728000 / P4 max 1440000)
 # SOMEM sozinhos quando a tela entra em Dozing — a Samsung reescreve os nós (presentes até uptime ~3194s,
 # ausentes em ~3709s). Isso NÃO se resolve com loop de reescrita (briga com o framework da ROM, gasta
-# bateria e esconde o sintoma). Se um dia for preciso reaplicar, que seja por EVENTO de tela-acesa, UMA
-# vez, com releitura (w/verify_profile) — não implementado.
+# bateria e esconde o sintoma). 2026-11-14: reaplicado por EVENTO, UMA vez, com releitura — o watch lê os dois
+# tetos por builtins a cada 30 s e, se algum está ACIMA do alvo gravado no profile.state, chama
+# `tune.sh reassert` (verify -> regrava só o que está acima -> verify), no máximo 1x a cada 15 min e nunca em
+# jogo nem com o FAS dono da CPU. Não há fonte de evento de tela-acesa no módulo: a deriva do nó é o evento.
 # GPU: o battery NÃO capa mais o teto (2.10.0). O cap 650000 era sobrescrito no boot e pelo térmico ao
 # liberar (kernlab game-tetos: 650000 -> 845000/949000/754000); em jogo o battery vira game (effective_profile).
 apply_battery() { apply_profile_targets battery; }
