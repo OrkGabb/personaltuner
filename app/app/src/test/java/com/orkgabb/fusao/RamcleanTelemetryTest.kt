@@ -148,4 +148,58 @@ class RamcleanTelemetryTest {
         val failed = RamcleanTelemetry.fromLines(failLines)
         assertEquals("fail", failed.lastStatus)
     }
+
+    @Test
+    fun parsesDeepRamcleanKilledCompactedAndZram() {
+        val t = RamcleanTelemetry.fromLines(
+            listOf(
+                "ramclean=off (só manual: game-enter não limpa)",
+                "--- último ramclean no log ---",
+                "21:40:00 ramclean ok free=230640->3312000 avail=3268368->5114880 delta_kb=+1846512 delta_mb=+1803 cached=2892020->1731584 killed=18 compacted=11 zram=575->222MB trimmed=18 mglru=deep:stop+cmp+zram rc=0/0/0",
+            ),
+        )
+        assertEquals("ok", t.lastStatus)
+        assertEquals(1803, t.lastDeltaMb)
+        assertEquals(1846512L, t.lastDeltaKb)
+        assertEquals(18, t.lastKilledCount)
+        assertEquals(11, t.lastCompactedCount)
+        assertEquals("575->222MB", t.lastZramTransition)
+        assertEquals(18, t.lastTrimmedCount)
+        assertEquals("deep:stop+cmp+zram", t.lastMglruTag)
+    }
+
+    @Test
+    fun formatsTurboLaunchResultCleanly() {
+        val okMsg = FusaoBridge.formatTurboLaunchResult(
+            ShellRunResult(
+                isSuccess = true,
+                exitCode = 0,
+                output = listOf(
+                    "turbo ok pkg=com.roblox.client ram_delta=+1795MB avail=4995MB mali=6/6 shaders=2 adpf=1 game_mode=1",
+                ),
+            ),
+            "com.roblox.client",
+        )
+        assertEquals("Turbo ativo · RAM +1795MB (4995MB) · Mali 6/6 · ADPF", okMsg)
+
+        val cancelled = FusaoBridge.formatTurboLaunchResult(
+            ShellRunResult(
+                isSuccess = false,
+                exitCode = 130,
+                output = listOf("turbo cancelled pkg=com.roblox.client"),
+            ),
+            "com.roblox.client",
+        )
+        assertEquals("Turbo cancelado", cancelled)
+
+        val oldMod = FusaoBridge.formatTurboLaunchResult(
+            ShellRunResult(
+                isSuccess = false,
+                exitCode = 1,
+                output = listOf("fusao: profile|framework|perf|fusaod|fas|dnd|block|ramclean|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"),
+            ),
+            "com.roblox.client",
+        )
+        assertEquals("FALHOU: atualize o módulo para o 2.14.0 (sem comando launch)", oldMod)
+    }
 }

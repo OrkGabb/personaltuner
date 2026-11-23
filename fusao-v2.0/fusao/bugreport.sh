@@ -16,7 +16,7 @@ mkdir -p "$TMPD" 2>/dev/null
 
 collect() {
   for _f in fusao.log fusao.log.1 fusaod.log config profile gamelist.txt \
-    game-active.txt framework.stock tune.stock display.stock \
+    game-active.txt framework.stock tune.stock display.stock turbo.state \
     thermal_guard_state stock.snapshot default_cpu_gov dnd.state \
     fas.log fas.log.1 fas.targets fas.mode; do
     [ -f "$M54_DIR/$_f" ] && cp -f "$M54_DIR/$_f" "$TMPD/$_f" 2>/dev/null

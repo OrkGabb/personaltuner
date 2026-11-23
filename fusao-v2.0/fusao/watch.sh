@@ -237,6 +237,10 @@ fire_exit() {
   if [ -f "$M54_DIR/perf.enabled" ] && [ -x "$(dirname "$0")/perf.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/perf.sh" exit "$_exited_pkg" 2>/dev/null
   fi
+  # Se a sessao foi aberta via single-shot Turbo (`fusao launch`), restaura perfil original, Mali e game_overlay antes de reaplicar o perfil.
+  if [ -s "$M54_DIR/turbo.state" ] && [ -x "$(dirname "$0")/turbo.sh" ]; then
+    M54_DIR="$M54_DIR" FS_ROOT="${FS_ROOT:-}" FAKE_SETTINGS_DIR="${FAKE_SETTINGS_DIR:-}" sh "$(dirname "$0")/turbo.sh" restore 2>/dev/null
+  fi
   # Ao sair do jogo volta ao perfil escolhido (auto com game-active vazio; não apaga p/ stock idle)
   if [ -f "$M54_DIR/framework.enabled" ] && [ -x "$(dirname "$0")/framework.sh" ]; then
     M54_DIR="$M54_DIR" sh "$(dirname "$0")/framework.sh" auto 2>/dev/null

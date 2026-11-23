@@ -16,6 +16,7 @@ rm -f "$DATA_DIR"/*_pid 2>/dev/null
 
 [ -x "$DATA_DIR/dnd.sh" ] && M54_DIR="$DATA_DIR" sh "$DATA_DIR/dnd.sh" off 2>/dev/null
 [ -x "$DATA_DIR/display.sh" ] && M54_DIR="$DATA_DIR" sh "$DATA_DIR/display.sh" reset 2>/dev/null
+[ -x "$DATA_DIR/turbo.sh" ] && M54_DIR="$DATA_DIR" sh "$DATA_DIR/turbo.sh" restore 2>/dev/null
 [ -x "$DATA_DIR/perf.sh" ] && M54_DIR="$DATA_DIR" sh "$DATA_DIR/perf.sh" exit 2>/dev/null
 [ -x "$DATA_DIR/tune.sh" ] && M54_DIR="$DATA_DIR" sh "$DATA_DIR/tune.sh" idle 2>/dev/null
 

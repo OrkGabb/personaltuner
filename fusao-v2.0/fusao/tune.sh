@@ -16,6 +16,8 @@
 # 2.11.0: com o FAS (fas-rs) dono da CPU em jogo, o verify não confere piso/teto de CPU (lib.sh fas_owns_cpu).
 # 2.11.3: game sem piso de GPU (o Hyper da Samsung reescreve o gpu_min_clock em toda troca de app).
 # 2.12.0: game sem teto no P4 (2400000 = cpuinfo_max): o 1824000 vinha do falso "teto rígido" (nodes-m54.md §10).
+# 2.14.0: balanced libera P4 max para 2400000 (EAS fica 95% em 533 MHz em idle e dá rajada real em UI pesada)
+#         e aplica uclamp por cgroup (/dev/cpuctl: top-app latency_sensitive=1, background/sys-bg uclamp.max).
 DIR=$(dirname "$0")
 . "$DIR/lib.sh"
 
@@ -41,6 +43,9 @@ MIF_MIN="$R/sys/class/devfreq/17000010.devfreq_mif/min_freq"
 MIF_MAX="$R/sys/class/devfreq/17000010.devfreq_mif/max_freq"
 INT_MIN="$R/sys/class/devfreq/17000020.devfreq_int/min_freq"
 DISP_MIN="$R/sys/class/devfreq/17000040.devfreq_disp/min_freq"
+UCLAMP_TOP_LS="$R/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive"
+UCLAMP_BG_MAX="$R/dev/cpuctl/background/cpu.uclamp.max"
+UCLAMP_SYSBG_MAX="$R/dev/cpuctl/system-background/cpu.uclamp.max"
 
 # Tabelas de degraus e limites físicos (a verdade é o aparelho; ver load_domains).
 P0_AVAIL="$R/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies"
@@ -89,10 +94,16 @@ tcp_nodes() {
   echo "$R/proc/sys/net/ipv4/tcp_fastopen"
 }
 
+uclamp_nodes() {
+  for _n in "$UCLAMP_TOP_LS" "$UCLAMP_BG_MAX" "$UCLAMP_SYSBG_MAX"; do
+    [ -f "$_n" ] && echo "$_n"
+  done
+}
+
 snapshot_stock() {
   [ -s "$STOCK" ] && return 0
   {
-    for n in $(hw_nodes) $(vm_nodes) $(readahead_nodes) $(io_queue_nodes) $(tcp_nodes); do
+    for n in $(hw_nodes) $(vm_nodes) $(readahead_nodes) $(io_queue_nodes) $(tcp_nodes) $(uclamp_nodes); do
       [ -f "$n" ] && echo "$n $(cat "$n" 2>/dev/null | tr -d '\r')"
     done
   } | atomic_write "$STOCK" 0600
@@ -147,6 +158,35 @@ w() {
   case "$want" in *[[:space:]]*) want=$(printf '%s' "$want" | tr -d '[:space:]');; esac
   got=$(rval "$1")
   if [ "$got" != "$want" ]; then
+    log "WARN tune: clamp $1 pedido=$want lido=$got"
+    _APPLY_CLAMP=1
+    return 1
+  fi
+  return 0
+}
+
+# w_uclamp <nó> <valor> — escreve e relê nós cpu.uclamp.* (o kernel 5.15 formata "50" como "50.00").
+uclamp_eq() {
+  local got="$1" want="$2"
+  [ "$got" = "$want" ] && return 0
+  [ "$got" = "${want}.00" ] && return 0
+  [ "${got%.00}" = "$want" ] && return 0
+  return 1
+}
+
+w_uclamp() {
+  local want="$2" got rc
+  [ -e "$1" ] || return 0
+  if [ ! -w "$1" ]; then
+    log "WARN tune: sem escrita em $1 pedido=$want"
+    return 1
+  fi
+  sysfs_put "$1" "$want"
+  rc=$?
+  [ "$rc" -ne 0 ] && { log "WARN tune: falha de escrita $1 pedido=$want rc=$rc"; return "$rc"; }
+  [ -r "$1" ] || return 0
+  got=$(rval "$1")
+  if ! uclamp_eq "$got" "$want"; then
     log "WARN tune: clamp $1 pedido=$want lido=$got"
     _APPLY_CLAMP=1
     return 1
@@ -497,9 +537,17 @@ restore_stock() {
     case "$p" in ""|\#*) continue;; esac
     case "$p" in
       "$P0_MIN"|"$P0_MAX"|"$P4_MIN"|"$P4_MAX"|"$GPU_MIN"|"$GPU_MAX") continue;;
+      "$UCLAMP_TOP_LS"|"$UCLAMP_BG_MAX"|"$UCLAMP_SYSBG_MAX")
+        [ -f "$p" ] && w_uclamp "$p" "$v"
+        continue
+        ;;
     esac
     [ -f "$p" ] && w "$p" "$v"
   done <"$STOCK"
+  # Fallback para tune.stock antigo (pré-2.14.0) sem entradas de uclamp: devolve padrão stock da ROM.
+  [ -f "$UCLAMP_TOP_LS" ] && [ -z "$(stock_of "$UCLAMP_TOP_LS")" ] && w_uclamp "$UCLAMP_TOP_LS" "0"
+  [ -f "$UCLAMP_BG_MAX" ] && [ -z "$(stock_of "$UCLAMP_BG_MAX")" ] && w_uclamp "$UCLAMP_BG_MAX" "max"
+  [ -f "$UCLAMP_SYSBG_MAX" ] && [ -z "$(stock_of "$UCLAMP_SYSBG_MAX")" ] && w_uclamp "$UCLAMP_SYSBG_MAX" "max"
   log "tune: restore stock"
 }
 
@@ -538,6 +586,7 @@ profile_targets() {
       r_gmin=221000;   r_gmax=949000
       T_MIF_MIN=845000; T_INT_MIN=266000; T_DISP_MIN=200000
       T_SWAP=60; T_VFS=50; T_STAT_INT=10
+      T_UCLAMP_TOP_LS=1; T_UCLAMP_BG_MAX=35; T_UCLAMP_SYSBG_MAX=45
       if [ "$act" = 1 ]; then
         r_p0min=1152000; r_p4min=1056000
         T_MIF_MIN=1014000; T_INT_MIN=333000
@@ -555,23 +604,22 @@ profile_targets() {
       r_gmin=221000;  r_gmax=949000
       T_MIF_MIN=421000; T_INT_MIN=50000; T_DISP_MIN=66000
       T_SWAP=160; T_VFS=150; T_STAT_INT=15
+      T_UCLAMP_TOP_LS=0; T_UCLAMP_BG_MAX=35; T_UCLAMP_SYSBG_MAX=45
       ;;
     *)
-      # Tetos de eficiência do perfil casual (escolha do dono): P4 1824000 (598 -> 1323 de potência dinâmica até
-      # 2400000, kernlab energy_table) e GPU 845000, o degrau real logo abaixo do máximo. A ROM regrava os dois nós
-      # (aparelho 2026-11-13/14: profile_mismatch=p4_max:2400000!=1824000,gpu_max:949000!=845000, partial 11/13):
-      # os dois voltam pelo reassert de deriva do watch (check_cap_drift, no máximo 1x por DRIFT_MIN_GAP_S). O da GPU
-      # ficava de fora ("o Hyper é dono do nó") e o perfil vivia em partial 12/13; regra do dono, 2026-11-14: o
-      # módulo existe para a ROM não mandar, então o teto da GPU é regravado como os de CPU. 2026-11-14: os dois tetos chegaram a sair por suspeita de estrangular a SystemUI/o player num
-      # caso real; o log do aparelho não sustentou a suspeita (nas sessões conferidas o teto em vigor ou era o
-      # térmico da ROM, abaixo do pedido, ou já estava solto) e eles voltaram.
+      # 2.14.0: balanced sem teto duro no P4 (2400000): medição ao vivo no M54 (2026-11-22) provou que o
+      # energy_aware (EAS) fica 95,1% em 533 MHz (100% <= 960 MHz) no ocioso mesmo com P4=2400000, enquanto o
+      # teto 1824000 penalizava rajadas de UI em foco (-24% single-thread; Prime Video 54 -> 37 FPS).
+      # A economia de eficiência agora atua via uclamp nativo no kernel (background<=50%, sys-bg<=60%,
+      # top-app latency_sensitive=1) + teto da GPU 845000 — zero daemon, zero latência.
       r_p0min=533000; r_p0max=2002000
-      r_p4min=533000; r_p4max=1824000
+      r_p4min=533000; r_p4max=2400000
       r_gmin=221000;  r_gmax=845000
       # Barramentos: fora de jogo ficam no stock (INT 50000 / DISP 66000, os mesmos do battery). O piso antigo
       # 133000/133000 valia o tempo todo, inclusive com a tela apagada tocando música, sem ganho medido.
       T_MIF_MIN=421000; T_INT_MIN=50000; T_DISP_MIN=66000
       T_SWAP=120; T_VFS=100; T_STAT_INT=5
+      T_UCLAMP_TOP_LS=1; T_UCLAMP_BG_MAX=50; T_UCLAMP_SYSBG_MAX=60
       if [ "$act" = 1 ]; then
         r_p0min=672000; r_p4min=672000
         T_MIF_MIN=676000; T_INT_MIN=133000; T_DISP_MIN=133000
@@ -730,9 +778,24 @@ verify_profile() {
   check_eq "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS" "vfs_pressure"
   check_eq "$R/proc/sys/vm/stat_interval" "$T_STAT_INT" "stat_interval"
   check_eq "$R/proc/sys/vm/page-cluster" "$T_PAGE_CLUSTER" "page_cluster"
+  check_uclamp() {
+    local path="$1" expected="$2" label="$3" cur
+    [ -f "$path" ] || return 0
+    tot_cnt=$((tot_cnt + 1))
+    cur=$(rval "$path")
+    if uclamp_eq "$cur" "$expected"; then
+      ok_cnt=$((ok_cnt + 1))
+    else
+      mis="${mis}${mis:+,}${label}:${cur}!=${expected}"
+    fi
+  }
+
   local _nm_node
   _nm_node=$(nomerges_node)
   [ -n "$_nm_node" ] && check_eq "$_nm_node" "$T_NOMERGES" "nomerges"
+  check_uclamp "$UCLAMP_TOP_LS" "$T_UCLAMP_TOP_LS" "uclamp_top_ls"
+  check_uclamp "$UCLAMP_BG_MAX" "$T_UCLAMP_BG_MAX" "uclamp_bg_max"
+  check_uclamp "$UCLAMP_SYSBG_MAX" "$T_UCLAMP_SYSBG_MAX" "uclamp_sysbg_max"
 
   # tetos de CPU e da GPU acima do pedido (rótulos p0_max/p4_max/gpu_max) p/ o reassert
   VERIFY_OVER=""
@@ -937,6 +1000,10 @@ apply_profile_targets() {
   w "$R/proc/sys/vm/vfs_cache_pressure" "$T_VFS"
   w "$R/proc/sys/vm/stat_interval" "$T_STAT_INT"
   w "$R/proc/sys/vm/page-cluster" "$T_PAGE_CLUSTER"
+
+  w_uclamp "$UCLAMP_TOP_LS" "$T_UCLAMP_TOP_LS"
+  w_uclamp "$UCLAMP_BG_MAX" "$T_UCLAMP_BG_MAX"
+  w_uclamp "$UCLAMP_SYSBG_MAX" "$T_UCLAMP_SYSBG_MAX"
 
   restore_readahead
   for dev in "$R"/sys/block/mmcblk* "$R"/sys/block/sd* "$R"/sys/block/nvme*; do

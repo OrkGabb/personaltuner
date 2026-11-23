@@ -1440,13 +1440,13 @@ class MainActivity : ComponentActivity() {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 HudSectionHeader(
                     title = "Limpeza de RAM",
-                    subtitle = "Reclaim MGLRU seletivo · preserva cache ativo",
+                    subtitle = "Force-stop em segundo plano · zram + compactação",
                     accentColor = FusaoPalette.BioEmerald,
                     trailing = {
                         val badge = when {
                             state.status.ramclean -> "NO JOGO"
                             deltaVal != null -> formatDeltaMb(deltaVal)
-                            else -> "MGLRU"
+                            else -> "RAM"
                         }
                         TelemetryPill(
                             text = badge,
@@ -1478,7 +1478,7 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.weight(1.45f),
                         )
                         MetricMiniCard(
-                            label = "MGLRU / TRIM",
+                            label = "PARADOS / COMP.",
                             value = mglruTrimSummary(ramcleanTelemetry),
                             accent = FusaoPalette.TextPrimary,
                             modifier = Modifier.weight(1.1f),
@@ -1564,6 +1564,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun mglruTrimSummary(telemetry: RamcleanTelemetry): String {
+        val killed = telemetry.lastKilledCount
+        val compacted = telemetry.lastCompactedCount
+        if (killed != null || compacted != null) {
+            return "${killed ?: 0} stop · ${compacted ?: 0} cmp"
+        }
         val mode = telemetry.lastMglruTag.substringAfter(':', telemetry.lastMglruTag).takeIf { it.isNotEmpty() }
         val trimCount = telemetry.lastTrimmedCount
         return when {
@@ -1853,23 +1858,47 @@ class MainActivity : ComponentActivity() {
                                                 maxLines = 1,
                                             )
                                         }
-                                        if (state.status.fas && state.status.fasSupported) {
-                                            // sem a leitura do `fas list` o limite é desconhecido: não mostra AUTO
-                                            // nem aceita toque, para o ciclo nunca partir de uma base inventada
-                                            val fasKnown = state.fasTargetsLoaded
-                                            val fasCap = fasCapOf(state.fasTargets[pkg])
-                                            val isFasBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "fas_target:$pkg"
-                                            val fasOff = fasKnown && fasCap == FAS_CAP_OFF
-                                            TelemetryPill(
-                                                text = if (isFasBusy || !fasKnown) "FAS · …" else "FAS · ${fasCapLabel(fasCap)}",
-                                                color = if (fasOff || !fasKnown) FusaoPalette.TextMuted else FusaoPalette.MintPulse,
-                                                filled = fasKnown && fasCap != null && !fasOff,
-                                                modifier = Modifier
-                                                    .clip(CircleShape)
-                                                    .clickable(enabled = state.rooted && !busy && fasKnown) {
-                                                        vm.cycleFasCap(pkg)
-                                                    },
-                                            )
+                                        val showFasPill = state.status.fas && state.status.fasSupported
+                                        if (showFasPill || isInstalled) {
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                if (showFasPill) {
+                                                    // sem a leitura do `fas list` o limite é desconhecido: não mostra AUTO
+                                                    // nem aceita toque, para o ciclo nunca partir de uma base inventada
+                                                    val fasKnown = state.fasTargetsLoaded
+                                                    val fasCap = fasCapOf(state.fasTargets[pkg])
+                                                    val isFasBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "fas_target:$pkg"
+                                                    val fasOff = fasKnown && fasCap == FAS_CAP_OFF
+                                                    TelemetryPill(
+                                                        text = if (isFasBusy || !fasKnown) "FAS · …" else "FAS · ${fasCapLabel(fasCap)}",
+                                                        color = if (fasOff || !fasKnown) FusaoPalette.TextMuted else FusaoPalette.MintPulse,
+                                                        filled = fasKnown && fasCap != null && !fasOff,
+                                                        modifier = Modifier
+                                                            .clip(CircleShape)
+                                                            .clickable(enabled = state.rooted && !busy && fasKnown) {
+                                                                vm.cycleFasCap(pkg)
+                                                            },
+                                                    )
+                                                }
+                                                if (isInstalled) {
+                                                    val isLaunchingThis = state.launchingTurboPkg == pkg
+                                                    val anyLaunching = state.launchingTurboPkg.isNotEmpty()
+                                                    TelemetryPill(
+                                                        text = if (isLaunchingThis) "✕ CANCELAR" else "▶ TURBO",
+                                                        color = if (isLaunchingThis) FusaoPalette.CrimsonCore else FusaoPalette.IgnisAmber,
+                                                        filled = isLaunchingThis || isCurrentlyRunning,
+                                                        modifier = Modifier
+                                                            .clip(CircleShape)
+                                                            .clickable(
+                                                                enabled = state.rooted && (isLaunchingThis || (!busy && !anyLaunching)),
+                                                            ) {
+                                                                if (isLaunchingThis) vm.cancelGameTurbo() else vm.launchGameTurbo(pkg)
+                                                            },
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }

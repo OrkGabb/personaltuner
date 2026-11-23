@@ -12,7 +12,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -102,6 +104,7 @@ data class FusaoUiState(
     val status: FusaoStatus = FusaoStatus(),
     val busy: Busy = Busy.NONE,
     val activeTarget: String = "",
+    val launchingTurboPkg: String = "",
     val notice: String = "",
     val ramcleanInfo: List<String> = emptyList(),
     val games: List<String> = emptyList(),
@@ -126,6 +129,7 @@ class FusaoViewModel : ViewModel() {
     val state: StateFlow<FusaoUiState> = _state.asStateFlow()
 
     private val actionMutex = Mutex()
+    private var turboLaunchJob: Job? = null
 
     private fun launchLocked(busy: Busy, target: String, block: suspend () -> Unit) {
         viewModelScope.launch {
@@ -311,14 +315,21 @@ class FusaoViewModel : ViewModel() {
             val st = FusaoBridge.status(quick = true)
             val parsed = RamcleanTelemetry.fromLines(out)
             val noticeText = when (parsed.lastStatus) {
-                "fail" -> "FALHOU: MGLRU/ramclean sem permissão ou sysfs indisponível"
-                "noop" -> "MGLRU: nada a liberar (caches saudáveis ou apps congelados)"
+                "fail" -> "FALHOU: limpeza de RAM sem permissão ou comando indisponível"
+                "noop" -> "RAM: nada a encerrar ou compactar agora"
                 else -> parsed.lastDeltaMb?.let { delta ->
                     val signDelta = if (delta > 0) "+$delta MB" else "$delta MB"
                     val availAfter = parsed.lastAvailKb.toLongOrNull()?.let { " · ${it / 1024} MB disp." }.orEmpty()
-                    val trimmed = parsed.lastTrimmedCount?.takeIf { it > 0 }?.let { " · $it trim" }.orEmpty()
-                    val prefix = if (parsed.lastStatus == "partial") "MGLRU (parcial): " else "MGLRU: "
-                    "$prefix$signDelta disponíveis$availAfter$trimmed"
+                    val detail = when {
+                        parsed.lastKilledCount != null || parsed.lastCompactedCount != null -> {
+                            val k = parsed.lastKilledCount?.takeIf { it > 0 }?.let { " · $it stop" }.orEmpty()
+                            val c = parsed.lastCompactedCount?.takeIf { it > 0 }?.let { " · $it cmp" }.orEmpty()
+                            k + c
+                        }
+                        else -> parsed.lastTrimmedCount?.takeIf { it > 0 }?.let { " · $it trim" }.orEmpty()
+                    }
+                    val prefix = if (parsed.lastStatus == "partial") "RAM (parcial): " else "RAM: "
+                    "$prefix$signDelta disponíveis$availAfter$detail"
                 } ?: out.lastOrNull().orEmpty()
             }
             _state.update {
@@ -442,6 +453,53 @@ class FusaoViewModel : ViewModel() {
             val out = FusaoBridge.gamelistDel(pkg)
             val games = FusaoBridge.gamelist()
             _state.update { it.copy(games = games, busy = Busy.NONE, activeTarget = "", notice = out) }
+        }
+    }
+
+    /** Single-shot turbo: limpa RAM rápido em paralelo, aplica game + Mali + GameManager + ADPF e abre o jogo. Cancelável. */
+    fun launchGameTurbo(pkg: String) {
+        if (!guardRoot()) return
+        if (_state.value.launchingTurboPkg == pkg) {
+            cancelGameTurbo()
+            return
+        }
+        turboLaunchJob?.cancel()
+        _state.update { it.copy(launchingTurboPkg = pkg, notice = "Preparando turbo… toque novamente para cancelar") }
+        turboLaunchJob = viewModelScope.launch {
+            try {
+                val out = FusaoBridge.launchGameTurbo(pkg)
+                val st = FusaoBridge.status(quick = true)
+                val cur = _state.value
+                val rInfo = if (cur.ramcleanInfo.isNotEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
+                _state.update {
+                    it.copy(
+                        status = st,
+                        ramcleanInfo = rInfo,
+                        launchingTurboPkg = if (it.launchingTurboPkg == pkg) "" else it.launchingTurboPkg,
+                        notice = out,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } finally {
+                _state.update {
+                    if (it.launchingTurboPkg == pkg) it.copy(launchingTurboPkg = "") else it
+                }
+            }
+        }
+    }
+
+    /** Cancela imediatamente o lançamento turbo em andamento e restaura o estado anterior sem abrir o jogo. */
+    fun cancelGameTurbo() {
+        val pkg = _state.value.launchingTurboPkg
+        if (pkg.isEmpty()) return
+        _state.update { it.copy(launchingTurboPkg = "", notice = "Cancelando turbo…") }
+        turboLaunchJob?.cancel()
+        turboLaunchJob = null
+        viewModelScope.launch {
+            val msg = FusaoBridge.cancelGameTurbo()
+            val st = FusaoBridge.status(quick = true)
+            _state.update { it.copy(status = st, launchingTurboPkg = "", notice = msg) }
         }
     }
 

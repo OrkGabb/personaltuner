@@ -14,7 +14,7 @@ export TUNE_NO_DEFER=1
 # a proteção de áudio do perf.sh roda como job em segundo plano (perf.sh audio-bg); no harness ela roda na hora,
 # exceto no bloco que testa o próprio job (21a-2)
 export PERF_AUDIO_SYNC=1
-for _s in lib.sh framework.sh perf.sh watch.sh bugreport.sh tune.sh dnd.sh display.sh gos_killer.sh thermal_guard.sh thermal_guard_stop.sh fas.sh; do
+for _s in lib.sh framework.sh perf.sh watch.sh bugreport.sh tune.sh dnd.sh display.sh gos_killer.sh thermal_guard.sh thermal_guard_stop.sh fas.sh turbo.sh; do
   cp "$STAGE/fusao/$_s" "$FAKE/fusao/" 2>/dev/null
 done
 cp "$STAGE/fusao/config" "$FAKE/fusao/" 2>/dev/null
@@ -31,7 +31,7 @@ ok(){ pass=$((pass+1)); echo "PASS $1"; }
 bad(){ fail=$((fail+1)); echo "FAIL $1"; }
 
 # 1) bash -n em todos os scripts
-for s in lib.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh observer.sh dnd.sh display.sh thermal_guard.sh thermal_guard_stop.sh gos_killer.sh fas.sh; do
+for s in lib.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh observer.sh dnd.sh display.sh thermal_guard.sh thermal_guard_stop.sh gos_killer.sh fas.sh turbo.sh; do
   if [ -f "$STAGE/fusao/$s" ]; then
     bash -n "$STAGE/fusao/$s" 2>"$FAKE/shn.err" && ok "sh-n $s" || { bad "sh-n $s"; cat "$FAKE/shn.err"; }
   fi
@@ -268,14 +268,14 @@ grep -q "profile_verify=13/13" "$FAKE/prof_bal.out" && ok "profile balanced veri
 # barramentos fora de jogo = stock (INT 50000 / DISP 66000); o game tinha deixado 266000 / 200000
 [ "$(cat "$FAKE/sys/class/devfreq/17000020.devfreq_int/min_freq")" = "50000" ] && ok "tune balanced int_min" || bad "tune balanced int_min"
 [ "$(cat "$FAKE/sys/class/devfreq/17000040.devfreq_disp/min_freq")" = "66000" ] && ok "tune balanced disp_min" || bad "tune balanced disp_min"
-# o balanced segue com o P4 em 1824000 (eficiência do perfil casual); a descida 2400000 -> 1824000 tem de colar
-[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && ok "tune balanced p4_max" || bad "tune balanced p4_max"
-# tetos soltos por fora (a ROM regrava os dois nós: 2400000 / 949000 no aparelho): um novo apply do balanced repõe
-echo 2400000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+# 2.14.0: balanced libera P4 max em 2400000 (EAS ocioso fica 95% em 533 MHz; eficiência vai via uclamp + GPU 845000)
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "2400000" ] && ok "tune balanced p4_max" || bad "tune balanced p4_max"
+# teto de GPU solto por fora (949000) e P4 reduzido por fora (1824000): um novo apply do balanced repõe 2400000 / 845000
+echo 1824000 > "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
 echo 949000 > "$FAKE/sys/kernel/gpu/gpu_max_clock"
 M54_DIR="$FAKE/fusao" FS_ROOT="$FAKE" sh "$FAKE/fusao/tune.sh" balanced >/dev/null 2>&1
-[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "1824000" ] && [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "845000" ] && \
-  ok "tune balanced repõe os tetos de P4/GPU soltos por fora" || bad "tune balanced repõe os tetos de P4/GPU soltos por fora"
+[ "$(cat "$FAKE/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")" = "2400000" ] && [ "$(cat "$FAKE/sys/kernel/gpu/gpu_max_clock")" = "845000" ] && \
+  ok "tune balanced repõe os tetos de P4/GPU alterados por fora" || bad "tune balanced repõe os tetos de P4/GPU alterados por fora"
 grep -q "^profile_verify=13/13$" "$FAKE/fusao/profile.state" && grep -q "^profile_state=applied$" "$FAKE/fusao/profile.state" && ok "tune balanced fecha 13/13 com os tetos" || bad "tune balanced fecha 13/13 com os tetos"
 # balanced EM JOGO sobe os barramentos (INT/DISP 133000, MIF 676000) e fora de jogo devolve ao stock
 echo "com.roblox.client" > "$FAKE/fusao/game-active.txt"
@@ -1140,23 +1140,19 @@ m3_setup "$M3"; m3_watch "$M3" 0 12
 sleep 3; echo 2400000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 8
 [ "$(m3_p4 "$M3")" = 2400000 ] && ok "M-3 controle: sem a checagem o teto fica solto" || bad "M-3 controle: sem a checagem o teto fica solto"
 wait
-# balanced: o teto do P4 (1824000) é publicado como alvo e, regravado por fora (2400000 no aparelho), volta pelo
-# mesmo caminho; o controle negativo (checagem desligada) deixa o nó solto
+# balanced (2.14.0): P4 max = 2400000 (sem cap artificial; EAS cuida do ocioso, GPU 845000 e uclamp cuidam da eficiência).
+# Publica target_p4_max=2400000 e target_p0_max=2002000 e nunca dispara reassert falso em 2400000 nem em throttle térmico.
 m3_bal() {  # $1 = dir: troca o perfil do cenário para balanced
   echo balanced > "$1/fusao/profile"
   M54_DIR="$1/fusao" FS_ROOT="$1" sh "$1/fusao/tune.sh" balanced >/dev/null 2>&1
 }
 m3_setup "$M3"; m3_bal "$M3"
-grep -qx "target_p4_max=1824000" "$M3/fusao/profile.state" && grep -qx "target_p0_max=2002000" "$M3/fusao/profile.state" && [ "$(m3_p4 "$M3")" = 1824000 ] && \
-  ok "M-3: balanced publica o teto do P4 como alvo" || bad "M-3: balanced publica o teto do P4 como alvo"
-m3_watch "$M3" 1 12
-sleep 3; echo 2400000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 8
-[ "$(m3_p4 "$M3")" = 1824000 ] && grep -q "watch: teto de CPU/GPU acima do perfil balanced" "$M3/fusao/fusao.log" && \
-  ok "M-3: teto do P4 do balanced regravado por fora volta a 1824000" || bad "M-3: teto do P4 do balanced regravado por fora volta a 1824000 [p4=$(m3_p4 "$M3")]"
-wait
-m3_setup "$M3"; m3_bal "$M3"; m3_watch "$M3" 0 12
-sleep 3; echo 2400000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 8
-[ "$(m3_p4 "$M3")" = 2400000 ] && ok "M-3 controle (balanced): sem a checagem o teto fica solto" || bad "M-3 controle (balanced): sem a checagem o teto fica solto"
+grep -qx "target_p4_max=2400000" "$M3/fusao/profile.state" && grep -qx "target_p0_max=2002000" "$M3/fusao/profile.state" && [ "$(m3_p4 "$M3")" = 2400000 ] && \
+  ok "M-3: balanced publica target_p4_max=2400000 e target_p0_max=2002000" || bad "M-3: balanced publica target_p4_max=2400000 e target_p0_max=2002000"
+m3_watch "$M3" 1 10
+sleep 3; echo 1824000 > "$M3/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"; sleep 6
+[ "$(m3_p4 "$M3")" = 1824000 ] && ! grep -q "watch: teto de CPU/GPU acima do perfil balanced" "$M3/fusao/fusao.log" && \
+  ok "M-3: balanced não dispara drift falso quando térmico baixa P4 abaixo de 2400000" || bad "M-3: balanced drift falso [p4=$(m3_p4 "$M3")]"
 wait
 # Teto da GPU do balanced (845000): a ROM regrava o nó para 949000 e o perfil ficava em partial 12/13 (aparelho
 # 2026-11-14: profile_mismatch=gpu_max:949000!=845000). O watch vê a deriva e o reassert devolve o teto e o estado
@@ -1545,44 +1541,64 @@ TUNE_NOW=1015 TUNE_NO_DEFER=1 M54_DIR="$P21/fusao" FS_ROOT="$P21" sh "$P21/fusao
 [ "$(cat "$P21/sys/devices/platform/exynos-ufcc/ufc/cpufreq_max_limit")" = "2016000" ] && \
   ok "tune respeita thermal (nao zera ufc_max com cdev2>0)" || bad "tune respeita thermal (nao zera ufc_max com cdev2>0)"
 
-# 21d) fusao ramclean now seguro (MGLRU min_ttl_ms=0 + pulso extra_free > MemFree + sync + drop_caches=1 + exit 0)
-: > "$P21/am.log"
+# 21d) fusao ramclean now profundo (force-stop em TODOS bg/cch/prev/svcb + kill-all + zram0/compact +
+#      use_compaction transitorio + compact residentes/nativos + drop_caches=2 slab-only + compact_memory=1)
+: > "$P21/cmd.log"
 : > "$P21/fusao/game-active.txt"
+mkdir -p "$P21/sys/block/zram0" "$P21/proc/2007" "$P21/proc/2008" "$P21/proc/531" "$P21/settings"
 printf 'MemTotal: 7614456 kB\nMemFree: 450000 kB\nMemAvailable: 2683872 kB\nCached: 2641496 kB\n' > "$P21/proc/meminfo"
+printf '1073741824 419430400 602931200 0 602931200 0 0 0\n' > "$P21/sys/block/zram0/mm_stat"
+echo 0 > "$P21/sys/block/zram0/compact"
 echo 0 > "$P21/proc/sys/vm/drop_caches"
-echo 61095 > "$P21/proc/sys/vm/extra_free_kbytes"
 echo 0 > "$P21/proc/sys/vm/compact_memory"
-echo 0x0003 > "$P21/sys/kernel/mm/lru_gen/enabled"
-echo 1000 > "$P21/sys/kernel/mm/lru_gen/min_ttl_ms"
-cat > "$P21/bin/sync" <<'EOF'
+printf 'Pss_Anon:          32768 kB\n' > "$P21/proc/2007/smaps_rollup"
+printf 'Pss_Anon:          65536 kB\n' > "$P21/proc/531/smaps_rollup"
+cat > "$P21/bin/cmd" <<'CMDEOF'
 #!/bin/sh
-echo "ttl=$(cat "$P21/sys/kernel/mm/lru_gen/min_ttl_ms") extra=$(cat "$P21/proc/sys/vm/extra_free_kbytes")" > "$P21/during_reclaim.log"
+echo "cmd $*" >> "$P21/cmd.log"
+if [ "$1" = "activity" ] && [ "$2" = "compact" ]; then
+  echo "uc=$(cat "$FAKE_SETTINGS_DIR/dc__activity_manager__use_compaction" 2>/dev/null)" >> "$P21/cmd.log"
+fi
+if [ "$1" = "activity" ] && [ "$2" = "kill-all" ] && [ -n "${P21_MEMINFO:-}" ]; then
+  printf 'MemTotal: 7614456 kB\nMemFree: 2500000 kB\nMemAvailable: 4528384 kB\nCached: 2200000 kB\n' > "$P21_MEMINFO"
+  printf '1073741824 220000000 230686720 0 230686720 0 0 0\n' > "$P21/sys/block/zram0/mm_stat"
+fi
 exit 0
-EOF
-chmod +x "$P21/bin/sync"
-_rc_out=$(PATH="$P21/bin:$PATH" P21="$P21" P21_MEMINFO="$P21/proc/meminfo" RAMCLEAN_SETTLE_S=0 RAMCLEAN_PULSE_S=0 M54_DIR="$P21/fusao" FS_ROOT="$P21" sh "$P21/fusao/fusao-cli" ramclean now 2>/dev/null)
+CMDEOF
+cat > "$P21/bin/pidof" <<'PEOF'
+#!/bin/sh
+case "$1" in
+  audioserver) echo 2002;;
+  org.videolan.vlc) echo 2001;;
+  com.example.game) echo 2003;;
+  logd) echo 531;;
+  *) exit 1;;
+esac
+PEOF
+chmod +x "$P21/bin/cmd" "$P21/bin/pidof"
+rm -f "$P21/settings/dc__activity_manager__use_compaction"
+_rc_out=$(PATH="$P21/bin:$PATH" P21="$P21" P21_MEMINFO="$P21/proc/meminfo" FAKE_SETTINGS_DIR="$P21/settings" RAMCLEAN_SETTLE_S=0 M54_DIR="$P21/fusao" FS_ROOT="$P21" sh "$P21/fusao/fusao-cli" ramclean now com.example.game 2>/dev/null)
 _rc_code=$?
-_during=$(cat "$P21/during_reclaim.log" 2>/dev/null || echo "")
-_during_extra=${_during##*extra=}
-echo "$_rc_out" | grep -q "avail=2683872->3050964 delta_kb=+367092 delta_mb=+358" && [ "$_rc_code" -eq 0 ] && \
-  ok "ramclean now calcula delta real de MemAvailable (+358 MB) com exit 0" || bad "ramclean now calcula delta real de MemAvailable (+358 MB) rc=$_rc_code"
-echo "$_rc_out" | grep -q "mglru=0x0003:pulse" && \
-  echo "$_rc_out" | grep -q "(drop_caches=1)" && \
-  [ "$(cat "$P21/proc/sys/vm/drop_caches")" = "1" ] && \
-  echo "$_during" | grep -q "ttl=0 " && \
-  [ "${_during_extra:-0}" -gt 450000 ] 2>/dev/null && \
-  ok "ramclean zera min_ttl_ms durante reclaim, pulsa extra_free > MemFree e aplica drop_caches=1" || \
-  bad "ramclean reclaim (_during=$_during dc=$(cat "$P21/proc/sys/vm/drop_caches"))"
-[ "$(cat "$P21/proc/sys/vm/extra_free_kbytes")" = "61095" ] && \
-  [ "$(cat "$P21/sys/kernel/mm/lru_gen/min_ttl_ms")" = "1000" ] && \
-  ok "ramclean restaura extra_free_kbytes e min_ttl_ms" || bad "ramclean restaura extra_free_kbytes e min_ttl_ms"
-grep -q "send-trim-memory com.whatsapp COMPLETE" "$P21/am.log" && \
-  grep -q "send-trim-memory com.example.browser:sandbox COMPLETE" "$P21/am.log" && \
-  ! grep -q "org.videolan.vlc" "$P21/am.log" && \
-  ! grep -q "com.orkgabb.fusao" "$P21/am.log" && \
-  ! grep -q "com.example.game" "$P21/am.log" && \
-  ok "ramclean trimma apenas cch seguros e poupa midia/fusao/jogo" || bad "ramclean trimma apenas cch seguros e poupa midia/fusao/jogo"
-M54_DIR="$P21/fusao" FS_ROOT="$P21" sh "$P21/fusao/fusao-cli" ramclean status 2>/dev/null | grep -q "delta_mb=+358" && \
+echo "$_rc_out" | grep -q "avail=2683872->4528384 delta_kb=+1844512 delta_mb=+1801" && [ "$_rc_code" -eq 0 ] && \
+  ok "ramclean now calcula delta real de MemAvailable (+1801 MB) com exit 0" || bad "ramclean now delta real rc=$_rc_code out=$_rc_out"
+grep -q "cmd activity force-stop --user 0 com.whatsapp" "$P21/cmd.log" && \
+  grep -q "cmd activity force-stop --user 0 com.example.browser" "$P21/cmd.log" && \
+  grep -q "cmd activity kill-all" "$P21/cmd.log" && \
+  ! grep -q "force-stop --user 0 org.videolan.vlc" "$P21/cmd.log" && \
+  ! grep -q "force-stop --user 0 com.orkgabb.fusao" "$P21/cmd.log" && \
+  ! grep -q "force-stop --user 0 com.example.game" "$P21/cmd.log" && \
+  ! grep -q "force-stop --user 0 com.samsung.android.honeyboard" "$P21/cmd.log" && \
+  ok "ramclean aplica force-stop em apps bg/cch e poupa midia/fusao/jogo/IME" || bad "ramclean force-stop filter ($(cat "$P21/cmd.log"))"
+grep -q "cmd activity compact full com.samsung.android.honeyboard" "$P21/cmd.log" && \
+  grep -q "cmd activity compact native full 531" "$P21/cmd.log" && \
+  grep -q "uc=true" "$P21/cmd.log" && \
+  [ ! -e "$P21/settings/dc__activity_manager__use_compaction" ] && \
+  ok "ramclean liga use_compaction transitoriamente, compacta residentes+nativos e restaura" || bad "ramclean resident/native compact ($(cat "$P21/cmd.log"))"
+[ "$(cat "$P21/sys/block/zram0/compact")" = "1" ] && \
+  [ "$(cat "$P21/proc/sys/vm/drop_caches")" = "2" ] && \
+  [ "$(cat "$P21/proc/sys/vm/compact_memory")" = "1" ] && \
+  ok "ramclean compacta zram0, usa drop_caches=2 (somente slab) e compact_memory=1" || bad "ramclean vm/zram ops (z=$(cat "$P21/sys/block/zram0/compact") dc=$(cat "$P21/proc/sys/vm/drop_caches") cm=$(cat "$P21/proc/sys/vm/compact_memory"))"
+M54_DIR="$P21/fusao" FS_ROOT="$P21" sh "$P21/fusao/fusao-cli" ramclean status 2>/dev/null | grep -q "delta_mb=+1801" && \
   ok "ramclean status lê evento gravado no fusao.log" || bad "ramclean status lê evento gravado no fusao.log"
 
 # 21e) Regressões da auditoria [M-02], [C-02], [A-01], [A-02], [C-03], [A-04]
@@ -1742,16 +1758,14 @@ else
 fi
 PATH="$P22/bin:$PATH" P22_RENICE_LOG="$P22/renice.log" P22_IONICE_LOG="$P22/ionice.log" M54_DIR="$P22/fusao" FS_ROOT="$P22" sh "$P22/fusao/perf.sh" exit >/dev/null 2>&1 || true
 
-# [A-04] ramclean now pula cgroup.freeze=1, respeita noop e dispara MGLRU proporcional
+# [A-04] ramclean now NÃO pula cgroup.freeze=1 (forca parada de apps congelados!) e distingue partial/fail
 echo "0::/apps/uid_101/pid_1001" > "$P22/proc/1001/cgroup"
 echo "1" > "$P22/sys/fs/cgroup/apps/uid_101/pid_1001/cgroup.freeze"
-echo "1000" > "$P22/sys/kernel/mm/lru_gen/min_ttl_ms"
-echo "8000" > "$P22/proc/sys/vm/extra_free_kbytes"
 echo "0" > "$P22/proc/sys/vm/drop_caches"
 cat > "$P22/proc/meminfo" <<'EOF'
 MemTotal:        8000000 kB
-MemFree:         5000000 kB
-MemAvailable:    6000000 kB
+MemFree:          650000 kB
+MemAvailable:    3000000 kB
 EOF
 cat > "$P22/bin/dumpsys" <<'EOF'
 #!/bin/sh
@@ -1759,57 +1773,41 @@ if [ "$1" = "activity" ] && [ "$2" = "lru" ]; then
   echo "  #56: cch+ 5 CEM  --------- 1001:com.frozen.app/u0a101"
 fi
 EOF
-cat > "$P22/bin/am" <<'EOF'
+cat > "$P22/bin/cmd" <<'EOF'
 #!/bin/sh
-echo "$*" >> "$P22_AM_LOG"
+echo "cmd $*" >> "$P22_CMD_LOG"
 exit 0
 EOF
-chmod +x "$P22/bin/dumpsys" "$P22/bin/am"
-: > "$P22/am.log"
+chmod +x "$P22/bin/dumpsys" "$P22/bin/cmd"
+: > "$P22/cmd.log"
 : > "$P22/fusao/fusao.log"
-rc_out_noop=$(PATH="$P22/bin:$PATH" P22_AM_LOG="$P22/am.log" RAMCLEAN_SETTLE_S=0 RAMCLEAN_PULSE_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22" sh "$P22/fusao/fusao-cli" ramclean now 2>&1)
-rc_code_noop=$?
-echo "$rc_out_noop" | grep -q "ramclean noop" && [ "$rc_code_noop" -eq 0 ] && echo "$rc_out_noop" | grep -q "frozen_skip=1" && ! grep -q "force-stop" "$P22/am.log" && \
-  ok "A-04a: ramclean now pula cgroup.freeze=1, reporta noop e retorna exit 0" || bad "A-04a: code=$rc_code_noop rc_out_noop=$rc_out_noop"
-cat > "$P22/proc/meminfo" <<'EOF'
-MemTotal:        8000000 kB
-MemFree:          650000 kB
-MemAvailable:    3000000 kB
-EOF
-rc_out_pulse=$(PATH="$P22/bin:$PATH" P22_AM_LOG="$P22/am.log" RAMCLEAN_SETTLE_S=0 RAMCLEAN_PULSE_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22" sh "$P22/fusao/fusao-cli" ramclean now 2>&1)
-rc_code_pulse=$?
-echo "$rc_out_pulse" | grep -Eq "ramclean (ok|partial)" && [ "$rc_code_pulse" -eq 0 ] && [ "$(cat "$P22/sys/kernel/mm/lru_gen/min_ttl_ms")" = "1000" ] && \
-  ok "A-04b: ramclean now pulsa MGLRU proporcional quando MemFree < MemTotal/4 (exit 0)" || bad "A-04b: code=$rc_code_pulse rc_out_pulse=$rc_out_pulse"
+rc_out_frozen=$(PATH="$P22/bin:$PATH" P22_CMD_LOG="$P22/cmd.log" FAKE_SETTINGS_DIR="$P22/settings" RAMCLEAN_SETTLE_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22" sh "$P22/fusao/fusao-cli" ramclean now 2>&1)
+rc_code_frozen=$?
+echo "$rc_out_frozen" | grep -q "ramclean ok" && [ "$rc_code_frozen" -eq 0 ] && \
+  grep -q "cmd activity force-stop --user 0 com.frozen.app" "$P22/cmd.log" && \
+  [ "$(cat "$P22/proc/sys/vm/drop_caches")" = "2" ] && \
+  ok "A-04a: ramclean now encerra apps em cgroup.freeze=1 e aplica drop_caches=2 (exit 0)" || bad "A-04a: code=$rc_code_frozen out=$rc_out_frozen"
 
 # [Fix-2] ramclean partial retorna exit 0 e ramclean fail retorna exit 1
-cat > "$P22/bin/dumpsys" <<'EOF'
+cat > "$P22/bin/cmd" <<'EOF'
 #!/bin/sh
-if [ "$1" = "activity" ] && [ "$2" = "lru" ]; then
-  echo "  #56: cch+ 5 CEM  --------- 1002:com.protected.app/u0a102"
-fi
-EOF
-cat > "$P22/bin/am" <<'EOF'
-#!/bin/sh
-echo "$*" >> "$P22_AM_LOG"
+echo "cmd $*" >> "$P22_CMD_LOG"
 exit 1
 EOF
-chmod +x "$P22/bin/dumpsys" "$P22/bin/am"
-mkdir -p "$P22/proc/1002"
-: > "$P22/proc/1002/cgroup" 2>/dev/null || true
-rc_out_partial=$(PATH="$P22/bin:$PATH" P22_AM_LOG="$P22/am.log" RAMCLEAN_SETTLE_S=0 RAMCLEAN_PULSE_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22" sh "$P22/fusao/fusao-cli" ramclean now 2>&1)
+chmod +x "$P22/bin/cmd"
+: > "$P22/cmd.log"
+rc_out_partial=$(PATH="$P22/bin:$PATH" P22_CMD_LOG="$P22/cmd.log" FAKE_SETTINGS_DIR="$P22/settings" RAMCLEAN_SETTLE_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22" sh "$P22/fusao/fusao-cli" ramclean now 2>&1)
 rc_code_partial=$?
 echo "$rc_out_partial" | grep -q "ramclean partial" && [ "$rc_code_partial" -eq 0 ] && \
   ok "Fix-2a: ramclean partial retorna exit 0" || bad "Fix-2a: code=$rc_code_partial out=$rc_out_partial"
 
-mkdir -p "$P22/sys_ro/sys/kernel/mm/lru_gen" "$P22/sys_ro/proc"
+mkdir -p "$P22/sys_ro/proc"
 cat > "$P22/sys_ro/proc/meminfo" <<'EOF'
 MemTotal:        8000000 kB
 MemFree:          650000 kB
 MemAvailable:    3000000 kB
 EOF
-echo "0x0003" > "$P22/sys_ro/sys/kernel/mm/lru_gen/enabled"
-rm -f "$P22/sys_ro/sys/kernel/mm/lru_gen/min_ttl_ms"
-rc_out_fail=$(PATH="$P22/bin:$PATH" P22_AM_LOG="$P22/am.log" RAMCLEAN_SETTLE_S=0 RAMCLEAN_PULSE_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22/sys_ro" sh "$P22/fusao/fusao-cli" ramclean now 2>&1)
+rc_out_fail=$(PATH="$P22/bin:$PATH" P22_CMD_LOG="$P22/cmd.log" FAKE_SETTINGS_DIR="$P22/settings" RAMCLEAN_SETTLE_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22/sys_ro" sh "$P22/fusao/fusao-cli" ramclean now 2>&1)
 rc_code_fail=$?
 echo "$rc_out_fail" | grep -q "ramclean fail" && [ "$rc_code_fail" -eq 1 ] && \
   ok "Fix-2b: ramclean fail real retorna exit 1" || bad "Fix-2b: code=$rc_code_fail out=$rc_out_fail"
@@ -1842,8 +1840,8 @@ else
   bad "Fix-1: 120=($hz_120_peak/$hz_120_min) adapt=($hz_adapt_peak/$hz_adapt_min) stock120=$hz_stock120_min"
 fi
 
-# [Fix-4] settle_once para balanced limpa cpufreq_min_limit / cpufreq_min_limit_wo_boost e reconverge p4_max=1824000
-echo "balanced" > "$P22/fusao/profile"
+# [Fix-4] settle_once para battery limpa cpufreq_min_limit / cpufreq_min_limit_wo_boost e reconverge p4_max=1440000
+echo "battery" > "$P22/fusao/profile"
 : > "$P22/fusao/game-active.txt"
 cat > "$UFC22/info" <<'EOF'
 PM_QOS_MIN_LIMIT_WO_BOOST       -1
@@ -1854,16 +1852,16 @@ echo "2208000" > "$UFC22/cpufreq_min_limit"
 echo "2208000" > "$UFC22/cpufreq_min_limit_wo_boost"
 echo "2400000" > "$P22/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
 cat > "$P22/fusao/profile.state" <<'EOF'
-profile=balanced
+profile=battery
 profile_state=partial
 applied_at=2000
 EOF
-SETTLE_QOS_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22" sh "$P22/fusao/tune.sh" settle balanced 2000 >/dev/null 2>&1
+SETTLE_QOS_S=0 M54_DIR="$P22/fusao" FS_ROOT="$P22" sh "$P22/fusao/tune.sh" settle battery 2000 >/dev/null 2>&1
 p4_settled=$(cat "$P22/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq")
 ufc_min_after=$(cat "$UFC22/cpufreq_min_limit")
 ufc_wob_after=$(cat "$UFC22/cpufreq_min_limit_wo_boost")
-if [ "$p4_settled" = "1824000" ] && [ "$ufc_min_after" = "-1" ] && [ "$ufc_wob_after" = "-1" ]; then
-  ok "Fix-4: settle_once em balanced libera UFC min/wo_boost e reimpõe p4_max=1824000"
+if [ "$p4_settled" = "1440000" ] && [ "$ufc_min_after" = "-1" ] && [ "$ufc_wob_after" = "-1" ]; then
+  ok "Fix-4: settle_once em battery libera UFC min/wo_boost e reimpõe p4_max=1440000"
 else
   bad "Fix-4: p4=$p4_settled min=$ufc_min_after wob=$ufc_wob_after"
 fi
@@ -2054,6 +2052,166 @@ _zr_rc=$?
 zr_reset_mock; : > "$ZR/fusao/disable"
 zr_run
 [ "$?" = 0 ] && [ ! -s "$ZR/calls" ] && grep -q '\[lzo-rle\]' "$ZR/sys/comp_algorithm" && ok "zram respeita disable" || bad "zram respeita disable"
+
+# 22) fusao launch <pkg> (turbo single-shot: ramclean + shader prewarm + game profile + Mali + GameManager + ADPF transitorio + restore)
+TB="$FAKE/tb"
+mkdir -p "$TB/fusao" "$TB/bin" "$TB/settings" \
+  "$TB/sys/devices/platform/10300000.mali" \
+  "$TB/sys/kernel/gpu" \
+  "$TB/sys/block/zram0" \
+  "$TB/proc/sys/vm" \
+  "$TB/data/user/0/com.example.turbo/cache" \
+  "$TB/data/user_de/0/com.example.turbo/cache"
+cp "$FAKE/fusao/"*.sh "$FAKE/fusao/config" "$FAKE/fusao/fusao-cli" "$TB/fusao/" 2>/dev/null
+chmod +x "$TB/fusao/"*.sh "$TB/fusao/fusao-cli"
+echo "balanced" > "$TB/fusao/profile"
+: > "$TB/fusao/gamelist.txt"
+: > "$TB/fusao/game-active.txt"
+: > "$TB/fusao/fusao.log"
+echo "[coarse_demand] always_on" > "$TB/sys/devices/platform/10300000.mali/power_policy"
+echo "650000" > "$TB/sys/devices/platform/10300000.mali/highspeed_clock"
+echo "94" > "$TB/sys/devices/platform/10300000.mali/highspeed_load"
+echo "30" > "$TB/sys/devices/platform/10300000.mali/polling_speed"
+echo "100" > "$TB/sys/devices/platform/10300000.mali/dvfs_period"
+echo "1" > "$TB/sys/kernel/gpu/gpu_cl_boost_disable"
+echo "0" > "$TB/sys/block/zram0/compact"
+echo "0" > "$TB/proc/sys/vm/drop_caches"
+echo "0" > "$TB/proc/sys/vm/compact_memory"
+printf 'MemTotal: 7614456 kB\nMemFree: 400000 kB\nMemAvailable: 3000000 kB\nCached: 2400000 kB\n' > "$TB/proc/meminfo"
+printf 'fake-vk-shader-blob' > "$TB/data/user/0/com.example.turbo/cache/shadercachevk.bin"
+printf 'fake-skia-shader-blob' > "$TB/data/user_de/0/com.example.turbo/cache/com.android.skia.shaders_cache"
+cat > "$TB/bin/dumpsys" <<'TBDS'
+#!/bin/sh
+if [ "$1" = "activity" ] && [ "$2" = "lru" ]; then
+  echo "  #10: cch+ 5 CEM  --------- 3001:com.bg.hog/u0a201"
+  echo "  #11: cch+ 5 CEM  --------- 3002:com.example.turbo/u0a202"
+fi
+TBDS
+cat > "$TB/bin/cmd" <<'TBCMD'
+#!/bin/sh
+echo "cmd $*" >> "$TB/cmd.log"
+if [ "$1" = "package" ] && [ "$2" = "resolve-activity" ]; then
+  echo "com.example.turbo/.MainActivity"
+elif [ "$1" = "game" ] && [ "$2" = "list-modes" ]; then
+  echo "com.example.turbo current mode: standard, available game modes: [standard,custom]"
+elif [ "$1" = "activity" ] && [ "$2" = "kill-all" ]; then
+  printf 'MemTotal: 7614456 kB\nMemFree: 2400000 kB\nMemAvailable: 4600000 kB\nCached: 2200000 kB\n' > "$TB/proc/meminfo"
+fi
+exit 0
+TBCMD
+cat > "$TB/bin/am" <<'TBAM'
+#!/bin/sh
+echo "am $* | ren=$(cat "$FAKE_SETTINGS_DIR/prop__debug.hwui.renderer" 2>/dev/null) hm=$(cat "$FAKE_SETTINGS_DIR/prop__debug.hwui.use_hint_manager" 2>/dev/null)" >> "$TB/am.log"
+exit 0
+TBAM
+cat > "$TB/bin/pidof" <<'TBPID'
+#!/bin/sh
+[ "$1" = "com.example.turbo" ] && echo 3002 || exit 1
+TBPID
+chmod +x "$TB/bin/"*
+: > "$TB/cmd.log"; : > "$TB/am.log"
+_tb_out=$(PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  RAMCLEAN_SETTLE_S=0 TURBO_HWUI_WAIT_S=0 TURBO_WATCHDOG_S=0 TUNE_NO_DEFER=1 \
+  sh "$TB/fusao/fusao-cli" launch com.example.turbo 2>&1)
+_tb_rc=$?
+echo "$_tb_out" | grep -q "turbo ok pkg=com.example.turbo" && [ "$_tb_rc" -eq 0 ] && \
+  echo "$_tb_out" | grep -q "mali=6/6" && echo "$_tb_out" | grep -q "shaders=2" && echo "$_tb_out" | grep -q "adpf=1" && \
+  ok "turbo launch executa pipeline completo (RAM + shaders=2 + Mali 6/6 + GameManager + ADPF)" || bad "turbo launch rc=$_tb_rc out=$_tb_out"
+grep -q "cmd activity force-stop --user 0 com.bg.hog" "$TB/cmd.log" && \
+  ! grep -q "force-stop --user 0 com.example.turbo" "$TB/cmd.log" && \
+  [ -f "$TB/data/user/0/com.example.turbo/cache/shadercachevk.bin" ] && \
+  ok "turbo launch limpa bg, protege jogo alvo e preserva caches de shader" || bad "turbo launch ram/shader safety"
+[ "$(cat "$TB/fusao/profile")" = "game" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/power_policy")" = "always_on" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_clock")" = "754000" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_load")" = "75" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/polling_speed")" = "15" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/dvfs_period")" = "50" ] && \
+  [ "$(cat "$TB/sys/kernel/gpu/gpu_cl_boost_disable")" = "0" ] && \
+  grep -q "cmd game set --fps 0 --downscale disable com.example.turbo" "$TB/cmd.log" && \
+  ok "turbo launch aplica perfil game, Mali-G68 (6 nos) e GameManager custom (fps=0, downscale=disable)" || bad "turbo launch apply state"
+grep -q "ren= hm=true" "$TB/am.log" && \
+  [ ! -e "$TB/settings/prop__debug.hwui.renderer" ] && \
+  [ -z "$(cat "$TB/settings/prop__debug.hwui.use_hint_manager" 2>/dev/null)" ] && \
+  ok "turbo launch injeta apenas ADPF hint_manager (sem skiavk) e restaura prop global logo apos" || bad "turbo launch hwui transient ($(cat "$TB/am.log"))"
+PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  sh "$TB/fusao/fusao-cli" turbo restore >/dev/null 2>&1
+[ "$(cat "$TB/fusao/profile")" = "balanced" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/power_policy")" = "coarse_demand" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_clock")" = "650000" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_load")" = "94" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/polling_speed")" = "30" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/dvfs_period")" = "100" ] && \
+  [ "$(cat "$TB/sys/kernel/gpu/gpu_cl_boost_disable")" = "1" ] && \
+  grep -q "cmd game mode standard com.example.turbo" "$TB/cmd.log" && \
+  [ ! -e "$TB/fusao/turbo.state" ] && \
+  ok "turbo restore devolve perfil original, todos os 6 nos Mali e GameManager ao sair" || bad "turbo restore state"
+# Cancelamento do turbo antes do am start: devolve estado e NUNCA chama am start
+: > "$TB/am.log"
+: > "$TB/fusao/turbo.cancel"
+_tb_can_out=$(PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  sh "$TB/fusao/fusao-cli" turbo cancel 2>&1)
+echo "$_tb_can_out" | grep -q "turbo=cancelled" && [ ! -e "$TB/fusao/turbo.cancel" ] && [ ! -s "$TB/am.log" ] && \
+  ok "turbo cancel limpa estado sem disparar am start" || bad "turbo cancel ($_tb_can_out)"
+
+# 23) uclamp nativo por cgroup em tune.sh (2.14.0): apply, tolerancia de formato 50.00 no kernel 5.15, e restore
+UC="$FAKE/uc"
+mkdir -p "$UC/fusao" \
+  "$UC/dev/cpuctl/top-app" "$UC/dev/cpuctl/background" "$UC/dev/cpuctl/system-background" \
+  "$UC/proc/sys/vm" "$UC/proc/sys/net/ipv4" "$UC/sys/block/sda/queue"
+cp "$FAKE/fusao/tune.sh" "$FAKE/fusao/lib.sh" "$UC/fusao/"
+chmod +x "$UC/fusao/"*.sh
+echo "0" > "$UC/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive"
+echo "max" > "$UC/dev/cpuctl/background/cpu.uclamp.max"
+echo "max" > "$UC/dev/cpuctl/system-background/cpu.uclamp.max"
+echo "130" > "$UC/proc/sys/vm/swappiness"
+echo "100" > "$UC/proc/sys/vm/vfs_cache_pressure"
+echo "10" > "$UC/proc/sys/vm/stat_interval"
+echo "0" > "$UC/proc/sys/vm/page-cluster"
+echo "cubic" > "$UC/proc/sys/net/ipv4/tcp_congestion_control"
+echo "1" > "$UC/proc/sys/net/ipv4/tcp_fastopen"
+echo "128" > "$UC/sys/block/sda/queue/read_ahead_kb"
+echo "0" > "$UC/sys/block/sda/queue/nomerges"
+echo "0" > "$UC/sys/block/sda/queue/add_random"
+echo "balanced" > "$UC/fusao/profile"
+: > "$UC/fusao/game-active.txt"
+M54_DIR="$UC/fusao" FS_ROOT="$UC" TUNE_NO_DEFER=1 sh "$UC/fusao/tune.sh" balanced >/dev/null 2>&1
+[ "$(cat "$UC/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive")" = "1" ] && \
+  [ "$(cat "$UC/dev/cpuctl/background/cpu.uclamp.max")" = "50" ] && \
+  [ "$(cat "$UC/dev/cpuctl/system-background/cpu.uclamp.max")" = "60" ] && \
+  grep -qx "profile_state=applied" "$UC/fusao/profile.state" && \
+  ok "uclamp balanced aplica top_ls=1 bg=50 sysbg=60 e fecha applied" || bad "uclamp balanced apply"
+# Simula readback real do kernel 5.15 ("50.00" / "60.00") no verify_profile
+echo "50.00" > "$UC/dev/cpuctl/background/cpu.uclamp.max"
+echo "60.00" > "$UC/dev/cpuctl/system-background/cpu.uclamp.max"
+M54_DIR="$UC/fusao" FS_ROOT="$UC" TUNE_NO_DEFER=1 sh "$UC/fusao/tune.sh" verify balanced >/dev/null 2>&1
+grep -qx "profile_state=applied" "$UC/fusao/profile.state" && \
+  ok "uclamp verify aceita formatacao 50.00/60.00 do kernel 5.15" || bad "uclamp verify 50.00 ($(cat "$UC/fusao/profile.state"))"
+# battery e game
+M54_DIR="$UC/fusao" FS_ROOT="$UC" TUNE_NO_DEFER=1 sh "$UC/fusao/tune.sh" battery >/dev/null 2>&1
+[ "$(cat "$UC/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive")" = "0" ] && \
+  [ "$(cat "$UC/dev/cpuctl/background/cpu.uclamp.max")" = "35" ] && \
+  [ "$(cat "$UC/dev/cpuctl/system-background/cpu.uclamp.max")" = "45" ] && \
+  ok "uclamp battery aplica top_ls=0 bg=35 sysbg=45" || bad "uclamp battery"
+M54_DIR="$UC/fusao" FS_ROOT="$UC" TUNE_NO_DEFER=1 sh "$UC/fusao/tune.sh" game >/dev/null 2>&1
+[ "$(cat "$UC/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive")" = "1" ] && \
+  [ "$(cat "$UC/dev/cpuctl/background/cpu.uclamp.max")" = "35" ] && \
+  [ "$(cat "$UC/dev/cpuctl/system-background/cpu.uclamp.max")" = "45" ] && \
+  ok "uclamp game aplica top_ls=1 bg=35 sysbg=45" || bad "uclamp game"
+# idle restaura via tune.stock (0 / max / max) e tambem via fallback quando tune.stock e pre-2.14.0
+M54_DIR="$UC/fusao" FS_ROOT="$UC" TUNE_NO_DEFER=1 sh "$UC/fusao/tune.sh" idle >/dev/null 2>&1
+[ "$(cat "$UC/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive")" = "0" ] && \
+  [ "$(cat "$UC/dev/cpuctl/background/cpu.uclamp.max")" = "max" ] && \
+  [ "$(cat "$UC/dev/cpuctl/system-background/cpu.uclamp.max")" = "max" ] && \
+  ok "uclamp idle restaura 0/max/max via tune.stock" || bad "uclamp idle restore"
+M54_DIR="$UC/fusao" FS_ROOT="$UC" TUNE_NO_DEFER=1 sh "$UC/fusao/tune.sh" balanced >/dev/null 2>&1
+grep -v 'uclamp' "$UC/fusao/tune.stock" > "$UC/fusao/tune.stock.old"
+mv -f "$UC/fusao/tune.stock.old" "$UC/fusao/tune.stock"
+M54_DIR="$UC/fusao" FS_ROOT="$UC" TUNE_NO_DEFER=1 sh "$UC/fusao/tune.sh" idle >/dev/null 2>&1
+[ "$(cat "$UC/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive")" = "0" ] && \
+  [ "$(cat "$UC/dev/cpuctl/background/cpu.uclamp.max")" = "max" ] && \
+  [ "$(cat "$UC/dev/cpuctl/system-background/cpu.uclamp.max")" = "max" ] && \
+  ok "uclamp idle restaura 0/max/max via fallback para tune.stock legado" || bad "uclamp idle legacy fallback"
 
 echo "----"
 echo "pass=$pass fail=$fail"

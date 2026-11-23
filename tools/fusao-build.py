@@ -26,7 +26,7 @@ cust = (STAGE / "customize.sh").read_text(encoding="utf-8", errors="ignore")
 need = ["system/bin/fusaod", "system/bin/fusao", "fusao/watch.sh", "fusao/framework.sh",
         "fusao/perf.sh", "fusao/bugreport.sh", "fusao/tune.sh", "fusao/dnd.sh",
         "fusao/display.sh", "fusao/observer.sh",
-        "fusao/observer.dex", "fusao/gamelist.txt", "system/bin/fas-rs", "fusao/fas.sh"]
+        "fusao/observer.dex", "fusao/gamelist.txt", "system/bin/fas-rs", "fusao/fas.sh", "fusao/turbo.sh"]
 missing = [n for n in need if n not in cust]
 if missing:
     print("SELF-CHECK FALHOU, customize.sh não cita:", missing)

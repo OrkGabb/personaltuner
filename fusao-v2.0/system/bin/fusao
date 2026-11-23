@@ -6,6 +6,7 @@
 #      fusao display [show|720p|810p|900p|reset|adaptive|120hz|60hz|hz-reset|hz ...]
 #      fusao block [status|grant|revoke [perms]|log [n]]
 #      fusao gamelist [list|add <pkg>|del <pkg>|count|set <pkg>...]
+#      fusao launch <pkg> | fusao turbo [status|restore]
 #      fusao gos [on|off] | fusao reseed-stock
 #      fusao status [quick] | fusao log | fusao bugreport | fusao kill-switch [on|off]
 M54_DIR=${M54_DIR:-/data/adb/fusao}
@@ -352,10 +353,80 @@ case "$cmd" in
       on) rm -f "$M54_DIR/ramclean.enabled"; echo "ramclean=off (saiu do game-enter na 2.12.0: preserva carregamento; use fusao ramclean now)";;
       off) rm -f "$M54_DIR/ramclean.enabled"; echo "ramclean=off";;
       now)
+        _rc_extra_pkg="$3"
+        case "$_rc_extra_pkg" in *[!A-Za-z0-9_.]*) _rc_extra_pkg="";; esac
         _rc_mem_kb() { awk -v k="$1" '$1==k":"{print $2; exit}' "$R/proc/meminfo" 2>/dev/null; }
+        _rc_zram_kb() {
+          [ -r "$R/sys/block/zram0/mm_stat" ] || { echo 0; return; }
+          awk '{printf "%d\n", int($3 / 1024)}' "$R/sys/block/zram0/mm_stat" 2>/dev/null
+        }
         _rc_pkg_from_pid() {
           [ -n "$1" ] && [ -r "$R/proc/$1/cmdline" ] || return 1
           tr '\0' '\n' < "$R/proc/$1/cmdline" 2>/dev/null | head -n 1 | cut -d: -f1
+        }
+        _rc_anon_kb() {
+          [ -r "$R/proc/$1/smaps_rollup" ] || { echo 0; return; }
+          awk '$1=="Pss_Anon:"{print $2; exit}' "$R/proc/$1/smaps_rollup" 2>/dev/null
+        }
+        _rc_tmp="$M54_DIR/.rc.$$"
+        mkdir -p "$_rc_tmp/k" "$_rc_tmp/c" 2>/dev/null
+        _rc_cleanup_tmp() {
+          rm -f "$_rc_tmp"/k/* "$_rc_tmp"/c/* "$_rc_tmp"/* 2>/dev/null
+          rmdir "$_rc_tmp/k" "$_rc_tmp/c" "$_rc_tmp" 2>/dev/null
+        }
+        # Coleta paralela de janela, IME, audio, media_session e lru (1 unica passagem, ~140ms em vez de ~560ms).
+        if command -v dumpsys >/dev/null 2>&1; then
+          ( dumpsys window 2>/dev/null | grep -E "mCurrentFocus" | head -n 1 > "$_rc_tmp/win" ) &
+          ( dumpsys audio 2>/dev/null > "$_rc_tmp/aud" ) &
+          ( dumpsys media_session 2>/dev/null > "$_rc_tmp/med" ) &
+          ( dumpsys activity lru 2>/dev/null > "$_rc_tmp/lru" ) &
+        fi
+        if command -v settings >/dev/null 2>&1; then
+          ( settings get secure default_input_method 2>/dev/null > "$_rc_tmp/ime" ) &
+        fi
+        wait
+        _rc_focus_pkg=""
+        [ -s "$_rc_tmp/win" ] && _rc_focus_pkg=$(grep -oE "[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+" "$_rc_tmp/win" 2>/dev/null | head -n 1 | tr -d '[:space:]')
+        _rc_ime_pkg=""
+        if [ -s "$_rc_tmp/ime" ]; then
+          _rc_ime_pkg=$(cut -d/ -f1 "$_rc_tmp/ime" 2>/dev/null | tr -d '[:space:]')
+          case "$_rc_ime_pkg" in null|"") _rc_ime_pkg="";; esac
+        fi
+        _rc_collect_audio() {
+          if [ -s "$_rc_tmp/aud" ]; then
+            for _apid in $(awk '
+              /AudioPlaybackConfiguration/ && /state:started/ {
+                if (match($0, /u\/pid:[0-9]+\/[0-9]+/)) {
+                  s = substr($0, RSTART, RLENGTH)
+                  sub(/^u\/pid:[0-9]+\//, "", s)
+                  print s
+                }
+              }' "$_rc_tmp/aud" 2>/dev/null); do
+              _rc_pkg_from_pid "$_apid"
+            done
+            awk '
+              /AudioPlaybackConfiguration/ && /state:started/ {
+                if (match($0, /(pack|package):[[:space:]]*[A-Za-z0-9._-]+/)) {
+                  s = substr($0, RSTART, RLENGTH)
+                  sub(/^(pack|package):[[:space:]]*/, "", s)
+                  print s
+                }
+              }' "$_rc_tmp/aud" 2>/dev/null
+          fi
+          if [ -s "$_rc_tmp/med" ]; then
+            awk '
+              /package=[A-Za-z0-9._-]+/ {
+                match($0, /package=[A-Za-z0-9._-]+/)
+                pkg = substr($0, RSTART + 8, RLENGTH - 8)
+                playing = 0
+              }
+              /state=(PLAYING|3[,}])/ || /PlaybackState \{state=PLAYING/ {
+                if (pkg != "" && !playing) {
+                  print pkg
+                  playing = 1
+                }
+              }' "$_rc_tmp/med" 2>/dev/null
+          fi
         }
         _rc_collect_excluded() {
           printf '%s\n' \
@@ -370,262 +441,314 @@ case "$cmd" in
             "com.android.phone" \
             "com.samsung.android.incallui" \
             "com.sec.phone" \
+            "com.android.bluetooth" \
+            "com.sec.imsservice" \
             "com.android.providers.media.module" \
             "com.google.android.providers.media.module" \
+            "com.sec.android.sdhms" \
+            "com.android.networkstack.process" \
+            "com.android.nfc" \
+            "com.android.se" \
+            "com.sec.sve" \
+            "com.sec.epdg" \
+            "com.samsung.android.wallpaper.live" \
+            "com.android.ext.services" \
+            "com.google.android.as" \
+            "com.google.android.as.oss" \
+            "com.android.providers.telephony" \
             "android" \
             "system"
           [ -n "$_game_pkg" ] && printf '%s\n' "$_game_pkg"
-          if command -v dumpsys >/dev/null 2>&1; then
-            for _apid in $(dumpsys audio 2>/dev/null | awk '
-              /AudioPlaybackConfiguration/ && /state:started/ {
-                if (match($0, /u\/pid:[0-9]+\/[0-9]+/)) {
-                  s = substr($0, RSTART, RLENGTH)
-                  sub(/^u\/pid:[0-9]+\//, "", s)
-                  print s
-                }
-              }'); do
-              _rc_pkg_from_pid "$_apid"
-            done
-            dumpsys audio 2>/dev/null | awk '
-              /AudioPlaybackConfiguration/ && /state:started/ {
-                if (match($0, /(pack|package):[[:space:]]*[A-Za-z0-9._-]+/)) {
-                  s = substr($0, RSTART, RLENGTH)
-                  sub(/^(pack|package):[[:space:]]*/, "", s)
-                  print s
-                }
-              }'
-            dumpsys media_session 2>/dev/null | awk '
-              /package=[A-Za-z0-9._-]+/ {
-                match($0, /package=[A-Za-z0-9._-]+/)
-                pkg = substr($0, RSTART + 8, RLENGTH - 8)
-                playing = 0
-              }
-              /state=(PLAYING|3[,}])/ || /PlaybackState \{state=PLAYING/ {
-                if (pkg != "" && !playing) {
-                  print pkg
-                  playing = 1
-                }
-              }'
+          [ -n "$_rc_extra_pkg" ] && printf '%s\n' "$_rc_extra_pkg"
+          [ -n "$_rc_focus_pkg" ] && printf '%s\n' "$_rc_focus_pkg"
+          [ -n "$_rc_ime_pkg" ] && printf '%s\n' "$_rc_ime_pkg"
+          printf '%s\n' $_rc_audio_pkgs
+        }
+        _rc_dc_get() {
+          if [ -n "$FAKE_SETTINGS_DIR" ]; then
+            cat "$FAKE_SETTINGS_DIR/dc__${1}__${2}" 2>/dev/null
+          elif command -v device_config >/dev/null 2>&1; then
+            device_config get "$1" "$2" 2>/dev/null
           fi
         }
-        _rc_orig_ttl=""
-        _rc_orig_extra=""
-        _rc_ttl_changed=0
-        _rc_extra_changed=0
-        _rc_ttl_path="$R/sys/kernel/mm/lru_gen/min_ttl_ms"
-        _rc_mglru_path="$R/sys/kernel/mm/lru_gen/enabled"
-        _rc_extra_path="$R/proc/sys/vm/extra_free_kbytes"
+        _rc_dc_put() {
+          if [ -n "$FAKE_SETTINGS_DIR" ]; then
+            mkdir -p "$FAKE_SETTINGS_DIR" 2>/dev/null
+            printf '%s' "$3" > "$FAKE_SETTINGS_DIR/dc__${1}__${2}" 2>/dev/null
+          elif command -v device_config >/dev/null 2>&1; then
+            device_config put "$1" "$2" "$3" >/dev/null 2>&1
+          fi
+        }
+        _rc_dc_del() {
+          if [ -n "$FAKE_SETTINGS_DIR" ]; then
+            rm -f "$FAKE_SETTINGS_DIR/dc__${1}__${2}" 2>/dev/null
+          elif command -v device_config >/dev/null 2>&1; then
+            device_config delete "$1" "$2" >/dev/null 2>&1
+          fi
+        }
+        _rc_zram_compact_path="$R/sys/block/zram0/compact"
         _rc_compact_path="$R/proc/sys/vm/compact_memory"
         _rc_dc_path="$R/proc/sys/vm/drop_caches"
-        _rc_restore_vm() {
-          if [ "${_rc_extra_changed:-0}" -eq 1 ] && [ -n "$_rc_orig_extra" ] && [ -w "$_rc_extra_path" ]; then
-            echo "$_rc_orig_extra" > "$_rc_extra_path" 2>/dev/null
-          fi
-          if [ "${_rc_ttl_changed:-0}" -eq 1 ] && [ -n "$_rc_orig_ttl" ] && [ -w "$_rc_ttl_path" ]; then
-            echo "$_rc_orig_ttl" > "$_rc_ttl_path" 2>/dev/null
+        _rc_uc_changed=0
+        _rc_uc_orig=""
+        _rc_restore_uc() {
+          if [ "${_rc_uc_changed:-0}" -eq 1 ]; then
+            if [ -n "$_rc_uc_orig" ] && [ "$_rc_uc_orig" != "null" ]; then
+              _rc_dc_put activity_manager use_compaction "$_rc_uc_orig"
+            else
+              _rc_dc_del activity_manager use_compaction
+            fi
+            _rc_uc_changed=0
           fi
         }
+
         _rf0=$(_rc_mem_kb MemFree); _rf0=${_rf0:-0}
         _ra0=$(_rc_mem_kb MemAvailable); _ra0=${_ra0:-0}
         _rc0=$(_rc_mem_kb Cached); _rc0=${_rc0:-0}
+        _rz0=$(_rc_zram_kb); _rz0=${_rz0:-0}
         _game_pkg=$(awk 'NR==1{print $1; exit}' "$M54_DIR/game-active.txt" 2>/dev/null)
+        _rc_audio_pkgs=$(_rc_collect_audio | awk 'NF && !seen[$0]++' | tr '\n' ' ')
         _rc_excl=$(_rc_collect_excluded | awk 'NF && !seen[$0]++' | tr '\n' ' ')
-        _rc_is_frozen() {
-          local _p="$1" _cg _val _cand
-          case "$_p" in ''|*[!0-9]*) return 1;; esac
-          if [ -r "$R/proc/$_p/cgroup" ]; then
-            _cg=$(awk -F: '$1=="0"{print $3; exit}' "$R/proc/$_p/cgroup" 2>/dev/null)
-            if [ -n "$_cg" ]; then
-              for _cand in "$R/sys/fs/cgroup${_cg}/cgroup.freeze" "$R/sys/fs/cgroup${_cg%/*}/cgroup.freeze"; do
-                if [ -r "$_cand" ]; then
-                  _val=$(cat "$_cand" 2>/dev/null | tr -d '[:space:]')
-                  [ "$_val" = "1" ] && return 0
-                  return 1
-                fi
-              done
-            fi
-          fi
-          for _cand in "$R"/sys/fs/cgroup/*/uid_*/"pid_$_p"/cgroup.freeze "$R"/sys/fs/cgroup/uid_*/"pid_$_p"/cgroup.freeze; do
-            [ -r "$_cand" ] || continue
-            _val=$(cat "$_cand" 2>/dev/null | tr -d '[:space:]')
-            [ "$_val" = "1" ] && return 0
-          done
-          return 1
-        }
-        _trimmed=0
-        _trim_skip_frozen=0
-        _trim_err=0
-        _trim_attempted=0
-        _rc_trim=1
-        if command -v dumpsys >/dev/null 2>&1 && command -v am >/dev/null 2>&1; then
-          _rc_cands=$(dumpsys activity lru 2>/dev/null | awk -v excl="$_rc_excl" '
+        _rc_no_compact="system android com.orkgabb.fusao $_game_pkg $_rc_extra_pkg $_rc_focus_pkg $_rc_audio_pkgs"
+
+        _killed=0
+        _kill_err=0
+        _kill_attempted=0
+        _rc_kill=0
+        _did_killall=0
+        _compacted=0
+        _rc_comp_op=0
+        _did_zram=0
+        _did_slab=0
+        _rc_dc=0
+        _did_compact_mem=0
+        _rc_cmp=0
+
+        # Fase 1: Encerramento real (force-stop) paralelo em lotes de 8 de TODOS os apps em segundo plano
+        # nao protegidos (inclusive congelados em cgroup.freeze=1), seguido de kill-all + zram compact.
+        _rc_extract_stop_pkgs() {
+          [ -s "$_rc_tmp/lru" ] || return 0
+          awk -v excl="$_rc_excl" '
             BEGIN {
               n = split(excl, arr, " ")
               for (i = 1; i <= n; i++) if (arr[i] != "") skip[arr[i]] = 1
             }
-            /^[[:space:]]*#[0-9]+:[[:space:]]+cch([+-]|[[:space:]]|$)/ {
+            /^[[:space:]]*#[0-9]+:[[:space:]]+(cch([+-]|[[:space:]]|$)|prev[[:space:]]|picked[[:space:]]|svcb[[:space:]]|svc[[:space:]])/ {
               for (i = 1; i <= NF; i++) {
                 if ($i ~ /^[0-9]+:[A-Za-z0-9._:-]+(\/|$)/) {
-                  pid = $i
-                  sub(/:.*$/, "", pid)
                   tok = $i
                   sub(/^[0-9]+:/, "", tok)
                   sub(/\/.*$/, "", tok)
                   pkg = tok
                   sub(/:.*/, "", pkg)
-                  if (pkg != "" && !(pkg in skip) && !(tok in skip) && !seen[tok]++) {
+                  if (pkg ~ /\./ && pkg !~ /^android\.process\./ && !(pkg in skip) && !(tok in skip) && !seen[pkg]++) {
+                    print pkg
+                  }
+                  break
+                }
+              }
+            }' "$_rc_tmp/lru" 2>/dev/null
+        }
+        _rc_count_dir() {
+          local _c=0 _f
+          for _f in "$1"/$2; do
+            [ -e "$_f" ] && _c=$((_c + 1))
+          done
+          echo "$_c"
+        }
+        if command -v dumpsys >/dev/null 2>&1 && command -v cmd >/dev/null 2>&1; then
+          _rc_stop_pkgs=$(_rc_extract_stop_pkgs)
+          _rc_idx=0
+          _rc_in=0
+          for _pkg in $_rc_stop_pkgs; do
+            _rc_idx=$((_rc_idx + 1))
+            _rc_in=$((_rc_in + 1))
+            (
+              if cmd activity force-stop --user 0 "$_pkg" >/dev/null 2>&1; then
+                : > "$_rc_tmp/k/ok.$_rc_idx"
+              else
+                : > "$_rc_tmp/k/er.$_rc_idx"
+              fi
+            ) &
+            if [ "$_rc_in" -ge 8 ]; then
+              wait
+              _rc_in=0
+            fi
+          done
+          [ "$_rc_in" -gt 0 ] && wait
+          _kill_attempted=$_rc_idx
+          _killed=$(_rc_count_dir "$_rc_tmp/k" "ok.*")
+          _kill_err=$(_rc_count_dir "$_rc_tmp/k" "er.*")
+          if cmd activity kill-all >/dev/null 2>&1; then
+            _did_killall=1
+          elif [ "$_kill_attempted" -gt 0 ] && [ "$_killed" -eq 0 ]; then
+            _rc_kill=1
+          fi
+          if [ "$_kill_attempted" -gt 0 ] && [ "$_killed" -eq 0 ]; then
+            _rc_kill=1
+          fi
+        elif command -v dumpsys >/dev/null 2>&1 && command -v am >/dev/null 2>&1; then
+          _rc_stop_pkgs=$(_rc_extract_stop_pkgs)
+          _rc_idx=0
+          _rc_in=0
+          for _pkg in $_rc_stop_pkgs; do
+            _rc_idx=$((_rc_idx + 1))
+            _rc_in=$((_rc_in + 1))
+            (
+              if am force-stop "$_pkg" >/dev/null 2>&1; then
+                : > "$_rc_tmp/k/ok.$_rc_idx"
+              else
+                : > "$_rc_tmp/k/er.$_rc_idx"
+              fi
+            ) &
+            if [ "$_rc_in" -ge 8 ]; then
+              wait
+              _rc_in=0
+            fi
+          done
+          [ "$_rc_in" -gt 0 ] && wait
+          _kill_attempted=$_rc_idx
+          _killed=$(_rc_count_dir "$_rc_tmp/k" "ok.*")
+          _kill_err=$(_rc_count_dir "$_rc_tmp/k" "er.*")
+          if [ "$_kill_attempted" -gt 0 ] && [ "$_killed" -eq 0 ]; then
+            _rc_kill=1
+          fi
+        else
+          _rc_kill=1
+        fi
+
+        # Fase 2: Compactacao de slabs fragmentados no zram0 apos os encerramentos.
+        if [ -w "$_rc_zram_compact_path" ]; then
+          echo 1 > "$_rc_zram_compact_path" 2>/dev/null && _did_zram=1
+        fi
+
+        # Fase 3: Compactacao paralela de residentes + daemons nativos seguros (desligada no modo rapido do TURBO).
+        if [ "${RAMCLEAN_COMPACT_RESIDENTS:-1}" = "1" ] && command -v dumpsys >/dev/null 2>&1 && command -v cmd >/dev/null 2>&1 && { [ -n "$FAKE_SETTINGS_DIR" ] || command -v device_config >/dev/null 2>&1; }; then
+          trap '_rc_restore_uc; _rc_cleanup_tmp; exit 130' INT TERM
+          _rc_uc_orig=$(_rc_dc_get activity_manager use_compaction)
+          if [ "$_rc_uc_orig" != "true" ]; then
+            _rc_dc_put activity_manager use_compaction true
+            _rc_uc_changed=1
+          fi
+          _rc_res_cands=$(dumpsys activity lru 2>/dev/null | awk -v skip_s="$_rc_no_compact" '
+            BEGIN {
+              n = split(skip_s, arr, " ")
+              for (i = 1; i <= n; i++) if (arr[i] != "") skip[arr[i]] = 1
+            }
+            /^[[:space:]]*#[0-9]+:/ {
+              if ($0 ~ /[[:space:]]TOP[[:space:]]/ || $0 ~ /^[[:space:]]*#[0-9]+:[[:space:]]+sys[[:space:]]/) next
+              for (i = 1; i <= NF; i++) {
+                if ($i ~ /^[0-9]+:[A-Za-z0-9._:-]+(\/|$)/) {
+                  pid = $i; sub(/:.*$/, "", pid)
+                  tok = $i; sub(/^[0-9]+:/, "", tok); sub(/\/.*$/, "", tok)
+                  pkg = tok; sub(/:.*/, "", pkg)
+                  if (pid ~ /^[0-9]+$/ && tok != "" && !(pkg in skip) && !(tok in skip) && !seen[tok]++) {
                     print pid ":" tok
-                    cnt++
-                    if (cnt >= 24) exit
                   }
                   break
                 }
               }
             }')
-          for _entry in $_rc_cands; do
-            _pid="${_entry%%:*}"
-            _proc="${_entry#*:}"
-            [ -n "$_proc" ] || continue
-            if [ -n "$_pid" ] && _rc_is_frozen "$_pid"; then
-              _trim_skip_frozen=$((_trim_skip_frozen + 1))
+          _rc_cidx=0
+          _rc_cin=0
+          for _entry in $_rc_res_cands; do
+            _rpid="${_entry%%:*}"
+            _rproc="${_entry#*:}"
+            _ranon=$(_rc_anon_kb "$_rpid")
+            case "$_ranon" in ''|*[!0-9]*) _ranon=0;; esac
+            if [ -r "$R/proc/$_rpid/smaps_rollup" ] && [ "$_ranon" -lt 8192 ]; then
               continue
             fi
-            _trim_attempted=$((_trim_attempted + 1))
-            if am send-trim-memory "$_proc" COMPLETE >/dev/null 2>&1; then
-              _trimmed=$((_trimmed + 1))
-            else
-              _trim_err=$((_trim_err + 1))
+            _rc_cidx=$((_rc_cidx + 1))
+            _rc_cin=$((_rc_cin + 1))
+            (
+              cmd activity compact full "$_rproc" >/dev/null 2>&1 && : > "$_rc_tmp/c/ok.$_rc_cidx"
+            ) &
+            if [ "$_rc_cin" -ge 6 ]; then
+              wait
+              _rc_cin=0
             fi
           done
-          if [ "$_trim_attempted" -gt 0 ] && [ "$_trimmed" -eq 0 ]; then
-            _rc_trim=1
+          if command -v pidof >/dev/null 2>&1; then
+            for _nd in logd vendor.samsung.hardware.camera.provider-service_64 mediaserver shizuku_server axeron_server; do
+              for _npid in $(pidof "$_nd" 2>/dev/null); do
+                _nanon=$(_rc_anon_kb "$_npid")
+                case "$_nanon" in ''|*[!0-9]*) _nanon=0;; esac
+                if [ -r "$R/proc/$_npid/smaps_rollup" ] && [ "$_nanon" -lt 10240 ]; then
+                  continue
+                fi
+                _rc_cidx=$((_rc_cidx + 1))
+                _rc_cin=$((_rc_cin + 1))
+                (
+                  cmd activity compact native full "$_npid" >/dev/null 2>&1 && : > "$_rc_tmp/c/ok.$_rc_cidx"
+                ) &
+                if [ "$_rc_cin" -ge 6 ]; then
+                  wait
+                  _rc_cin=0
+                fi
+              done
+            done
+          fi
+          [ "$_rc_cin" -gt 0 ] && wait
+          _compacted=$(_rc_count_dir "$_rc_tmp/c" "ok.*")
+          _rc_settle_s="${RAMCLEAN_SETTLE_S:-0.5}"
+          [ "$_compacted" -gt 0 ] && [ "$_rc_settle_s" != "0" ] && { sleep "$_rc_settle_s" 2>/dev/null || sleep 1; }
+          _rc_restore_uc
+          trap - INT TERM
+        fi
+
+        # Fase 4: 2a compactacao do zram0 (se houve compactacao de residentes) + drop_caches=2 (somente slab)
+        # + compact_memory=1 (defrag fisica fora de jogo). NUNCA drop_caches=1/3!
+        if [ "$_compacted" -gt 0 ] && [ -w "$_rc_zram_compact_path" ]; then
+          echo 1 > "$_rc_zram_compact_path" 2>/dev/null && _did_zram=1
+        fi
+        if [ "${RAMCLEAN_DROP_SLAB:-1}" = "1" ] && [ -w "$_rc_dc_path" ]; then
+          if echo 2 > "$_rc_dc_path" 2>/dev/null; then
+            _did_slab=1
+            _rc_dc=0
           else
-            _rc_trim=0
-          fi
-          _rc_settle_s="${RAMCLEAN_SETTLE_S:-1}"
-          [ "$_trimmed" -gt 0 ] && [ "$_rc_settle_s" != "0" ] && sleep "$_rc_settle_s" 2>/dev/null
-        fi
-        _rc_mglru_en=$(cat "$_rc_mglru_path" 2>/dev/null)
-        case "${_rc_mglru_en:-0}" in
-          ""|0|0x0|0x0000) _rc_mglru_active=0; _rc_mglru_en="${_rc_mglru_en:-0}";;
-          *) _rc_mglru_active=1;;
-        esac
-        _rc_mglru=1
-        if [ "$_rc_mglru_active" -eq 1 ] && [ -w "$_rc_ttl_path" ]; then
-          _rc_orig_ttl=$(cat "$_rc_ttl_path" 2>/dev/null)
-          case "$_rc_orig_ttl" in
-            ''|*[!0-9]*) : ;;
-            *) _rc_mglru=0 ;;
-          esac
-        fi
-        _mt=$(_rc_mem_kb MemTotal); _mt=${_mt:-0}
-        _rf_mid=$(_rc_mem_kb MemFree); _rf_mid=${_rf_mid:-$_rf0}
-        _ma_mid=$(_rc_mem_kb MemAvailable); _ma_mid=${_ma_mid:-$_ra0}
-        _need_pulse=0
-        if [ "$_mt" -gt 0 ] 2>/dev/null; then
-          if [ "$_rf_mid" -lt $((_mt / 4)) ] || [ "$_ma_mid" -lt $((_mt * 60 / 100)) ]; then
-            _need_pulse=1
-          fi
-        elif [ "$_rf_mid" -lt 524288 ]; then
-          _need_pulse=1
-        fi
-        _need_reclaim=0
-        if [ "$_need_pulse" -eq 1 ] || [ "$_trimmed" -gt 0 ]; then
-          _need_reclaim=1
-        fi
-        _did_drop=0
-        _rc_dc=0
-        _did_compact=0
-        _rc_cmp=0
-        trap '_rc_restore_vm; exit 130' INT TERM
-        if [ "$_need_reclaim" -eq 1 ]; then
-          # No MGLRU, min_ttl_ms > 0 protege workingset recente e bloqueia despejo; zerar na limpeza e restaurar depois.
-          _rc_target_ttl="${RAMCLEAN_TTL_MS:-0}"
-          if [ "$_rc_mglru_active" -eq 1 ] && [ -w "$_rc_ttl_path" ]; then
-            case "$_rc_orig_ttl" in
-              ''|*[!0-9]*) : ;;
-              *)
-                if [ "$_rc_orig_ttl" -gt "$_rc_target_ttl" ] && echo "$_rc_target_ttl" > "$_rc_ttl_path" 2>/dev/null; then
-                  _rc_ttl_changed=1
-                fi
-                ;;
-            esac
-          fi
-          if [ "$_need_pulse" -eq 1 ] && [ -w "$_rc_extra_path" ]; then
-            _rc_orig_extra=$(cat "$_rc_extra_path" 2>/dev/null)
-            case "$_rc_orig_extra" in
-              ''|*[!0-9]*) : ;;
-              *)
-                _rc_rf_target=$(( _rf_mid + 262144 ))
-                _rc_pulse_extra=$(( _rc_orig_extra + 262144 ))
-                [ "$_rc_rf_target" -gt "$_rc_pulse_extra" ] && _rc_pulse_extra="$_rc_rf_target"
-                [ "$_rc_pulse_extra" -lt 327680 ] && _rc_pulse_extra=327680
-                _rc_cap=983040
-                if [ "$_mt" -gt 0 ] 2>/dev/null; then
-                  _rc_cap=$(( _mt / 6 ))
-                  [ "$_rc_cap" -lt 524288 ] && _rc_cap=524288
-                  [ "$_rc_cap" -gt 1048576 ] && _rc_cap=1048576
-                fi
-                [ "$_rc_pulse_extra" -gt "$_rc_cap" ] && _rc_pulse_extra="$_rc_cap"
-                if [ "$_rc_pulse_extra" -gt "$_rc_orig_extra" ] && echo "$_rc_pulse_extra" > "$_rc_extra_path" 2>/dev/null; then
-                  _rc_extra_changed=1
-                  _rc_mglru=0
-                  _rc_pulse_s="${RAMCLEAN_PULSE_S:-2}"
-                  [ "$_rc_pulse_s" != "0" ] && sleep "$_rc_pulse_s" 2>/dev/null
-                fi
-                ;;
-            esac
-          fi
-          if [ "${RAMCLEAN_DROP_CACHES:-1}" = "1" ] && [ -w "$_rc_dc_path" ]; then
-            sync 2>/dev/null || :
-            if echo 1 > "$_rc_dc_path" 2>/dev/null; then
-              _did_drop=1
-              _rc_dc=0
-            else
-              _rc_dc=1
-            fi
+            _rc_dc=1
           fi
         fi
-        _rc_restore_vm
-        trap - INT TERM
-        if [ -z "$_game_pkg" ] && [ "$_need_reclaim" -eq 1 ] && [ "${RAMCLEAN_COMPACT:-1}" = "1" ] && [ -w "$_rc_compact_path" ]; then
-          _did_compact=1
+        if [ -z "$_game_pkg" ] && [ "${RAMCLEAN_COMPACT:-1}" = "1" ] && [ -w "$_rc_compact_path" ]; then
+          _did_compact_mem=1
           echo 1 > "$_rc_compact_path" 2>/dev/null
           _rc_cmp=$?
         fi
+        _rc_cleanup_tmp
+
         _rf1=$(_rc_mem_kb MemFree); _rf1=${_rf1:-$_rf0}
         _ra1=$(_rc_mem_kb MemAvailable); _ra1=${_ra1:-$_ra0}
         _rc1=$(_rc_mem_kb Cached); _rc1=${_rc1:-$_rc0}
-        if [ "$_rc_mglru_active" -eq 1 ]; then
-          [ "$_rc_extra_changed" -eq 1 ] && _rc_mglru_tag="${_rc_mglru_en}:pulse" || _rc_mglru_tag="${_rc_mglru_en}:ttl"
-        else
-          [ "$_rc_extra_changed" -eq 1 ] && _rc_mglru_tag="off:pulse" || _rc_mglru_tag="off:trim"
-        fi
-        _rc_actions=$(( _trimmed + _rc_ttl_changed + _rc_extra_changed + _did_drop + _did_compact ))
+        _rz1=$(_rc_zram_kb); _rz1=${_rz1:-$_rz0}
+        _rc_actions=$(( _killed + _did_killall + _compacted + _did_zram + _did_slab + _did_compact_mem ))
         if [ "$_rc_actions" -eq 0 ]; then
-          if [ "$_rc_trim" -ne 0 ] && [ "$_rc_mglru" -ne 0 ] && [ "$_did_drop" -eq 0 ] && [ "$_did_compact" -eq 0 ]; then
+          if [ "$_rc_kill" -ne 0 ] && [ "$_did_zram" -eq 0 ] && [ "$_did_slab" -eq 0 ] && [ "$_did_compact_mem" -eq 0 ]; then
             _rc_status="fail"
-          elif [ "$_rc_trim" -ne 0 ] || [ "$_trim_err" -gt 0 ] || [ "$_rc_dc" -ne 0 ]; then
+          elif [ "$_rc_kill" -ne 0 ] || [ "$_kill_err" -gt 0 ] || [ "$_rc_dc" -ne 0 ]; then
             _rc_status="partial"
           else
             _rc_status="noop"
           fi
-        elif [ "$_rc_trim" -ne 0 ] || [ "$_rc_mglru" -ne 0 ] || [ "$_trim_err" -gt 0 ] || [ "$_rc_dc" -ne 0 ] || [ "$_rc_cmp" -ne 0 ]; then
+        elif [ "$_rc_kill" -ne 0 ] || [ "$_kill_err" -gt 0 ] || [ "$_rc_dc" -ne 0 ] || [ "$_rc_cmp" -ne 0 ]; then
           _rc_status="partial"
         else
           _rc_status="ok"
         fi
-        set -- $(awk -v a0="$_ra0" -v a1="$_ra1" -v f0="$_rf0" -v f1="$_rf1" 'BEGIN {
+        set -- $(awk -v a0="$_ra0" -v a1="$_ra1" -v f0="$_rf0" -v f1="$_rf1" -v z0="$_rz0" -v z1="$_rz1" 'BEGIN {
           dk = a1 - a0; dm = int(dk / 1024);
           sk = (dk > 0 ? "+" dk : dk);
           sm = (dm > 0 ? "+" dm : dm);
-          printf "%s %s %d %d %d %d\n", sk, sm, int(a0 / 1024), int(a1 / 1024), int(f0 / 1024), int(f1 / 1024)
+          printf "%s %s %d %d %d %d %d %d\n", sk, sm, int(a0 / 1024), int(a1 / 1024), int(f0 / 1024), int(f1 / 1024), int(z0 / 1024), int(z1 / 1024)
         }')
-        _dkb="${1:-0}"; _dmb="${2:-0}"; _ab_mb="${3:-0}"; _aa_mb="${4:-0}"; _fb_mb="${5:-0}"; _fa_mb="${6:-0}"
-        _rc_msg="ramclean ${_rc_status} free=${_rf0}->${_rf1} avail=${_ra0}->${_ra1} delta_kb=${_dkb} delta_mb=${_dmb} cached=${_rc0}->${_rc1} trimmed=${_trimmed} frozen_skip=${_trim_skip_frozen} mglru=${_rc_mglru_tag} rc=${_rc_trim}/${_rc_mglru}/${_rc_cmp}"
+        _dkb="${1:-0}"; _dmb="${2:-0}"; _ab_mb="${3:-0}"; _aa_mb="${4:-0}"; _fb_mb="${5:-0}"; _fa_mb="${6:-0}"; _zb_mb="${7:-0}"; _za_mb="${8:-0}"
+        _rc_tag="deep:stop"
+        [ "$_compacted" -gt 0 ] && _rc_tag="${_rc_tag}+cmp"
+        [ "$_did_zram" -eq 1 ] && _rc_tag="${_rc_tag}+zram"
+        _rc_msg="ramclean ${_rc_status} free=${_rf0}->${_rf1} avail=${_ra0}->${_ra1} delta_kb=${_dkb} delta_mb=${_dmb} cached=${_rc0}->${_rc1} killed=${_killed} compacted=${_compacted} zram=${_zb_mb}->${_za_mb}MB trimmed=${_killed} mglru=${_rc_tag} rc=${_rc_kill}/${_rc_dc}/${_rc_cmp}"
         log_msg "$_rc_msg"
         echo "$_rc_msg"
-        echo "MemAvailable: ${_ab_mb} MB -> ${_aa_mb} MB (${_dmb} MB) | Free: ${_fb_mb} -> ${_fa_mb} MB | trim=${_trimmed} procs (frozen_skip=${_trim_skip_frozen}) | MGLRU=${_rc_mglru_tag} (drop_caches=${_did_drop})"
+        echo "MemAvailable: ${_ab_mb} MB -> ${_aa_mb} MB (${_dmb} MB) | Free: ${_fb_mb} -> ${_fa_mb} MB | stop=${_killed} apps | compact=${_compacted} | zram=${_zb_mb}->${_za_mb} MB | slab=${_did_slab}"
         [ "$_rc_status" = "fail" ] && exit 1
         exit 0
         ;;
@@ -636,6 +759,25 @@ case "$cmd" in
         ;;
       *) [ -f "$M54_DIR/ramclean.enabled" ] && echo "ramclean=on" || echo "ramclean=off";;
     esac;;
+  launch)
+    if [ -z "$arg" ]; then
+      echo "uso: fusao launch <pkg>" >&2
+      exit 1
+    fi
+    if [ -f "$M54_DIR/turbo.sh" ]; then
+      FUSAO_CLI="$0" M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" sh "$M54_DIR/turbo.sh" launch "$arg"
+    else
+      echo "FALHOU: turbo.sh ausente em $M54_DIR" >&2
+      exit 1
+    fi
+    ;;
+  turbo)
+    if [ -f "$M54_DIR/turbo.sh" ]; then
+      FUSAO_CLI="$0" M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" sh "$M54_DIR/turbo.sh" "${arg:-status}" "$3"
+    else
+      echo "turbo=unsupported"
+    fi
+    ;;
   display)
     shift 2>/dev/null
     [ "$#" -gt 0 ] || set -- show
@@ -686,6 +828,9 @@ case "$cmd" in
       done
       echo "$R/proc/sys/net/ipv4/tcp_congestion_control cubic"
       echo "$R/proc/sys/net/ipv4/tcp_fastopen 3"
+      echo "$R/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive 0"
+      echo "$R/dev/cpuctl/background/cpu.uclamp.max max"
+      echo "$R/dev/cpuctl/system-background/cpu.uclamp.max max"
     } > "$M54_DIR/tune.stock" 2>/dev/null
     chmod 0600 "$M54_DIR/tune.stock" 2>/dev/null
     echo "reseed-stock ok (13 entradas + tune.stock)";;
@@ -740,6 +885,9 @@ case "$cmd" in
               [ "$_p" = "$$" ] || kill -TERM "$_p" 2>/dev/null
             done
           done
+          if [ -f "$M54_DIR/turbo.sh" ]; then
+            M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" sh "$M54_DIR/turbo.sh" restore >/dev/null 2>&1
+          fi
           if [ -f "$M54_DIR/framework.sh" ]; then
             M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/framework.sh" idle >/dev/null 2>&1
           fi
@@ -761,5 +909,5 @@ case "$cmd" in
         printf "%s\n" "$3" "$4" "$5" "$6" "$7" | grep -v "^$" > "$M54_DIR/gamelist.txt"; echo "gamelist substituida";;
       *) echo "fusao gamelist: verbo invalido '$arg' (list|add|del|count|set); lista intacta" >&2; exit 1;;
     esac;;
-  *) echo "fusao: profile|framework|perf|fusaod|fas|dnd|block|ramclean|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"; exit 1;;
+  *) echo "fusao: profile|framework|perf|fusaod|fas|dnd|block|ramclean|launch|turbo|display|gos|reseed-stock|status|log|bugreport|kill-switch|gamelist"; exit 1;;
 esac

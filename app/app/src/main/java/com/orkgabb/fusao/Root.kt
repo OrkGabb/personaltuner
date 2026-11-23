@@ -57,6 +57,31 @@ object RootShell {
             )
         }
     }
+
+    /**
+     * Executa um comando root fora da fila do shell persistente do libsu (ex.: cancelar
+     * um `fusao launch` em andamento sem ficar bloqueado esperando o próprio launch terminar).
+     */
+    suspend fun runOutOfBand(script: String): ShellRunResult = withContext(Dispatchers.IO) {
+        runCatching {
+            val proc = ProcessBuilder("su", "-c", script)
+                .redirectErrorStream(true)
+                .start()
+            val out = proc.inputStream.bufferedReader().readLines()
+            val code = proc.waitFor()
+            ShellRunResult(
+                isSuccess = code == 0,
+                exitCode = code,
+                output = out,
+            )
+        }.getOrElse {
+            ShellRunResult(
+                isSuccess = false,
+                exitCode = -1,
+                output = emptyList(),
+            )
+        }
+    }
 }
 
 data class ShellRunResult(

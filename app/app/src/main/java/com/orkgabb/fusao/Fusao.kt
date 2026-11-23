@@ -193,6 +193,51 @@ object FusaoBridge {
         return RootShell.run("\"$c\" ramclean status 2>&1").output
     }
 
+    /**
+     * Sessão turbo single-shot (`fusao launch <pkg>`, módulo >= 2.14.0):
+     * limpa RAM de verdade, aquece caches de shader, aplica perfil game + Mali-G68 +
+     * GameManager custom (fps=0, downscale=disable) + ADPF HintManager transitório e abre o jogo.
+     */
+    suspend fun launchGameTurbo(pkg: String): String {
+        val c = cli()
+        if (c.isEmpty()) return "módulo ausente"
+        val safe = pkg.trim().replace(Regex("[^A-Za-z0-9_.]"), "")
+        if (safe.isEmpty()) return "pacote inválido"
+        val r = RootShell.run("\"$c\" launch $safe 2>&1")
+        return formatTurboLaunchResult(r, safe)
+    }
+
+    /** Cancela imediatamente um lançamento turbo em andamento fora da fila do shell principal. */
+    suspend fun cancelGameTurbo(): String {
+        val c = cachedCli ?: "/data/adb/ksu/bin/fusao"
+        val r = RootShell.runOutOfBand("\"$c\" turbo cancel 2>&1")
+        return if (r.isSuccess) "Turbo cancelado" else "Turbo cancelado"
+    }
+
+    internal fun formatTurboLaunchResult(result: ShellRunResult, pkg: String): String {
+        if (result.output.any { it.startsWith("fusao: profile|") }) {
+            return "FALHOU: atualize o módulo para o 2.14.0 (sem comando launch)"
+        }
+        if (result.output.any { it.trim().startsWith("turbo cancelled") }) {
+            return "Turbo cancelado"
+        }
+        if (!result.isSuccess) {
+            return failMessage(result.output, "não foi possível abrir $pkg em modo turbo")
+        }
+        val line = result.output.lastOrNull { it.trim().startsWith("turbo ok") }?.trim()
+            ?: return result.output.lastOrNull()?.trim().orEmpty().ifEmpty { "Turbo iniciado: $pkg" }
+        val delta = Regex("ram_delta=([+-]?[0-9]+MB)").find(line)?.groupValues?.getOrNull(1)
+        val avail = Regex("avail=([0-9]+MB)").find(line)?.groupValues?.getOrNull(1)
+        val mali = Regex("mali=([0-9]+/[0-9]+)").find(line)?.groupValues?.getOrNull(1)
+        val adpf = Regex("adpf=([0-9]+)").find(line)?.groupValues?.getOrNull(1)
+        val parts = buildList {
+            if (delta != null) add("RAM $delta" + (if (avail != null) " ($avail)" else ""))
+            if (mali != null && !mali.endsWith("/0")) add("Mali $mali")
+            if (adpf == "1") add("ADPF")
+        }
+        return if (parts.isNotEmpty()) "Turbo ativo · ${parts.joinToString(" · ")}" else "Turbo iniciado: $pkg"
+    }
+
     suspend fun gamelist(): List<String> {
         val c = cli()
         if (c.isEmpty()) return emptyList()
@@ -417,6 +462,9 @@ data class RamcleanTelemetry(
     val lastDeltaMb: Int? = null,
     val lastDeltaKb: Long? = null,
     val lastTrimmedCount: Int? = null,
+    val lastKilledCount: Int? = null,
+    val lastCompactedCount: Int? = null,
+    val lastZramTransition: String = "",
     val lastMglruTag: String = "",
     val lastRc: String = "",
     val recentEvents: List<String> = emptyList(),
@@ -429,6 +477,9 @@ data class RamcleanTelemetry(
         private val DELTA_MB_REGEX = Regex("delta_mb=([+-]?[0-9]+)")
         private val DELTA_KB_REGEX = Regex("delta_kb=([+-]?[0-9]+)")
         private val TRIMMED_REGEX = Regex("trimmed=([0-9]+)")
+        private val KILLED_REGEX = Regex("killed=([0-9]+)")
+        private val COMPACTED_REGEX = Regex("compacted=([0-9]+)")
+        private val ZRAM_REGEX = Regex("zram=([0-9]+->[0-9]+MB)")
         private val MGLRU_REGEX = Regex("mglru=([^\\s]+)")
         private val RC_REGEX = Regex("rc=([0-9/]+)")
 
@@ -471,6 +522,9 @@ data class RamcleanTelemetry(
             val deltaMb = DELTA_MB_REGEX.find(latest)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: computedDeltaKb?.let { (it / 1024L).toInt() }
             val trimmedCount = TRIMMED_REGEX.find(latest)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val killedCount = KILLED_REGEX.find(latest)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val compactedCount = COMPACTED_REGEX.find(latest)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val zramTransition = ZRAM_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
             val mglruTag = MGLRU_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
             val rcMatch = RC_REGEX.find(latest)?.groupValues?.getOrNull(1).orEmpty()
             return RamcleanTelemetry(
@@ -482,6 +536,9 @@ data class RamcleanTelemetry(
                 lastDeltaMb = deltaMb,
                 lastDeltaKb = deltaKb,
                 lastTrimmedCount = trimmedCount,
+                lastKilledCount = killedCount,
+                lastCompactedCount = compactedCount,
+                lastZramTransition = zramTransition,
                 lastMglruTag = mglruTag,
                 lastRc = rcMatch,
                 recentEvents = events,

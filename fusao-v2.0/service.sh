@@ -102,7 +102,7 @@ for _pat in "fusaod serve" "fusao.observer" "watch.sh" "thermal_guard.sh" "gos_k
 	kill_stale "$_pat"
 done
 
-for _f in thermal_guard.sh thermal_guard_stop.sh lib.sh gos_killer.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh dnd.sh display.sh observer.sh observer.dex fas.sh; do
+for _f in thermal_guard.sh thermal_guard_stop.sh lib.sh gos_killer.sh watch.sh framework.sh perf.sh bugreport.sh tune.sh dnd.sh display.sh observer.sh observer.dex fas.sh turbo.sh; do
 	[ -f "$MODDIR/fusao/$_f" ] && cp -f "$MODDIR/fusao/$_f" "$FUSAO_DIR/$_f" 2>/dev/null
 done
 [ -s "$FUSAO_DIR/gamelist.txt" ] || cp -f "$MODDIR/fusao/gamelist.txt" "$FUSAO_DIR/gamelist.txt" 2>/dev/null

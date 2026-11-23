@@ -33,7 +33,7 @@ for _rel in \
 	fusao/thermal_guard.sh fusao/thermal_guard_stop.sh fusao/lib.sh \
 	fusao/gos_killer.sh fusao/watch.sh fusao/framework.sh fusao/perf.sh \
 	fusao/bugreport.sh fusao/dnd.sh fusao/display.sh fusao/tune.sh \
-	fusao/observer.sh fusao/observer.dex fusao/fas.sh fusao/gamelist.txt fusao/config; do
+	fusao/observer.sh fusao/observer.dex fusao/fas.sh fusao/turbo.sh fusao/gamelist.txt fusao/config; do
 	extract "$ZIPFILE" "$_rel" "$MODPATH"
 done
 cp "$MODPATH/module.prop" "$MODPATH/module.prop.orig"
@@ -43,7 +43,7 @@ for f in \
 	service.sh uninstall.sh cleanup.sh action.sh system/bin/fusaod system/bin/fusao system/bin/fas-rs \
 	fusao/thermal_guard.sh fusao/thermal_guard_stop.sh fusao/lib.sh fusao/gos_killer.sh \
 	fusao/watch.sh fusao/framework.sh fusao/perf.sh fusao/bugreport.sh fusao/tune.sh \
-	fusao/dnd.sh fusao/display.sh fusao/observer.sh fusao/observer.dex fusao/fas.sh \
+	fusao/dnd.sh fusao/display.sh fusao/observer.sh fusao/observer.dex fusao/fas.sh fusao/turbo.sh \
 	fusao/gamelist.txt fusao/config; do
 	if [ -f "$MODPATH/$f" ]; then
 		ui_print "- [OK] $f"
