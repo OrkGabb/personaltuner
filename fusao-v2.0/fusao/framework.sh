@@ -200,16 +200,32 @@ purge_dead_triads() {
   : > "$M54_DIR/.triad_dead_purged" 2>/dev/null
 }
 
+# game_needs_60hz — jogo ativo com teto explicito <= 60 FPS no FAS (ex.: NTE 30, Plague 30, T3 60).
+# Travar a tela em 60 Hz evita gastar ~34% de energia extra de painel/DPU em 120 Hz fixo sem ganho de FPS.
+game_needs_60hz() {
+  local _ga _cap
+  [ -s "$M54_DIR/game-active.txt" ] || return 1
+  _ga=$(tr -d '[:space:]' < "$M54_DIR/game-active.txt" 2>/dev/null)
+  _cap=$(fas_game_cap "$_ga")
+  [ -n "$_cap" ] && [ "$_cap" -le 60 ] 2>/dev/null
+}
+
 apply_triad() {
   # apply_triad <game|balanced|battery>
   purge_dead_triads
   case "$1" in
     game)
       sput global activity_manager_constants "$TRIAD_AM_GAME"
-      sput system peak_refresh_rate "120.0"
       if [ -s "$M54_DIR/game-active.txt" ]; then
-        sput system min_refresh_rate "120.0"
+        if game_needs_60hz; then
+          sput system peak_refresh_rate "60.0"
+          sput system min_refresh_rate "60.0"
+        else
+          sput system peak_refresh_rate "120.0"
+          sput system min_refresh_rate "120.0"
+        fi
       else
+        sput system peak_refresh_rate "120.0"
         apply_outside_refresh_rates
       fi
       # Inteiro válido '0' (sem override forçado de FPS no GameManagerService)
@@ -222,7 +238,12 @@ apply_triad() {
       ;;
     *) # balanced
       sput global activity_manager_constants "$TRIAD_AM_BALANCED"
-      apply_outside_refresh_rates
+      if game_needs_60hz; then
+        sput system peak_refresh_rate "60.0"
+        sput system min_refresh_rate "60.0"
+      else
+        apply_outside_refresh_rates
+      fi
       dput game_overlay "game_default_frame_rate" "0"
       ;;
   esac

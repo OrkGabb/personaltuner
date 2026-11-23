@@ -180,6 +180,49 @@ fas_owns_cpu() {
   ! fas_game_off "$_g"
 }
 
+# fas_game_cap <pkg> — maior limite numerico de FPS configurado em fas.targets para o jogo quando o FAS
+# esta ligado (ex.: "30" -> 30, "30,45,60" -> 60). Retorna vazio e rc 1 para auto, off, ausente ou FAS off.
+fas_game_cap() {
+  local _l _v="" _tok _max=0 _old_ifs
+  [ -f "$M54_DIR/fas.enabled" ] || return 1
+  [ -n "$1" ] && [ -r "$M54_DIR/fas.targets" ] || return 1
+  while IFS= read -r _l || [ -n "$_l" ]; do
+    case "$_l" in "$1="*) _v=${_l#*=};; esac
+  done < "$M54_DIR/fas.targets"
+  _v=${_v%%[[:space:]]*}
+  case "$_v" in
+    ""|off|auto|*[!0-9,]*) return 1;;
+  esac
+  _old_ifs="$IFS"
+  IFS=,
+  for _tok in $_v; do
+    case "$_tok" in
+      ''|*[!0-9]*) ;;
+      *) [ "$_tok" -gt "$_max" ] 2>/dev/null && _max="$_tok";;
+    esac
+  done
+  IFS="$_old_ifs"
+  [ "$_max" -gt 0 ] || return 1
+  echo "$_max"
+  return 0
+}
+
+# turbo_scale_for <pkg> — escala de resolucao configurada para o jogo no turbo (downscale.targets).
+# Devolve 720p, 810p, 900p ou 1x (nativa, sem downscale). A ultima linha do pacote vence.
+turbo_scale_for() {
+  local _l _v=""
+  if [ -n "$1" ] && [ -r "$M54_DIR/downscale.targets" ]; then
+    while IFS= read -r _l || [ -n "$_l" ]; do
+      case "$_l" in "$1="*) _v=${_l#*=};; esac
+    done < "$M54_DIR/downscale.targets"
+  fi
+  _v=${_v%%[[:space:]]*}
+  case "$_v" in
+    720p|810p|900p) echo "$_v";;
+    *) echo "1x";;
+  esac
+}
+
 # effective_profile — o perfil EM VIGOR, SSOT p/ tune/framework/perf/watch/CLI (regra do dono, 2026-10-18):
 #   battery + jogo da gamelist em foco -> game (fora do jogo volta a battery);
 #   balanced fica balanced mesmo em jogo (jogos casuais); game é game.

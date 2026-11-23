@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalLayoutApi::class)
+
 package com.orkgabb.fusao
 
 import android.os.Bundle
@@ -36,6 +38,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -1860,9 +1864,9 @@ class MainActivity : ComponentActivity() {
                                         }
                                         val showFasPill = state.status.fas && state.status.fasSupported
                                         if (showFasPill || isInstalled) {
-                                            Row(
+                                            FlowRow(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
+                                                verticalArrangement = Arrangement.spacedBy(5.dp),
                                             ) {
                                                 if (showFasPill) {
                                                     // sem a leitura do `fas list` o limite é desconhecido: não mostra AUTO
@@ -1897,6 +1901,21 @@ class MainActivity : ComponentActivity() {
                                                                 if (isLaunchingThis) vm.cancelGameTurbo() else vm.launchGameTurbo(pkg)
                                                             },
                                                     )
+                                                    if (state.turboScalesLoaded) {
+                                                        val curScale = turboScaleLabel(state.turboScales[pkg])
+                                                        val isScaleBusy = state.isBusy(Busy.FLAG) && state.activeTarget == "turbo_scale:$pkg"
+                                                        val scaled = curScale != "1x"
+                                                        TelemetryPill(
+                                                            text = if (isScaleBusy) "…" else curScale,
+                                                            color = if (scaled) FusaoPalette.CryoCyan else FusaoPalette.TextMuted,
+                                                            filled = scaled,
+                                                            modifier = Modifier
+                                                                .clip(CircleShape)
+                                                                .clickable(enabled = state.rooted && !busy && !anyLaunching) {
+                                                                    vm.cycleTurboScale(pkg)
+                                                                },
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }

@@ -194,9 +194,34 @@ object FusaoBridge {
     }
 
     /**
+     * Escala de resolução por jogo para o Turbo (`fusao turbo scale list`, módulo >= 2.15.0).
+     * Retorna null se o módulo não suportar `turbo scale` ou o comando falhar.
+     */
+    suspend fun turboScalesOrNull(): Map<String, String>? {
+        val c = cli()
+        if (c.isEmpty()) return null
+        val r = RootShell.run("\"$c\" turbo scale list 2>/dev/null")
+        if (!r.isSuccess) return null
+        return parseTurboScales(r.output)
+    }
+
+    /** Define escala de resolução por jogo para o Turbo (`1x`, `900p`, `810p`, `720p`). */
+    suspend fun setTurboScale(pkg: String, scale: String): String {
+        val c = cli()
+        if (c.isEmpty()) return "módulo ausente"
+        val safePkg = pkg.trim().replace(Regex("[^A-Za-z0-9_.]"), "")
+        val safeScale = normalizeTurboScale(scale)
+        if (safePkg.isEmpty()) return "pacote inválido"
+        val r = RootShell.run("\"$c\" turbo scale set $safePkg $safeScale 2>&1")
+        if (!r.isSuccess) return failMessage(r.output, "turbo scale falhou")
+        return if (safeScale == "1x") "Escala Turbo: 1x (nativa)" else "Escala Turbo: $safeScale"
+    }
+
+    /**
      * Sessão turbo single-shot (`fusao launch <pkg>`, módulo >= 2.14.0):
      * limpa RAM de verdade, aquece caches de shader, aplica perfil game + Mali-G68 +
-     * GameManager custom (fps=0, downscale=disable) + ADPF HintManager transitório e abre o jogo.
+     * downscale por app (se != 1x) + GameManager custom (fps=0, downscale=disable) +
+     * ADPF HintManager transitório e abre o jogo.
      */
     suspend fun launchGameTurbo(pkg: String): String {
         val c = cli()
@@ -226,11 +251,13 @@ object FusaoBridge {
         }
         val line = result.output.lastOrNull { it.trim().startsWith("turbo ok") }?.trim()
             ?: return result.output.lastOrNull()?.trim().orEmpty().ifEmpty { "Turbo iniciado: $pkg" }
+        val scale = Regex("scale=(720p|810p|900p|1x)").find(line)?.groupValues?.getOrNull(1)
         val delta = Regex("ram_delta=([+-]?[0-9]+MB)").find(line)?.groupValues?.getOrNull(1)
         val avail = Regex("avail=([0-9]+MB)").find(line)?.groupValues?.getOrNull(1)
         val mali = Regex("mali=([0-9]+/[0-9]+)").find(line)?.groupValues?.getOrNull(1)
         val adpf = Regex("adpf=([0-9]+)").find(line)?.groupValues?.getOrNull(1)
         val parts = buildList {
+            if (scale != null && scale != "1x") add(scale)
             if (delta != null) add("RAM $delta" + (if (avail != null) " ($avail)" else ""))
             if (mali != null && !mali.endsWith("/0")) add("Mali $mali")
             if (adpf == "1") add("ADPF")
@@ -620,6 +647,36 @@ fun parseFasToml(lines: List<String>): Map<String, List<Int>> {
         }
         val m = rx.find(line) ?: continue
         out[m.groupValues[1]] = m.groupValues[2].split(",").mapNotNull { it.trim().toIntOrNull() }
+    }
+    return out
+}
+
+/** Escalas de resolução por jogo aplicadas pelo Turbo (sessão temporária via `wm size`, restaurada ao sair). */
+val TURBO_SCALE_PRESETS = listOf("1x", "900p", "810p", "720p")
+
+fun normalizeTurboScale(raw: String?): String = when (raw?.trim()?.lowercase()) {
+    "900p" -> "900p"
+    "810p" -> "810p"
+    "720p" -> "720p"
+    else -> "1x"
+}
+
+/** Próxima escala do ciclo a partir da escala em vigor no módulo (`1x -> 900p -> 810p -> 720p -> 1x`). */
+fun nextTurboScale(current: String?): String {
+    val norm = normalizeTurboScale(current)
+    val idx = TURBO_SCALE_PRESETS.indexOf(norm)
+    return TURBO_SCALE_PRESETS[(idx + 1) % TURBO_SCALE_PRESETS.size]
+}
+
+fun turboScaleLabel(scale: String?): String = normalizeTurboScale(scale)
+
+/** `pkg=810p` (saída de `fusao turbo scale list`) -> mapa `pkg -> "810p"`. Entradas inválidas ou `1x` são ignoradas. */
+fun parseTurboScales(lines: List<String>): Map<String, String> {
+    val rx = Regex("""^\s*([A-Za-z0-9_.]+)\s*=\s*(900p|810p|720p)\s*$""")
+    val out = LinkedHashMap<String, String>()
+    for (line in lines) {
+        val m = rx.find(line) ?: continue
+        out[m.groupValues[1]] = m.groupValues[2]
     }
     return out
 }

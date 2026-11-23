@@ -588,8 +588,17 @@ profile_targets() {
       T_SWAP=60; T_VFS=50; T_STAT_INT=10
       T_UCLAMP_TOP_LS=1; T_UCLAMP_BG_MAX=35; T_UCLAMP_SYSBG_MAX=45
       if [ "$act" = 1 ]; then
+        local _ga _fcap=""
+        _ga=$(tr -d '[:space:]' < "$GAME_ACTIVE" 2>/dev/null)
+        _fcap=$(fas_game_cap "$_ga")
         r_p0min=1152000; r_p4min=1056000
-        T_MIF_MIN=1014000; T_INT_MIN=333000
+        T_INT_MIN=333000
+        if [ -n "$_fcap" ] && [ "$_fcap" -le 60 ] 2>/dev/null; then
+          # Jogo travado <= 60 FPS (tela em 60 Hz): DPU/MIF nao precisam do piso de 120 Hz.
+          T_MIF_MIN=845000; T_DISP_MIN=66000
+        else
+          T_MIF_MIN=1014000
+        fi
         T_NOMERGES=1
       fi
       ;;

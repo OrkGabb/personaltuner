@@ -1,7 +1,7 @@
 id=fusao
 name=FUSAO-M54
-version=2.14.0-fusao (M54-single)
-versionCode=1619
+version=2.15.0-fusao (M54-single)
+versionCode=1620
 author=OrkGabb
 description=Módulo de performance e gestão de energia para o Galaxy M54 (Exynos 1380).
 banner=banner.webp

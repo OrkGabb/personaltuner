@@ -2053,7 +2053,7 @@ zr_reset_mock; : > "$ZR/fusao/disable"
 zr_run
 [ "$?" = 0 ] && [ ! -s "$ZR/calls" ] && grep -q '\[lzo-rle\]' "$ZR/sys/comp_algorithm" && ok "zram respeita disable" || bad "zram respeita disable"
 
-# 22) fusao launch <pkg> (turbo single-shot: ramclean + shader prewarm + game profile + Mali + GameManager + ADPF transitorio + restore)
+# 22) fusao launch <pkg> (turbo single-shot: ramclean + shader prewarm incl. UE5 Vulkan + game profile + Mali 5 nos sem always_on + GameManager + ADPF transitorio + restore)
 TB="$FAKE/tb"
 mkdir -p "$TB/fusao" "$TB/bin" "$TB/settings" \
   "$TB/sys/devices/platform/10300000.mali" \
@@ -2061,7 +2061,8 @@ mkdir -p "$TB/fusao" "$TB/bin" "$TB/settings" \
   "$TB/sys/block/zram0" \
   "$TB/proc/sys/vm" \
   "$TB/data/user/0/com.example.turbo/cache" \
-  "$TB/data/user_de/0/com.example.turbo/cache"
+  "$TB/data/user_de/0/com.example.turbo/cache" \
+  "$TB/sdcard/Android/data/com.example.turbo/files/VulkanProgramBinaryCache"
 cp "$FAKE/fusao/"*.sh "$FAKE/fusao/config" "$FAKE/fusao/fusao-cli" "$TB/fusao/" 2>/dev/null
 chmod +x "$TB/fusao/"*.sh "$TB/fusao/fusao-cli"
 echo "balanced" > "$TB/fusao/profile"
@@ -2080,6 +2081,8 @@ echo "0" > "$TB/proc/sys/vm/compact_memory"
 printf 'MemTotal: 7614456 kB\nMemFree: 400000 kB\nMemAvailable: 3000000 kB\nCached: 2400000 kB\n' > "$TB/proc/meminfo"
 printf 'fake-vk-shader-blob' > "$TB/data/user/0/com.example.turbo/cache/shadercachevk.bin"
 printf 'fake-skia-shader-blob' > "$TB/data/user_de/0/com.example.turbo/cache/com.android.skia.shaders_cache"
+printf 'fake-ue5-pso-blob' > "$TB/sdcard/Android/data/com.example.turbo/files/VulkanProgramBinaryCache/VulkanPSO_TEST.13b5"
+printf 'fake-lru' > "$TB/sdcard/Android/data/com.example.turbo/files/VulkanProgramBinaryCache/VulkanPSO_TEST.13b5.lru"
 cat > "$TB/bin/dumpsys" <<'TBDS'
 #!/bin/sh
 if [ "$1" = "activity" ] && [ "$2" = "lru" ]; then
@@ -2110,34 +2113,38 @@ cat > "$TB/bin/pidof" <<'TBPID'
 TBPID
 chmod +x "$TB/bin/"*
 : > "$TB/cmd.log"; : > "$TB/am.log"
+printf '1080x2400' > "$TB/wm"
 _tb_out=$(PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  WM_FAKE="$TB/wm" WM_FAKE_PHYS="1080x2400" \
   RAMCLEAN_SETTLE_S=0 TURBO_HWUI_WAIT_S=0 TURBO_WATCHDOG_S=0 TUNE_NO_DEFER=1 \
   sh "$TB/fusao/fusao-cli" launch com.example.turbo 2>&1)
 _tb_rc=$?
 echo "$_tb_out" | grep -q "turbo ok pkg=com.example.turbo" && [ "$_tb_rc" -eq 0 ] && \
-  echo "$_tb_out" | grep -q "mali=6/6" && echo "$_tb_out" | grep -q "shaders=2" && echo "$_tb_out" | grep -q "adpf=1" && \
-  ok "turbo launch executa pipeline completo (RAM + shaders=2 + Mali 6/6 + GameManager + ADPF)" || bad "turbo launch rc=$_tb_rc out=$_tb_out"
+  echo "$_tb_out" | grep -q "mali=5/5" && echo "$_tb_out" | grep -q "shaders=3" && echo "$_tb_out" | grep -q "adpf=1" && echo "$_tb_out" | grep -q "scale=1x" && \
+  ok "turbo launch executa pipeline completo (RAM + shaders=3 incl UE5 + Mali 5/5 + GameManager + ADPF + scale=1x)" || bad "turbo launch rc=$_tb_rc out=$_tb_out"
 grep -q "cmd activity force-stop --user 0 com.bg.hog" "$TB/cmd.log" && \
   ! grep -q "force-stop --user 0 com.example.turbo" "$TB/cmd.log" && \
   [ -f "$TB/data/user/0/com.example.turbo/cache/shadercachevk.bin" ] && \
-  ok "turbo launch limpa bg, protege jogo alvo e preserva caches de shader" || bad "turbo launch ram/shader safety"
+  ok "turbo launch 1x limpa bg, protege jogo alvo e preserva caches de shader" || bad "turbo launch ram/shader safety"
 [ "$(cat "$TB/fusao/profile")" = "game" ] && \
-  [ "$(cat "$TB/sys/devices/platform/10300000.mali/power_policy")" = "always_on" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/power_policy")" = "[coarse_demand] always_on" ] && \
   [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_clock")" = "754000" ] && \
-  [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_load")" = "75" ] && \
-  [ "$(cat "$TB/sys/devices/platform/10300000.mali/polling_speed")" = "15" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_load")" = "85" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/polling_speed")" = "20" ] && \
   [ "$(cat "$TB/sys/devices/platform/10300000.mali/dvfs_period")" = "50" ] && \
   [ "$(cat "$TB/sys/kernel/gpu/gpu_cl_boost_disable")" = "0" ] && \
+  [ "$(cat "$TB/wm")" = "1080x2400" ] && \
   grep -q "cmd game set --fps 0 --downscale disable com.example.turbo" "$TB/cmd.log" && \
-  ok "turbo launch aplica perfil game, Mali-G68 (6 nos) e GameManager custom (fps=0, downscale=disable)" || bad "turbo launch apply state"
+  ok "turbo launch aplica perfil game, Mali-G68 (5 nos, mantem coarse_demand) e GameManager custom" || bad "turbo launch apply state"
 grep -q "ren= hm=true" "$TB/am.log" && \
   [ ! -e "$TB/settings/prop__debug.hwui.renderer" ] && \
   [ -z "$(cat "$TB/settings/prop__debug.hwui.use_hint_manager" 2>/dev/null)" ] && \
   ok "turbo launch injeta apenas ADPF hint_manager (sem skiavk) e restaura prop global logo apos" || bad "turbo launch hwui transient ($(cat "$TB/am.log"))"
 PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  WM_FAKE="$TB/wm" WM_FAKE_PHYS="1080x2400" \
   sh "$TB/fusao/fusao-cli" turbo restore >/dev/null 2>&1
 [ "$(cat "$TB/fusao/profile")" = "balanced" ] && \
-  [ "$(cat "$TB/sys/devices/platform/10300000.mali/power_policy")" = "coarse_demand" ] && \
+  [ "$(cat "$TB/sys/devices/platform/10300000.mali/power_policy")" = "[coarse_demand] always_on" ] && \
   [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_clock")" = "650000" ] && \
   [ "$(cat "$TB/sys/devices/platform/10300000.mali/highspeed_load")" = "94" ] && \
   [ "$(cat "$TB/sys/devices/platform/10300000.mali/polling_speed")" = "30" ] && \
@@ -2145,14 +2152,102 @@ PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54
   [ "$(cat "$TB/sys/kernel/gpu/gpu_cl_boost_disable")" = "1" ] && \
   grep -q "cmd game mode standard com.example.turbo" "$TB/cmd.log" && \
   [ ! -e "$TB/fusao/turbo.state" ] && \
-  ok "turbo restore devolve perfil original, todos os 6 nos Mali e GameManager ao sair" || bad "turbo restore state"
+  ok "turbo restore devolve perfil original, todos os 5 nos Mali e GameManager ao sair" || bad "turbo restore state"
 # Cancelamento do turbo antes do am start: devolve estado e NUNCA chama am start
 : > "$TB/am.log"
 : > "$TB/fusao/turbo.cancel"
 _tb_can_out=$(PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  WM_FAKE="$TB/wm" WM_FAKE_PHYS="1080x2400" \
   sh "$TB/fusao/fusao-cli" turbo cancel 2>&1)
 echo "$_tb_can_out" | grep -q "turbo=cancelled" && [ ! -e "$TB/fusao/turbo.cancel" ] && [ ! -s "$TB/am.log" ] && \
   ok "turbo cancel limpa estado sem disparar am start" || bad "turbo cancel ($_tb_can_out)"
+
+# 24) Downscale por jogo no Turbo (`fusao turbo scale` + apply no launch + restore automatico)
+_sc_set=$(M54_DIR="$TB/fusao" sh "$TB/fusao/fusao-cli" turbo scale set com.example.turbo 810p 2>&1)
+_sc_get=$(M54_DIR="$TB/fusao" sh "$TB/fusao/fusao-cli" turbo scale get com.example.turbo 2>&1)
+_sc_lst=$(M54_DIR="$TB/fusao" sh "$TB/fusao/fusao-cli" turbo scale list 2>&1)
+[ "$_sc_set" = "scale com.example.turbo=810p" ] && [ "$_sc_get" = "810p" ] && [ "$_sc_lst" = "com.example.turbo=810p" ] && \
+  ok "turbo scale set/get/list persiste downscale por jogo" || bad "turbo scale set/get/list ($_sc_set|$_sc_get|$_sc_lst)"
+: > "$TB/cmd.log"; : > "$TB/am.log"; printf '1080x2400' > "$TB/wm"; rm -f "$TB/wm.override"
+_tb_sc_out=$(PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  WM_FAKE="$TB/wm" WM_FAKE_PHYS="1080x2400" \
+  RAMCLEAN_SETTLE_S=0 TURBO_HWUI_WAIT_S=0 TURBO_WATCHDOG_S=0 TUNE_NO_DEFER=1 \
+  sh "$TB/fusao/fusao-cli" launch com.example.turbo 2>&1)
+echo "$_tb_sc_out" | grep -q "scale=810p" && [ "$(cat "$TB/wm")" = "810x1800" ] && \
+  grep -q "cmd activity force-stop --user 0 com.example.turbo" "$TB/cmd.log" && \
+  ok "turbo launch 810p encerra jogo em bg, aplica 810x1800 e registra scale=810p" || bad "turbo launch 810p (wm=$(cat "$TB/wm") out=$_tb_sc_out)"
+PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  WM_FAKE="$TB/wm" WM_FAKE_PHYS="1080x2400" \
+  sh "$TB/fusao/fusao-cli" turbo restore >/dev/null 2>&1
+[ "$(cat "$TB/wm")" = "1080x2400" ] && [ ! -e "$TB/wm.override" ] && \
+  ok "turbo restore devolve wm size nativa ao sair de sessao 810p" || bad "turbo restore 810p (wm=$(cat "$TB/wm"))"
+# Preserva override global pre-existente (ex.: usuario tinha 900p global e abriu jogo em 720p)
+M54_DIR="$TB/fusao" sh "$TB/fusao/fusao-cli" turbo scale set com.example.turbo 720p >/dev/null 2>&1
+printf '900x2000' > "$TB/wm"; printf '900x2000' > "$TB/wm.override"
+PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  WM_FAKE="$TB/wm" WM_FAKE_PHYS="1080x2400" \
+  RAMCLEAN_SETTLE_S=0 TURBO_HWUI_WAIT_S=0 TURBO_WATCHDOG_S=0 TUNE_NO_DEFER=1 \
+  sh "$TB/fusao/fusao-cli" launch com.example.turbo >/dev/null 2>&1
+_wm_mid=$(cat "$TB/wm")
+PATH="$TB/bin:$PATH" TB="$TB" FAKE_SETTINGS_DIR="$TB/settings" FS_ROOT="$TB" M54_DIR="$TB/fusao" \
+  WM_FAKE="$TB/wm" WM_FAKE_PHYS="1080x2400" \
+  sh "$TB/fusao/fusao-cli" turbo restore >/dev/null 2>&1
+[ "$_wm_mid" = "720x1600" ] && [ "$(cat "$TB/wm")" = "900x2000" ] && \
+  ok "turbo restore preserva override global anterior (900x2000) apos sessao 720p" || bad "turbo restore orig_wm (mid=$_wm_mid end=$(cat "$TB/wm"))"
+M54_DIR="$TB/fusao" sh "$TB/fusao/fusao-cli" turbo scale set com.example.turbo 1x >/dev/null 2>&1
+[ -z "$(M54_DIR="$TB/fusao" sh "$TB/fusao/fusao-cli" turbo scale list 2>&1)" ] && \
+  ok "turbo scale set 1x remove entrada da lista" || bad "turbo scale clear 1x"
+
+# 25) 60 Hz automatico e pisos MIF/DISP aliviados para jogos com teto FAS <= 60 FPS (ex.: NTE 30 FPS)
+HZ60="$FAKE/hz60"
+mkdir -p "$HZ60/fusao" "$HZ60/settings" \
+  "$HZ60/sys/class/devfreq/17000010.devfreq_mif" \
+  "$HZ60/sys/class/devfreq/17000020.devfreq_int" \
+  "$HZ60/sys/class/devfreq/17000040.devfreq_disp"
+cp "$FAKE/fusao/lib.sh" "$FAKE/fusao/framework.sh" "$FAKE/fusao/tune.sh" "$HZ60/fusao/"
+chmod +x "$HZ60/fusao/"*.sh
+printf '421000\n' > "$HZ60/sys/class/devfreq/17000010.devfreq_mif/min_freq"
+printf '50000\n' > "$HZ60/sys/class/devfreq/17000020.devfreq_int/min_freq"
+printf '66000\n' > "$HZ60/sys/class/devfreq/17000040.devfreq_disp/min_freq"
+: > "$HZ60/fusao/fas.enabled"
+printf 'com.example.nte=30\ncom.example.fps90=90\ncom.example.off=off\n' > "$HZ60/fusao/fas.targets"
+printf 'com.example.nte\n' > "$HZ60/fusao/game-active.txt"
+M54_DIR="$HZ60/fusao" FS_ROOT="$HZ60" FAKE_SETTINGS_DIR="$HZ60/settings" TUNE_NO_DEFER=1 \
+  sh "$HZ60/fusao/framework.sh" game >/dev/null 2>&1
+[ "$(cat "$HZ60/settings/system__peak_refresh_rate")" = "60.0" ] && \
+  [ "$(cat "$HZ60/settings/system__min_refresh_rate")" = "60.0" ] && \
+  [ "$(cat "$HZ60/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "845000" ] && \
+  [ "$(cat "$HZ60/sys/class/devfreq/17000040.devfreq_disp/min_freq")" = "66000" ] && \
+  ok "jogo FAS 30 FPS trava tela em 60 Hz e alivia MIF=845000/DISP=66000 no perfil game" || bad "hz60 game cap30"
+M54_DIR="$HZ60/fusao" FS_ROOT="$HZ60" FAKE_SETTINGS_DIR="$HZ60/settings" TUNE_NO_DEFER=1 \
+  sh "$HZ60/fusao/framework.sh" balanced >/dev/null 2>&1
+[ "$(cat "$HZ60/settings/system__peak_refresh_rate")" = "60.0" ] && \
+  [ "$(cat "$HZ60/settings/system__min_refresh_rate")" = "60.0" ] && \
+  ok "jogo FAS 30 FPS tambem trava tela em 60 Hz no perfil balanced" || bad "hz60 balanced cap30"
+printf 'com.example.fps90\n' > "$HZ60/fusao/game-active.txt"
+M54_DIR="$HZ60/fusao" FS_ROOT="$HZ60" FAKE_SETTINGS_DIR="$HZ60/settings" TUNE_NO_DEFER=1 \
+  sh "$HZ60/fusao/framework.sh" game >/dev/null 2>&1
+[ "$(cat "$HZ60/settings/system__peak_refresh_rate")" = "120.0" ] && \
+  [ "$(cat "$HZ60/settings/system__min_refresh_rate")" = "120.0" ] && \
+  [ "$(cat "$HZ60/sys/class/devfreq/17000010.devfreq_mif/min_freq")" = "1014000" ] && \
+  [ "$(cat "$HZ60/sys/class/devfreq/17000040.devfreq_disp/min_freq")" = "200000" ] && \
+  ok "jogo FAS 90 FPS mantem 120 Hz e pisos completos MIF=1014000/DISP=200000" || bad "hz60 game cap90"
+# Sem fas.enabled, fas.targets nao trava tela em 60 Hz
+rm -f "$HZ60/fusao/fas.enabled"
+printf 'com.example.nte\n' > "$HZ60/fusao/game-active.txt"
+M54_DIR="$HZ60/fusao" FS_ROOT="$HZ60" FAKE_SETTINGS_DIR="$HZ60/settings" TUNE_NO_DEFER=1 \
+  sh "$HZ60/fusao/framework.sh" game >/dev/null 2>&1
+[ "$(cat "$HZ60/settings/system__peak_refresh_rate")" = "120.0" ] && \
+  [ "$(cat "$HZ60/settings/system__min_refresh_rate")" = "120.0" ] && \
+  ok "com FAS desligado, fas.targets nao capa tela em 60 Hz" || bad "hz60 fas disabled"
+# Ao sair do jogo, tela volta ao adaptavel 120/60
+: > "$HZ60/fusao/fas.enabled"
+: > "$HZ60/fusao/game-active.txt"
+M54_DIR="$HZ60/fusao" FS_ROOT="$HZ60" FAKE_SETTINGS_DIR="$HZ60/settings" TUNE_NO_DEFER=1 \
+  sh "$HZ60/fusao/framework.sh" balanced >/dev/null 2>&1
+[ "$(cat "$HZ60/settings/system__peak_refresh_rate")" = "120.0" ] && \
+  [ "$(cat "$HZ60/settings/system__min_refresh_rate")" = "60.0" ] && \
+  ok "ao sair do jogo 30 FPS, tela volta para 120/60 adaptavel" || bad "hz60 exit restore"
 
 # 23) uclamp nativo por cgroup em tune.sh (2.14.0): apply, tolerancia de formato 50.00 no kernel 5.15, e restore
 UC="$FAKE/uc"

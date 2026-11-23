@@ -112,6 +112,10 @@ data class FusaoUiState(
     val fasTargets: Map<String, List<Int>> = emptyMap(),
     /** false até um `fusao fas list` responder: mapa vazio sem leitura não significa "todos em AUTO". */
     val fasTargetsLoaded: Boolean = false,
+    /** Escala de resolução por jogo para o Turbo (`pkg -> 900p|810p|720p`; ausente = `1x` nativa). */
+    val turboScales: Map<String, String> = emptyMap(),
+    /** false até `fusao turbo scale list` responder com sucesso (oculta em módulos < 2.15.0). */
+    val turboScalesLoaded: Boolean = false,
     val logLines: List<String> = emptyList(),
     val logFusaod: Boolean = false,
     val logLineLimit: Int = 120,
@@ -183,6 +187,7 @@ class FusaoViewModel : ViewModel() {
                 _state.value.games
             }
             val fas = if (present && st.fasSupported) FusaoBridge.fasTargetsOrNull() else null
+            val scales = if (present) FusaoBridge.turboScalesOrNull() else null
             _state.update {
                 it.copy(
                     ready = true,
@@ -193,6 +198,8 @@ class FusaoViewModel : ViewModel() {
                     games = games,
                     fasTargets = fas ?: emptyMap(),
                     fasTargetsLoaded = fas != null,
+                    turboScales = scales ?: emptyMap(),
+                    turboScalesLoaded = scales != null,
                     busy = Busy.NONE,
                     activeTarget = "",
                     notice = noticeAfterModuleCheck(it.notice),
@@ -228,6 +235,7 @@ class FusaoViewModel : ViewModel() {
             val cur = _state.value
             val games = if (present) FusaoBridge.gamelist() else emptyList()
             val fas = if (present && st.fasSupported) FusaoBridge.fasTargetsOrNull() else null
+            val scales = if (present) FusaoBridge.turboScalesOrNull() else null
             val rInfo = if (present && cur.ramcleanInfo.isNotEmpty()) FusaoBridge.ramcleanStatus() else cur.ramcleanInfo
             val lLines = if (present && cur.logLines.isNotEmpty()) {
                 FusaoBridge.logTail(cur.logLineLimit, cur.logFusaod)
@@ -244,6 +252,8 @@ class FusaoViewModel : ViewModel() {
                     games = games,
                     fasTargets = fas ?: emptyMap(),
                     fasTargetsLoaded = fas != null,
+                    turboScales = scales ?: emptyMap(),
+                    turboScalesLoaded = scales != null,
                     ramcleanInfo = rInfo,
                     logLines = lLines,
                     busy = Busy.NONE,
@@ -385,13 +395,47 @@ class FusaoViewModel : ViewModel() {
         launchLocked(Busy.GAMELIST, "gamelist_load") {
             val games = FusaoBridge.gamelist()
             val fas = if (_state.value.status.fasSupported) FusaoBridge.fasTargetsOrNull() else null
+            val scales = FusaoBridge.turboScalesOrNull()
             _state.update {
                 it.copy(
                     games = games,
                     fasTargets = fas ?: emptyMap(),
                     fasTargetsLoaded = fas != null,
+                    turboScales = scales ?: emptyMap(),
+                    turboScalesLoaded = scales != null,
                     busy = Busy.NONE,
                     activeTarget = "",
+                )
+            }
+        }
+    }
+
+    /** Toque na escala Turbo do jogo: cicla `1x -> 900p -> 810p -> 720p -> 1x` a partir do estado real no módulo. */
+    fun cycleTurboScale(pkg: String) {
+        if (!guardRoot()) return
+        launchLocked(Busy.FLAG, "turbo_scale:$pkg") {
+            val live = FusaoBridge.turboScalesOrNull()
+            if (live == null) {
+                _state.update {
+                    it.copy(
+                        turboScalesLoaded = false,
+                        busy = Busy.NONE,
+                        activeTarget = "",
+                        notice = "FALHOU: atualize o módulo para o 2.15.0 (sem turbo scale)",
+                    )
+                }
+                return@launchLocked
+            }
+            val next = nextTurboScale(live[pkg])
+            val out = FusaoBridge.setTurboScale(pkg, next)
+            val after = FusaoBridge.turboScalesOrNull()
+            _state.update {
+                it.copy(
+                    turboScales = after ?: live,
+                    turboScalesLoaded = after != null,
+                    busy = Busy.NONE,
+                    activeTarget = "",
+                    notice = out,
                 )
             }
         }

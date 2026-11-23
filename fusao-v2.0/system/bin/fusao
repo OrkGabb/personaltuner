@@ -6,7 +6,7 @@
 #      fusao display [show|720p|810p|900p|reset|adaptive|120hz|60hz|hz-reset|hz ...]
 #      fusao block [status|grant|revoke [perms]|log [n]]
 #      fusao gamelist [list|add <pkg>|del <pkg>|count|set <pkg>...]
-#      fusao launch <pkg> | fusao turbo [status|restore]
+#      fusao launch <pkg> | fusao turbo [status|restore|cancel|scale [list|get <pkg>|set <pkg> <1x|900p|810p|720p>]]
 #      fusao gos [on|off] | fusao reseed-stock
 #      fusao status [quick] | fusao log | fusao bugreport | fusao kill-switch [on|off]
 M54_DIR=${M54_DIR:-/data/adb/fusao}
@@ -215,14 +215,20 @@ case "$cmd" in
       target)
         M54_DIR="$M54_DIR" sh "$_fas" target "$3" "$4" || exit 1
         # jogo em foco: off sai do FAS na hora e o perfil volta a escrever a CPU por último (o fas-rs sai com
-        # min=max cravados); outro alvo põe o jogo no FAS (o fas.sh já republicou a lista p/ um fas-rs vivo)
+        # min=max cravados); outro alvo põe o jogo no FAS (o fas.sh já republicou a lista p/ um fas-rs vivo).
+        # Reaplica framework/tune para atualizar 60 Hz <-> 120 Hz e pisos MIF/DISP ao mudar alvo <= 60 FPS.
         if [ -n "$_ga" ] && [ "$3" = "$_ga" ] && [ -f "$M54_DIR/fas.enabled" ] && [ -f "$_fas" ]; then
           if [ "$4" = off ]; then
             M54_DIR="$M54_DIR" sh "$_fas" exit >/dev/null 2>&1
-            if [ -f "$M54_DIR/tune.sh" ]; then
+            if [ -f "$M54_DIR/framework.enabled" ] && [ -f "$M54_DIR/framework.sh" ]; then
+              M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" sh "$M54_DIR/framework.sh" auto >/dev/null 2>&1
+            elif [ -f "$M54_DIR/tune.sh" ]; then
               M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" sh "$M54_DIR/tune.sh" auto >/dev/null 2>&1
             fi
           else
+            if [ -f "$M54_DIR/framework.enabled" ] && [ -f "$M54_DIR/framework.sh" ]; then
+              M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" sh "$M54_DIR/framework.sh" auto >/dev/null 2>&1
+            fi
             M54_DIR="$M54_DIR" sh "$_fas" enter "$_ga" >/dev/null 2>&1 || :
           fi
         fi
@@ -765,7 +771,7 @@ case "$cmd" in
       exit 1
     fi
     if [ -f "$M54_DIR/turbo.sh" ]; then
-      FUSAO_CLI="$0" M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" sh "$M54_DIR/turbo.sh" launch "$arg"
+      FUSAO_CLI="$0" M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" WM_FAKE="$WM_FAKE" WM_FAKE_PHYS="$WM_FAKE_PHYS" sh "$M54_DIR/turbo.sh" launch "$arg"
     else
       echo "FALHOU: turbo.sh ausente em $M54_DIR" >&2
       exit 1
@@ -773,7 +779,9 @@ case "$cmd" in
     ;;
   turbo)
     if [ -f "$M54_DIR/turbo.sh" ]; then
-      FUSAO_CLI="$0" M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" sh "$M54_DIR/turbo.sh" "${arg:-status}" "$3"
+      shift 2>/dev/null
+      [ "$#" -gt 0 ] || set -- status
+      FUSAO_CLI="$0" M54_DIR="$M54_DIR" FS_ROOT="$FS_ROOT" FAKE_SETTINGS_DIR="$FAKE_SETTINGS_DIR" WM_FAKE="$WM_FAKE" WM_FAKE_PHYS="$WM_FAKE_PHYS" sh "$M54_DIR/turbo.sh" "$@"
     else
       echo "turbo=unsupported"
     fi
